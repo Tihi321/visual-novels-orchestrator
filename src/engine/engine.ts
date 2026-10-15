@@ -22,6 +22,9 @@ import { registerVnHandlers } from './vn/handlers'
 import type { VnService } from './vn/service'
 import type { ComfyClient } from './comfy/client'
 import type { VibeTtsClient } from './voice/vibetts'
+import type { PixelClient } from './studios/pixel'
+import type { ChiptuneClient } from './studios/chiptune'
+import { readSeedNotes } from './store/seedRefresh'
 import type { AppDirs } from './vn/appdirs'
 import type { WatchEvent } from './store/watcher'
 
@@ -38,6 +41,9 @@ export interface EngineOptions {
   comfy?: ComfyClient
   /** A VibeTTS client for the voice jobs (tests pass a fake). Default: one made from `config/voice.md`. */
   vibetts?: VibeTtsClient
+  /** Pixel Studio and Chiptune Studio clients for the asset jobs (tests pass fakes). Default: made from `config/studios.md`. */
+  pixel?: PixelClient
+  chiptune?: ChiptuneClient
   /** The folders that ship with the app (themes, the Ren'Py template, the seed). Default: found relative to the engine code. */
   dirs?: Partial<AppDirs>
 }
@@ -123,6 +129,8 @@ export class Engine {
       kick: () => this.scheduler.kick(),
       comfy: opts.comfy,
       vibetts: opts.vibetts,
+      pixel: opts.pixel,
+      chiptune: opts.chiptune,
       dirs: opts.dirs
     })
   }
@@ -152,6 +160,14 @@ export class Engine {
     this.knownAgents = new Set(this.agents.list().map((a) => a.id))
     this.scheduler.start()
     await this.budget.writeSummary().catch(() => undefined)
+    // seeded prompts and config that have a newer version but were edited by you are kept: say so
+    const notes = await readSeedNotes(this.opts.dataDir)
+    if (notes.updateAvailable.length) {
+      this.emit({
+        type: 'engine.warning',
+        message: `update available for ${notes.updateAvailable.length} seeded file(s) you edited (${notes.updateAvailable.slice(0, 4).join(', ')}${notes.updateAvailable.length > 4 ? ', ...' : ''}): yours are kept; delete one to get the new version from seed/`
+      })
+    }
     this.started = true
   }
 
@@ -184,6 +200,7 @@ export class Engine {
 
   async stop(): Promise<void> {
     if (this.slotTimer) clearInterval(this.slotTimer)
+    this.vn.dispose()
     await this.scheduler.stop()
     await this.logs.flush()
     await this.budget.flush().catch(() => undefined)

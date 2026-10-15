@@ -1,6 +1,50 @@
 # VNO-02: Chiptune Studio music and Pixel Studio art for VN Studio
 
-Status: **planned, next milestone.** Not started. It follows VNO-01 (`.claude/tickets/VNO-01-visual-novel-studio-scriptorium-book-ren/`).
+Status: **in progress** (started 2026-10-15). It follows VNO-01 (`.claude/tickets/VNO-01-visual-novel-studio-scriptorium-book-ren/`), which is now merged to `master`.
+
+## Branches and contracts
+| Repo | Branch | Base |
+| --- | --- | --- |
+| visual-novels-orchestrator | `VNO-02_chiptune-pixel-studio` | `origin/master` (a72c21b, VNO-01 merged) |
+| midi-generator | `MDI-03_vn-studio-music` | `origin/master` (425bd0b) |
+| pixel-art-generator | `PAR-05_vn-studio-art` | `origin/master` (3f2cf19) |
+
+The MCP tool contracts shared by all three repos are in [`contracts.md`](contracts.md). Sections A, B and C are implemented in parallel against it.
+
+## Progress checklist
+- [x] A. Chiptune Studio: headless `--mcp-only`, `compose_track`, `render_audio`, song tools, calm moods/presets, loop sidecar, tests (829 pass)
+- [x] B. Pixel Studio: headless `--mcp-only`, `import_image`, `export_png` width/height, `export_many`, `draw_sprite_from_reference`, doc tools, tests (363 pass)
+- [x] C. VN Studio: contract, studio clients, chiptune music, Pixel Studio pixelate + fallback, draw mode, round trip, UI, seed refresh, tests (436 pass)
+- [x] Integration: real headless studios driven by VN Studio on the soother book; Ren'Py lint clean (see the integration note below)
+
+### Integration note (orchestrator, 2026-10-15)
+Data was a copy of e2e-data at `.claude/temp/e2e-vno02`, slug `the-soother-that-fell-into-dragon-land`. ComfyUI was live; no LLM was running, so the deterministic fallbacks were used.
+
+**Pixel art**
+- `style pixel`, `pixel-studio`, 320x180, endesga-32, ordered dither:
+  - Backgrounds: native 320x180 → 1920x1080. Checked by eye: palette-only, clean.
+  - Sprites: alpha kept.
+- Bug found and fixed: the sprite scale was not a whole number (56x162 → 335x972). Sprites now use the background factor (55x162 → 330x972, 6x).
+- Pixel Studio stopped: the background fell back to the built-in pixelate at exactly 1920x1080, with the start-hint warning stored on the version.
+
+**Music**
+- `compose_track` + `render_audio` gave ogg files that end exactly at the loop end (ffprobe 101.818186 s = `loopEndSec`).
+- Bug found and fixed: a track with an earlier ComfyUI version kept ACE-Step after the provider switch. It now retargets unless locked or custom.
+- After the stage refresh, the build emits `play music "<loop 0>audio/music_0N.ogg"` and `config.main_menu_music` with the loop prefix. Ren'Py lint is clean (381 dialogue blocks).
+
+**Round trip**
+- Pixel Studio: `studio open … bg_golden_cave_afternoon --wait` launched the window. I then ran `draw_grid` and `save_document` through the window's MCP, standing in for a manual edit.
+  - v4 is custom, locked and selected.
+  - The automatic rebuild uses it (the edited pixel `#ff0044` is in the game image).
+- Chiptune Studio: `studio open … music_02 --wait`, then `save_song` through the window's MCP.
+  - v2.ogg is custom and locked.
+  - Its loop points come from the `.export.ogg.json` sidecar.
+
+**Not done**
+- A seam check by ear in `vno run`. The loop starts at 0 and the file ends at the loop end; ffprobe confirms the length.
+- Ctrl+S driven by hand in the studio UIs.
+- Agent-drawn sprites (`pixel-studio-draw`), because they need an LLM.
+- The VN Studio UI checked by eye in Electron.
 
 ## Context
 
@@ -92,3 +136,15 @@ VN Studio makes art and music with ComfyUI. The user wants both of their own stu
 4. **Round trip:** open a background in Pixel Studio, edit a pixel, save. VN Studio shows a new custom version and the rebuild uses it.
 5. **VN Studio checks:** `yarn typecheck`, `lint`, `test` and `build` pass, and Ren'Py lint is clean.
 6. **Repos changed:** list every repo touched in the changelog, with branch and files.
+
+### C-progress note (VN Studio, 2026-10-15)
+Done against the contract with fakes; no live studio yet. `yarn typecheck`, `yarn lint`, `yarn build` clean; `yarn test`: 433 passed (389 before; 44 new in `studios-clients`, `studios-generate`, `studios-pipeline`, `seed-refresh`).
+Deviations:
+- New settings are optional in the schema (not zod defaults), with resolvers `resolvePixel`, `resolvePixelProvider`, `resolveArtProvider`, `resolveMusicProvider`: old `project.md` files parse and save unchanged. `art.provider` is `comfy | pixel-studio-draw`.
+- Version schema gained optional `loopStartSec`, `loopEndSec`, `songFile`, `nativeFile`, `warnings`, `custom`. A round-trip version is `custom: true` and the asset is locked (it stays `source: generated`, so the version strip keeps working).
+- Draw mode is a separate job `vn.assets.draw` (needs a model; `vn.assets.generate` is `noModel`).
+- "Open in" launches the window first (the contract's second-instance forwarding makes that work with a running window); MCP `open_*` is only the fallback (`--via mcp`).
+- Round-trip music: the export has no loop info, so loop points are copied from the base version (with a warning) unless a `<export>.json` sidecar `{loopStartSec, loopEndSec}` exists. Contract gap to settle with Chiptune Studio.
+- Song files are saved as `v<n>.song`; Pixel Studio native PNGs as `v<n>.px.png`.
+- The built-in pixelate keeps its 4x scale unless the project sets `art.pixel.width`.
+- Pixel Studio's headless token (`PIXEL_STUDIO_MCP_TOKEN`) is not sent by the client yet (auth scheme not in the contract).

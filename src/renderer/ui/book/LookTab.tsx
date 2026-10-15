@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ProjectDetail, ThemeInfo } from '../../../shared/protocol'
+import { CHIPS, DITHERS, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../../shared/vn'
 import { updateSettings } from '../../api'
 import { editorChoices, generatorChoices, musicChoices } from '../../lib/engines'
 import { useVn } from '../../store/hooks'
@@ -63,6 +64,7 @@ function ArtCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
             />
           </>
         )}
+        {pixel && <PixelControls slug={slug} detail={detail} />}
         <label className="dim">Generator engine</label>
         <Select value={art.generator} options={generatorChoices(engines, workflows, art.generator)} onChange={(v) => updateSettings(slug, { art: { generator: v } })} testId="art-generator" />
         <label className="dim">Editor engine</label>
@@ -111,8 +113,67 @@ function ArtCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
   )
 }
 
+/** Pixel art controls: who converts the images (the built-in converter or Pixel Studio), the pixel grid, dither, outline, and who makes the sprites. */
+function PixelControls({ slug, detail }: { slug: string; detail: ProjectDetail }) {
+  const art = detail.settings.art
+  const px = resolvePixel(art)
+  const [w, setW] = useState(String(px.width))
+  const [h, setH] = useState(String(px.height))
+  useEffect(() => setW(String(px.width)), [px.width])
+  useEffect(() => setH(String(px.height)), [px.height])
+  const commit = () => {
+    const nw = Math.max(16, Math.min(512, Math.round(Number(w))))
+    const nh = Math.max(16, Math.min(512, Math.round(Number(h))))
+    if (Number.isFinite(nw) && Number.isFinite(nh) && (nw !== px.width || nh !== px.height)) updateSettings(slug, { art: { pixel: { width: nw, height: nh } } })
+    else {
+      setW(String(px.width))
+      setH(String(px.height))
+    }
+  }
+  const provider = resolvePixelProvider(art)
+  return (
+    <>
+      <label className="dim">Pixel art by</label>
+      <Select
+        value={provider}
+        options={[
+          { id: 'vno', label: 'Built-in converter' },
+          { id: 'pixel-studio', label: 'Pixel Studio (import, palette, cleanup)' }
+        ]}
+        onChange={(v) => updateSettings(slug, { art: { pixelProvider: v === 'vno' ? null : (v as 'pixel-studio') } })}
+        testId="art-pixel-provider"
+      />
+      <label className="dim">Pixel size</label>
+      <div className="row">
+        <input type="number" min={16} max={512} style={{ width: 80 }} value={w} onChange={(e) => setW(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} data-testid="art-pixel-width" />
+        <span className="dim">x</span>
+        <input type="number" min={16} max={512} style={{ width: 80 }} value={h} onChange={(e) => setH(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} data-testid="art-pixel-height" />
+        <span className="dim">pixels for a background (scaled up to the game size); sprites and the cover follow in proportion</span>
+      </div>
+      <label className="dim">Dither</label>
+      <Select value={px.dither} options={DITHERS.map((d) => ({ id: d, label: d }))} onChange={(v) => updateSettings(slug, { art: { pixel: { dither: v as (typeof DITHERS)[number] } } })} testId="art-pixel-dither" />
+      <label className="dim">Outline</label>
+      <label className="inline">
+        <input type="checkbox" checked={px.outline} onChange={(e) => updateSettings(slug, { art: { pixel: { outline: e.target.checked } } })} data-testid="art-pixel-outline" />
+        A 1 px outline round sprites (Pixel Studio)
+      </label>
+      <label className="dim">Sprites</label>
+      <Select
+        value={resolveArtProvider(art)}
+        options={[
+          { id: 'comfy', label: 'ComfyUI edit, then converted' },
+          { id: 'pixel-studio-draw', label: 'Drawn by an agent in Pixel Studio (small sprites)' }
+        ]}
+        onChange={(v) => updateSettings(slug, { art: { provider: v === 'comfy' ? null : (v as 'pixel-studio-draw') } })}
+        testId="art-provider"
+      />
+    </>
+  )
+}
+
 function MusicCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
   const music = detail.settings.music
+  const provider = resolveMusicProvider(detail.settings)
   const engines = useVn((s) => s.engines)
   const workflows = useVn((s) => s.workflows)
   const [tracks, setTracks] = useState(String(music.tracks))
@@ -126,8 +187,33 @@ function MusicCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
     <div className="card" data-testid="look-music">
       <h3>Music</h3>
       <div className="form-grid">
-        <label className="dim">Engine</label>
-        <Select value={music.engine} options={musicChoices(engines, workflows, music.engine)} onChange={(v) => updateSettings(slug, { music: { engine: v } })} testId="music-engine" />
+        <label className="dim">Provider</label>
+        <Select
+          value={music.provider ?? ''}
+          options={[
+            { id: '', label: `Auto (${provider === 'chiptune' ? 'Chiptune Studio' : 'ComfyUI'})` },
+            { id: 'comfy', label: 'ComfyUI (ACE-Step)' },
+            { id: 'chiptune', label: 'Chiptune Studio' }
+          ]}
+          onChange={(v) => updateSettings(slug, { music: { provider: v === '' ? null : (v as 'comfy' | 'chiptune') } })}
+          testId="music-provider"
+        />
+        {provider === 'chiptune' ? (
+          <>
+            <label className="dim">Chip</label>
+            <Select
+              value={music.chip ?? ''}
+              options={[{ id: '', label: 'Auto (the composer picks)' }, ...CHIPS.map((c) => ({ id: c, label: c }))]}
+              onChange={(v) => updateSettings(slug, { music: { chip: v === '' ? null : (v as (typeof CHIPS)[number]) } })}
+              testId="music-chip"
+            />
+          </>
+        ) : (
+          <>
+            <label className="dim">Engine</label>
+            <Select value={music.engine} options={musicChoices(engines, workflows, music.engine)} onChange={(v) => updateSettings(slug, { music: { engine: v } })} testId="music-engine" />
+          </>
+        )}
         <label className="dim">Tracks</label>
         <input type="number" min={0} max={20} style={{ width: 80 }} value={tracks} onChange={(e) => setTracks(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} data-testid="music-tracks" />
       </div>

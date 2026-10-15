@@ -14,7 +14,7 @@ Usage:
   yarn engine [--data <dir>] [--seed <dir>] [--once] [--heartbeat <ms>]
   yarn engine probe [--model <provider/model>] [--data <dir>]
   yarn key:set <ENV_NAME>
-  yarn engine -- <books|import|projects|run|edition|plan|generate|asset|build|lint|play|android|voice|comfy|themes> ...   the CLI (see: yarn engine -- help)
+  yarn engine -- <books|import|projects|run|edition|plan|generate|asset|build|lint|play|android|voice|comfy|settings|studios|studio|themes> ...   the CLI (see: yarn engine -- help)
   yarn engine -- mcp                  the MCP server on stdio (claude mcp add vn-studio -- yarn engine -- mcp)
 
   --data <dir>      Data folder. Default: VNO_DATA, else ~/VisualNovels
@@ -65,6 +65,8 @@ async function main(): Promise<void> {
   const init = await initDataFolder(dataDir, seed ? path.resolve(seed) : undefined)
   log(`data folder: ${dataDir}`)
   log(`seed: copied ${init.copied.length} file(s), kept ${init.skipped.length} existing, created ${init.createdDirs} folder(s)`)
+  if (init.updated.length) log(`seed: updated ${init.updated.length} seeded file(s) you had not changed: ${init.updated.join(', ')}`)
+  if (init.updateAvailable.length) log(`seed: update available for ${init.updateAvailable.length} seeded file(s) you edited (yours are kept): ${init.updateAvailable.join(', ')}`)
   if (once) return
 
   const startedAt = Date.now()

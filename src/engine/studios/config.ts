@@ -1,0 +1,69 @@
+import path from 'node:path'
+import { z } from 'zod'
+import { readMd } from '../store/atomic'
+import { createChiptuneClient } from './chiptune'
+import type { ChiptuneClient } from './chiptune'
+import { createPixelClient } from './pixel'
+import type { PixelClient } from './pixel'
+
+export type StudioId = 'pixel' | 'chiptune'
+
+export const DEFAULT_PIXEL_STUDIO_URL = 'http://127.0.0.1:7457/mcp'
+export const DEFAULT_CHIPTUNE_STUDIO_URL = 'http://127.0.0.1:7458/mcp'
+
+/** `config/studios.md`: where Pixel Studio and Chiptune Studio are, and where their code is (for the start hints and "Open in"). */
+export const studiosConfigSchema = z.object({
+  pixelStudioUrl: z.string().default(DEFAULT_PIXEL_STUDIO_URL),
+  chiptuneStudioUrl: z.string().default(DEFAULT_CHIPTUNE_STUDIO_URL),
+  pixelStudioRepo: z.string().default('C:\\projects\\Personal\\pixel-art-generator'),
+  chiptuneStudioRepo: z.string().default('C:\\projects\\Personal\\midi-generator'),
+  /** A packaged app to launch instead of `yarn electron .` from the repo. Empty: use the repo. */
+  pixelStudioExe: z.string().default(''),
+  chiptuneStudioExe: z.string().default(''),
+  /** Timeouts in seconds: short calls, an image import and export, a track render. */
+  timeoutS: z.number().positive().default(15),
+  importTimeoutS: z.number().positive().default(120),
+  renderTimeoutS: z.number().positive().default(300),
+  /** The pixel-studio-draw agent loop: at most this many model steps and seconds per sprite. */
+  drawSteps: z.number().int().min(1).max(60).default(12),
+  drawTimeoutS: z.number().positive().default(240)
+})
+export type StudiosConfig = z.infer<typeof studiosConfigSchema>
+
+/** `config/studios.md`; a missing or broken file gives the defaults. `VNO_PIXEL_STUDIO_URL` and `VNO_CHIPTUNE_STUDIO_URL` override the URLs. */
+export async function loadStudiosConfig(dataDir: string, env: NodeJS.ProcessEnv = process.env): Promise<StudiosConfig> {
+  let data: Record<string, unknown> = {}
+  try {
+    data = (await readMd(path.join(dataDir, 'config', 'studios.md'))).data
+  } catch {
+    /* defaults */
+  }
+  const parsed = studiosConfigSchema.safeParse(data)
+  const c = parsed.success ? parsed.data : studiosConfigSchema.parse({})
+  return {
+    ...c,
+    ...(env.VNO_PIXEL_STUDIO_URL ? { pixelStudioUrl: env.VNO_PIXEL_STUDIO_URL } : {}),
+    ...(env.VNO_CHIPTUNE_STUDIO_URL ? { chiptuneStudioUrl: env.VNO_CHIPTUNE_STUDIO_URL } : {})
+  }
+}
+
+export const STUDIO_NAMES: Record<StudioId, string> = { pixel: 'Pixel Studio', chiptune: 'Chiptune Studio' }
+
+export const studioUrl = (c: StudiosConfig, id: StudioId): string => (id === 'pixel' ? c.pixelStudioUrl : c.chiptuneStudioUrl)
+export const studioRepo = (c: StudiosConfig, id: StudioId): string => (id === 'pixel' ? c.pixelStudioRepo : c.chiptuneStudioRepo)
+export const studioExe = (c: StudiosConfig, id: StudioId): string => (id === 'pixel' ? c.pixelStudioExe : c.chiptuneStudioExe)
+
+/** How to start the studio headless (the text of the "not running" error). */
+export function startHint(c: StudiosConfig, id: StudioId): string {
+  const exe = studioExe(c, id)
+  const how = exe ? `${exe} --mcp-only` : `cd ${studioRepo(c, id)} && yarn build && yarn mcp`
+  return `${STUDIO_NAMES[id]} is not running at ${studioUrl(c, id)}. Start it headless: ${how}`
+}
+
+export function pixelClientFor(c: StudiosConfig): PixelClient {
+  return createPixelClient({ url: c.pixelStudioUrl, notRunningHint: startHint(c, 'pixel'), timeoutMs: c.timeoutS * 1000, importTimeoutMs: c.importTimeoutS * 1000 })
+}
+
+export function chiptuneClientFor(c: StudiosConfig): ChiptuneClient {
+  return createChiptuneClient({ url: c.chiptuneStudioUrl, notRunningHint: startHint(c, 'chiptune'), timeoutMs: c.timeoutS * 1000, renderTimeoutMs: c.renderTimeoutS * 1000 })
+}

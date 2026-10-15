@@ -199,7 +199,7 @@ function nearestColour(palette: Rgb[], r: number, g: number, b: number): Rgb {
  * Pixel-art post-process: area-average downscale by `scale`, quantise to `palette` (nearest colour in RGB; alpha
  * becomes 0 or 255 at `alphaThreshold`), then nearest-neighbour upscale back to the original size. Returns a PNG.
  */
-export async function pixelate(buf: Buffer, opts: { scale: number; palette?: Rgb[]; alphaThreshold?: number }): Promise<Buffer> {
+export async function pixelate(buf: Buffer, opts: { scale: number; palette?: Rgb[]; alphaThreshold?: number; exactScale?: boolean }): Promise<Buffer> {
   const { scale } = opts
   if (!(scale >= 1)) throw new Error('pixelate: scale must be >= 1')
   const alphaThreshold = opts.alphaThreshold ?? 128
@@ -253,7 +253,8 @@ export async function pixelate(buf: Buffer, opts: { scale: number; palette?: Rgb
     }
   }
   return sharp(small, { raw: { width: sw, height: sh, channels: 4 } })
-    .resize(raw.width, raw.height, { kernel: 'nearest' })
+    // exactScale: the result is the small image times a whole-number scale, so every pixel is the same size
+    .resize(opts.exactScale ? sw * Math.round(scale) : raw.width, opts.exactScale ? sh * Math.round(scale) : raw.height, { kernel: 'nearest' })
     .png()
     .toBuffer()
 }

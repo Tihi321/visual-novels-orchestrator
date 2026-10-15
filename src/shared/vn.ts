@@ -121,6 +121,27 @@ export type Edition = z.infer<typeof editionSchema>
 
 // ---- project settings (project.md frontmatter) ----
 
+export const ART_PROVIDERS = ['comfy', 'pixel-studio-draw'] as const
+export const PIXEL_PROVIDERS = ['vno', 'pixel-studio'] as const
+export const MUSIC_PROVIDERS = ['comfy', 'chiptune'] as const
+/** The chips of Chiptune Studio. */
+export const CHIPS = ['nes', 'gb', 'genesis', 'snes', 'pce'] as const
+export const DITHERS = ['none', 'ordered', 'floyd'] as const
+export type Chip = (typeof CHIPS)[number]
+export type Dither = (typeof DITHERS)[number]
+
+/** The pixel grid of a background (the game image is this grid scaled up with nearest-neighbour) and how the conversion looks. */
+export const pixelSchema = z.object({
+  width: z.number().int().min(16).max(512).optional(),
+  height: z.number().int().min(16).max(512).optional(),
+  dither: z.enum(DITHERS).optional(),
+  /** A 1px outline round the opaque pixels (Pixel Studio import). */
+  outline: z.boolean().optional()
+})
+
+/** The pixel settings a project that has none uses: 320x180 backgrounds (a 6x scale to 1920x1080). */
+export const PIXEL_DEFAULTS = { width: 320, height: 180, dither: 'none' as Dither, outline: false }
+
 export const projectSettingsSchema = z.object({
   slug: z.string(),
   /** The book folder the project was imported from. */
@@ -144,13 +165,23 @@ export const projectSettingsSchema = z.object({
       /** The style words every image prompt starts with. Empty: derived from the format, genre and art mode (never from the bible's Style section, which is a writing note). */
       stylePrompt: z.string().optional(),
       /** How sprites get a transparent background: ComfyUI BiRefNet, a Qwen-Image edit pass then BiRefNet, or keying out a flat background. */
-      bgRemoval: z.enum(['birefnet', 'qwen-edit', 'key']).default('birefnet')
+      bgRemoval: z.enum(['birefnet', 'qwen-edit', 'key']).default('birefnet'),
+      /** Who makes the sprites: ComfyUI (the default), or `pixel-studio-draw`: an agent draws small pixel sprites in Pixel Studio. Missing: `comfy`. */
+      provider: z.enum(ART_PROVIDERS).optional(),
+      /** Who turns an image into pixel art (pixel style only): the built-in sharp quantiser (`vno`) or Pixel Studio. Missing: `vno`. */
+      pixelProvider: z.enum(PIXEL_PROVIDERS).optional(),
+      /** Pixel art size and look. Missing fields take `PIXEL_DEFAULTS`. */
+      pixel: pixelSchema.optional()
     })
     .default({ style: 'illustrated', generator: 'qwen-image-2.1', editor: 'qwen-image-2.1-edit', review: false, bgRemoval: 'birefnet' }),
   music: z
     .object({
       engine: z.string().default('ace-step-v1-instrumental'),
-      tracks: z.number().int().nonnegative().default(3)
+      tracks: z.number().int().nonnegative().default(3),
+      /** Who makes the music: ComfyUI (ACE-Step) or Chiptune Studio. Missing: chiptune for pixel books, else comfy. */
+      provider: z.enum(MUSIC_PROVIDERS).optional(),
+      /** The chip of Chiptune Studio. Missing: the composer picks one per track. */
+      chip: z.enum(CHIPS).optional()
     })
     .default({ engine: 'ace-step-v1-instrumental', tracks: 3 }),
   voice: z
@@ -168,6 +199,24 @@ export const projectSettingsSchema = z.object({
 })
 export type ProjectSettings = z.infer<typeof projectSettingsSchema>
 
+// The newer settings are optional, so a project.md from before them still parses (and is saved unchanged). These give their values.
+
+export function resolvePixel(art: Pick<ProjectSettings['art'], 'pixel'>): { width: number; height: number; dither: Dither; outline: boolean } {
+  const p = art.pixel ?? {}
+  return { width: p.width ?? PIXEL_DEFAULTS.width, height: p.height ?? PIXEL_DEFAULTS.height, dither: p.dither ?? PIXEL_DEFAULTS.dither, outline: p.outline ?? PIXEL_DEFAULTS.outline }
+}
+
+export const resolvePixelProvider = (art: Pick<ProjectSettings['art'], 'pixelProvider'>): (typeof PIXEL_PROVIDERS)[number] => art.pixelProvider ?? 'vno'
+export const resolveArtProvider = (art: Pick<ProjectSettings['art'], 'provider'>): (typeof ART_PROVIDERS)[number] => art.provider ?? 'comfy'
+
+/** The music provider: the chosen one, else Chiptune Studio for pixel-style books and ComfyUI for the rest. */
+export function resolveMusicProvider(settings: Pick<ProjectSettings, 'art' | 'music'>): (typeof MUSIC_PROVIDERS)[number] {
+  return settings.music.provider ?? (settings.art.style === 'pixel' ? 'chiptune' : 'comfy')
+}
+
+/** The pseudo engine id of a music asset made by Chiptune Studio. */
+export const CHIPTUNE_ENGINE = 'chiptune'
+
 // ---- assets (assets.json) ----
 
 export const ASSET_KINDS = ['background', 'sheet', 'sprite', 'cover', 'music', 'voiceRef'] as const
@@ -181,7 +230,18 @@ export const assetVersionSchema = z.object({
   createdAt: z.string(),
   seed: z.number().nullable(),
   engine: z.string(),
-  prompt: z.string()
+  prompt: z.string(),
+  /** Music from Chiptune Studio: where the loop starts and ends, in seconds. Ren'Py plays `<loop start>file` with it. */
+  loopStartSec: z.number().nullable().optional(),
+  loopEndSec: z.number().nullable().optional(),
+  /** Chiptune Studio's native song file of this version (next to the audio), for "Open in Chiptune Studio". */
+  songFile: z.string().optional(),
+  /** Pixel Studio art: the PNG at the native pixel size (before the nearest-neighbour scale up), for "Open in Pixel Studio". */
+  nativeFile: z.string().optional(),
+  /** Non-fatal problems of making this version (Pixel Studio was down, so the built-in pixelate ran ...). */
+  warnings: z.array(z.string()).optional(),
+  /** Made by hand in a studio (the round trip): the pipeline never regenerates it. */
+  custom: z.boolean().optional()
 })
 export type AssetVersion = z.infer<typeof assetVersionSchema>
 

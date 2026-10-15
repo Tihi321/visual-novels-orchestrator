@@ -97,6 +97,10 @@ function AssetCard({ asset, slug, small }: { asset: AssetView; slug: string; sma
   const audio = asset.kind === 'music' || asset.kind === 'voiceRef'
   const file = asset.fileRel
   const versionNumbers = Object.keys(asset.versionFiles).map(Number).sort((a, b) => a - b)
+  const studio = asset.kind === 'voiceRef' ? null : asset.kind === 'music' ? 'Chiptune Studio' : 'Pixel Studio'
+  const opened = useVn((s) => s.studioOpened[`${slug}:${asset.id}`])
+  const warnings = asset.versions.find((v) => v.n === asset.selected)?.warnings ?? []
+  const selectedVersion = asset.versions.find((v) => v.n === asset.selected)
 
   const upload = () =>
     void pickFile(audio ? 'Choose an audio file' : 'Choose an image', audio ? 'audio' : 'image').then((f) => {
@@ -122,8 +126,14 @@ function AssetCard({ asset, slug, small }: { asset: AssetView; slug: string; sma
         </Pill>
         {asset.source === 'custom' && <Pill tone="accent">custom</Pill>}
         {asset.locked && <Pill tone="warn">locked</Pill>}
+        {selectedVersion?.custom && asset.source === 'generated' && <Pill tone="accent">edited by hand</Pill>}
         {asset.orphaned && <Pill>unused</Pill>}
       </div>
+      {warnings.length > 0 && (
+        <div className="warn ellipsis" title={warnings.join('\n')} data-testid={`warnings-${asset.id}`}>
+          {warnings[0]}
+        </div>
+      )}
       {asset.review?.note && (
         <div className="dim ellipsis" title={asset.review.note}>
           {asset.review.note}
@@ -166,7 +176,22 @@ function AssetCard({ asset, slug, small }: { asset: AssetView; slug: string; sma
         <button onClick={() => sendCommand({ type: asset.locked ? 'unlockAsset' : 'lockAsset', slug, id: asset.id })} data-testid={`lock-${asset.id}`}>
           {asset.locked ? 'Unlock' : 'Lock'}
         </button>
+        {studio && (
+          <button
+            onClick={() => sendCommand({ type: 'openInStudio', slug, id: asset.id })}
+            disabled={!file || (asset.kind === 'music' && !selectedVersion?.songFile)}
+            title={asset.kind === 'music' && !selectedVersion?.songFile ? 'Only music made by Chiptune Studio can be opened there' : `Edit in ${studio}; saving there makes a new version`}
+            data-testid={`open-studio-${asset.id}`}
+          >
+            Open in {studio}
+          </button>
+        )}
       </div>
+      {opened && (
+        <div className="dim" data-testid={`studio-opened-${asset.id}`}>
+          {opened}
+        </div>
+      )}
       {regen && <RegenerateDialog asset={asset} slug={slug} onClose={() => setRegen(false)} onSent={() => setPendingRev(rev)} />}
       {zoom && file && (
         <Modal title={asset.id} onClose={() => setZoom(false)} width={900}>

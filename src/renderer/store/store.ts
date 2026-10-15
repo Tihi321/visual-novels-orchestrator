@@ -11,7 +11,7 @@ export const PAGES: { id: Page; label: string }[] = [
   { id: 'book', label: 'Book' },
   { id: 'models', label: 'Models' },
   { id: 'agents', label: 'Agents' },
-  { id: 'comfy', label: 'ComfyUI' },
+  { id: 'comfy', label: 'Generators' },
   { id: 'settings', label: 'Settings' }
 ]
 
