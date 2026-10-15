@@ -1,0 +1,208 @@
+{
+  "slug": "lighthouse-keeper",
+  "title": "The Lighthouse Keeper",
+  "author": "Test Author",
+  "genre": "mystery",
+  "format": "visual-novel",
+  "kind": "linear",
+  "primaryLang": "en",
+  "style": "illustrated, soft watercolour",
+  "coverBrief": "A lighthouse at dusk.",
+  "characters": [
+    {
+      "key": "mara",
+      "name": "Mara",
+      "looks": "young woman, red coat"
+    },
+    {
+      "key": "tomo",
+      "name": "Tomo",
+      "looks": "old keeper"
+    },
+    {
+      "key": "dog",
+      "name": "Biscuit",
+      "looks": "small dog"
+    },
+    {
+      "key": "nina",
+      "name": "Nina",
+      "looks": "girl"
+    }
+  ],
+  "places": [
+    {
+      "key": "harbour_wall",
+      "name": "Harbour wall",
+      "looks": "stone wall"
+    },
+    {
+      "key": "lighthouse",
+      "name": "Lighthouse",
+      "looks": "tall tower"
+    }
+  ],
+  "chapters": [
+    {
+      "n": 1,
+      "title": "The Harbour",
+      "choices": [],
+      "ending": null,
+      "scenes": [
+        {
+          "id": "ch01.s01",
+          "placeKey": "harbour_wall",
+          "placeText": "Harbour wall",
+          "time": "dusk",
+          "backgroundId": "bg_harbour_wall_dusk",
+          "description": "Dusk at the wall.",
+          "breakBefore": false,
+          "beats": [
+            {
+              "id": "ch01.s01.b001",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "mara"
+                }
+              ]
+            },
+            {
+              "id": "ch01.s01.b002",
+              "type": "narration",
+              "text": "The sea was calm. *Too* calm, thought Mara."
+            },
+            {
+              "id": "ch01.s01.b003",
+              "type": "line",
+              "speakerKey": "mara",
+              "speakerLabel": "Mara",
+              "expression": "worried",
+              "text": "Is that light [still] on? It is {not} 100% safe."
+            },
+            {
+              "id": "ch01.s01.b004",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "mara"
+                },
+                {
+                  "charKey": "tomo"
+                }
+              ]
+            },
+            {
+              "id": "ch01.s01.b005",
+              "type": "line",
+              "speakerKey": "tomo",
+              "speakerLabel": "Tomo",
+              "expression": "neutral",
+              "text": "She said \"come back\", **and** I did."
+            },
+            {
+              "id": "ch01.s01.b006",
+              "type": "line",
+              "speakerKey": null,
+              "speakerLabel": "Gull",
+              "expression": "neutral",
+              "text": "Screech!"
+            },
+            {
+              "id": "ch01.s01.b007",
+              "type": "line",
+              "speakerKey": "mara",
+              "speakerLabel": "Mara",
+              "expression": "happy",
+              "text": "Then let us go up."
+            }
+          ]
+        },
+        {
+          "id": "ch01.s02",
+          "placeKey": "lighthouse",
+          "placeText": "Lighthouse",
+          "time": null,
+          "backgroundId": "bg_lighthouse_any",
+          "description": "Inside.",
+          "breakBefore": true,
+          "beats": [
+            {
+              "id": "ch01.s02.b001",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "mara"
+                },
+                {
+                  "charKey": "tomo"
+                },
+                {
+                  "charKey": "dog"
+                },
+                {
+                  "charKey": "nina"
+                }
+              ]
+            },
+            {
+              "id": "ch01.s02.b002",
+              "type": "line",
+              "speakerKey": "tomo",
+              "speakerLabel": "Tomo",
+              "expression": "surprised",
+              "text": "So many of you!"
+            },
+            {
+              "id": "ch01.s02.b003",
+              "type": "narration",
+              "text": "Back\\slash path."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "title": "The Lamp",
+      "choices": [],
+      "ending": "Mara kept the lamp burning.",
+      "scenes": [
+        {
+          "id": "ch02.s01",
+          "placeKey": "lighthouse",
+          "placeText": "Lighthouse",
+          "time": null,
+          "backgroundId": "bg_lighthouse_any",
+          "description": "Lamp room.",
+          "breakBefore": false,
+          "beats": [
+            {
+              "id": "ch02.s01.b001",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "mara"
+                }
+              ]
+            },
+            {
+              "id": "ch02.s01.b002",
+              "type": "line",
+              "speakerKey": "mara",
+              "speakerLabel": "Mara",
+              "expression": "thinking",
+              "text": "It was never broken."
+            },
+            {
+              "id": "ch02.s01.b003",
+              "type": "narration",
+              "text": "And the night went on."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}

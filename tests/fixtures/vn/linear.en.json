@@ -1,0 +1,29 @@
+{
+  "lang": "en",
+  "title": "The Lighthouse Keeper",
+  "chapterTitles": {
+    "1": "The Harbour",
+    "2": "The Lamp"
+  },
+  "choiceTexts": {},
+  "endings": {
+    "2": "Mara kept the lamp burning."
+  },
+  "characterNames": {
+    "mara": "Mara",
+    "tomo": "Tomo",
+    "dog": "Biscuit",
+    "nina": "Nina"
+  },
+  "beats": {
+    "ch01.s01.b002": "The sea was calm. *Too* calm, thought Mara.",
+    "ch01.s01.b003": "Is that light [still] on? It is {not} 100% safe.",
+    "ch01.s01.b005": "She said \"come back\", **and** I did.",
+    "ch01.s01.b006": "Screech!",
+    "ch01.s01.b007": "Then let us go up.",
+    "ch01.s02.b002": "So many of you!",
+    "ch01.s02.b003": "Back\\slash path.",
+    "ch02.s01.b002": "It was never broken.",
+    "ch02.s01.b003": "And the night went on."
+  }
+}

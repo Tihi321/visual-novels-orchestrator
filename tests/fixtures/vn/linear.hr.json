@@ -1,0 +1,29 @@
+{
+  "lang": "hr",
+  "title": "Čuvar svjetionika",
+  "chapterTitles": {
+    "1": "Luka",
+    "2": "Svjetiljka"
+  },
+  "choiceTexts": {},
+  "endings": {
+    "2": "Mara je održala svjetiljku upaljenom."
+  },
+  "characterNames": {
+    "mara": "Mara",
+    "tomo": "Tomo",
+    "dog": "Keksić",
+    "nina": "Nina"
+  },
+  "beats": {
+    "ch01.s01.b002": "More je bilo mirno. *Previše* mirno, pomisli Mara.",
+    "ch01.s01.b003": "Je li ono svjetlo [još] upaljeno? Nije {baš} 100% sigurno.",
+    "ch01.s01.b005": "Rekla je \"vrati se\", **i** vratio sam se.",
+    "ch01.s01.b006": "Kric!",
+    "ch01.s01.b007": "Onda idemo gore.",
+    "ch01.s02.b002": "Koliko vas je!",
+    "ch01.s02.b003": "Putanja s \\ crtom.",
+    "ch02.s01.b002": "Nikad nije bila pokvarena.",
+    "ch02.s01.b003": "I noć je tekla dalje."
+  }
+}
