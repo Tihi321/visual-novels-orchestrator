@@ -22,9 +22,10 @@ import type { StageCues } from '../renpy/stage'
 import { alignEdition } from './align'
 import { planArt } from './agents/art-director'
 import { reviewImage } from './agents/art-critic'
-import { planMusic } from './agents/composer'
+import { chipOptionsFor, fallbackChipPlans, planMusic } from './agents/composer'
 import type { MusicPlan } from './agents/composer'
 import { DEFAULT_SECONDS } from './agents/composer'
+import { planSummary } from '../studios/chip-plan'
 import { summarizeRun } from './agents/director'
 import { resolveAlignment } from './agents/edition-aligner'
 import { resolveUncertain } from './agents/script-analyst'
@@ -242,6 +243,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const { settings } = await store.loadSettings(slug)
     if (settings.music.tracks <= 0) return 'the project has no music tracks'
     const book = await store.loadBook(slug)
+    await svc.reconcileAssets(slug) // the tracks follow the music provider
     const manifest = await store.loadAssets(slug)
     const orphans = svc.orphanIds(book, settings, manifest.assets)
     const music = manifest.assets.filter((a) => a.kind === 'music' && !orphans.has(a.id))
@@ -249,20 +251,32 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const ids = music.map((a) => a.id).sort()
     const need = music.filter((a) => !a.locked && a.source === 'generated' && a.versions.length === 0 && (force || a.prompt === ''))
     const existing = await store.readJson<MusicPlan>(slug, 'music.json')
-    if (!need.length && existing) return 'every track already has a prompt and a plan'
+    const wantsChips = chipOptionsFor(book, settings).chiptune
+    if (!need.length && existing && (!wantsChips || ids.every((id) => existing.tracks?.[id]))) return 'every track already has a prompt and a plan'
     const r = await tryAgent(ctx, 'composer', () => planMusic(call(ctx), book, settings, ids))
     // the deterministic plan: the first track is the menu theme, the chapters take turns on the others
     const rotation = ids.length > 1 ? ids.slice(1) : ids
+    const chipOpts = chipOptionsFor(book, settings)
+    const seconds = Object.fromEntries(ids.map((id) => [id, DEFAULT_SECONDS]))
     const fallback: MusicPlan = {
       menu: ids[0] ?? null,
       chapters: Object.fromEntries(book.chapters.map((c, i) => [c.n, rotation[i % rotation.length]!])),
-      seconds: Object.fromEntries(ids.map((id) => [id, DEFAULT_SECONDS]))
+      seconds,
+      ...(chipOpts.chiptune ? { tracks: fallbackChipPlans(ids, chipOpts, seconds) } : {})
     }
-    const plan: MusicPlan = r.ok ? { menu: r.value.plan.menu ?? fallback.menu, chapters: { ...fallback.chapters, ...r.value.plan.chapters }, seconds: { ...fallback.seconds, ...r.value.plan.seconds } } : fallback
+    const plan: MusicPlan = r.ok
+      ? {
+          menu: r.value.plan.menu ?? fallback.menu,
+          chapters: { ...fallback.chapters, ...r.value.plan.chapters },
+          seconds: { ...fallback.seconds, ...r.value.plan.seconds },
+          ...(chipOpts.chiptune ? { tracks: { ...fallback.tracks, ...r.value.plan.tracks } } : {})
+        }
+      : fallback
     await store.withLock(slug, async () => {
       const cur = await store.loadAssets(slug)
       const wanted = new Set(need.map((a) => a.id))
-      const assets = cur.assets.map((a) => (wanted.has(a.id) ? { ...a, prompt: (r.ok ? r.value.prompts.get(a.id) : undefined) ?? fallbackPrompt(a, book) } : a))
+      const fallbackFor = (a: AssetEntry) => (plan.tracks?.[a.id] ? planSummary(plan.tracks[a.id]!) : fallbackPrompt(a, book))
+      const assets = cur.assets.map((a) => (wanted.has(a.id) ? { ...a, prompt: (r.ok ? r.value.prompts.get(a.id) : undefined) ?? fallbackFor(a) } : a))
       await store.saveAssets(slug, { assets })
       await store.writeJson(slug, 'music.json', plan)
     })
@@ -272,7 +286,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
   // ---- generate ----
 
   /** Generates one asset (a new version) and records it. Throws when ComfyUI fails, so the job retries. */
-  const generateOne = async (ctx: JobContext, slug: string, id: string, o: GenerateOptions): Promise<{ skipped?: string; entry: AssetEntry }> => {
+  const generateOne = async (ctx: JobContext, slug: string, id: string, o: GenerateOptions, mode: { draw?: boolean } = {}): Promise<{ skipped?: string; entry: AssetEntry }> => {
     const { settings } = await store.loadSettings(slug)
     const book = await store.loadBook(slug)
     const config = await loadComfyConfigFor(deps.dataDir)
@@ -283,6 +297,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     if (!entry) throw new Error(`project ${slug} has no asset "${id}"`)
     const music = await store.readJson<MusicPlan>(slug, 'music.json')
     const comfy = await svc.comfy()
+    const studios = await svc.studios()
     const res = renpy.resolution
     const projectDir = store.dir(slug)
     const r = await comfySem.run(
@@ -294,6 +309,10 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
             projectDir,
             comfy,
             palettesDir: dataFolders(deps.dataDir).palettes,
+            pixel: studios.pixel,
+            chiptune: studios.chiptune,
+            chipPlan: music?.tracks?.[id],
+            ...(mode.draw ? { ask: async (messages) => (await ctx.chat({ messages, maxTokens: 3000, temperature: 0.3 })).text, draw: { steps: studios.config.drawSteps, ms: studios.config.drawTimeoutS * 1000 } } : {}),
             resolveRef: (rid) => {
               const e = manifest.assets.find((a) => a.id === rid)
               return e ? resolveFile(projectDir, e) : null
@@ -311,6 +330,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     )
     if (!r.ok) throw new Error(`${id}: ${r.error}`)
     if (r.skipped) return { skipped: r.reason, entry }
+    for (const w of r.warnings ?? []) ctx.log(`${id}: warning: ${w}`)
     const next = (await store.updateAsset(slug, id, (cur) => ({
       ...cur,
       versions: r.entry.versions,
@@ -326,25 +346,34 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     return { entry: next }
   }
 
+  /** One asset job: generates it unless it has a file already (`draw`: the sprite is drawn by the agent in Pixel Studio). */
+  const generateJob = async (ctx: JobContext, slug: string, draw: boolean): Promise<string> => {
+    const body = bodyOf<{ force: boolean; prompt: string; engine: string; seed: number }>(ctx.jobBody)
+    const id = ctx.job.unit
+    if (!id) throw new Error(`${ctx.job.task} has no asset id`)
+    const explicit = !!body.force && (body.prompt !== undefined || body.engine !== undefined || body.seed !== undefined)
+    const entry = await svc.requireAsset(slug, id)
+    if (!body.force && resolveFile(store.dir(slug), entry)) {
+      await svc.bumpStep(slug, 'generate', `${id}: already has a file`)
+      return `${id}: already has a file, skipped`
+    }
+    const r = await generateOne(ctx, slug, id, { force: !!body.force, ...(explicit ? { prompt: body.prompt, engine: body.engine, seed: body.seed } : {}) }, { draw })
+    await svc.bumpStep(slug, 'generate', r.skipped ? `${id}: ${r.skipped}, skipped` : `${id}: version ${r.entry.selected}`)
+    return r.skipped ? `${id}: ${r.skipped}, skipped` : `${id}: new version ${r.entry.selected} (${r.entry.engine})`
+  }
+
   reg(
     TASKS.generate,
     async (ctx, slug) => {
-      const body = bodyOf<{ dispatch: boolean; force: boolean; ids: string[]; prompt: string; engine: string; seed: number; tail: boolean }>(ctx.jobBody)
+      const body = bodyOf<{ dispatch: boolean; force: boolean; ids: string[]; tail: boolean }>(ctx.jobBody)
       if (body.dispatch) return dispatchGenerate(ctx, slug, body)
-      const id = ctx.job.unit
-      if (!id) throw new Error('vn.assets.generate has no asset id')
-      const explicit = !!body.force && (body.prompt !== undefined || body.engine !== undefined || body.seed !== undefined)
-      const entry = await svc.requireAsset(slug, id)
-      if (!body.force && resolveFile(store.dir(slug), entry)) {
-        await svc.bumpStep(slug, 'generate', `${id}: already has a file`)
-        return `${id}: already has a file, skipped`
-      }
-      const r = await generateOne(ctx, slug, id, { force: !!body.force, ...(explicit ? { prompt: body.prompt, engine: body.engine, seed: body.seed } : {}) })
-      await svc.bumpStep(slug, 'generate', r.skipped ? `${id}: ${r.skipped}, skipped` : `${id}: version ${r.entry.selected}`)
-      return r.skipped ? `${id}: ${r.skipped}, skipped` : `${id}: new version ${r.entry.selected} (${r.entry.engine})`
+      return generateJob(ctx, slug, false)
     },
     { noModel: true, step: false }
   )
+
+  // a sprite drawn by the agent in Pixel Studio: the same job, but it asks a model, so it is not `noModel`
+  reg(TASKS.draw, (ctx, slug) => generateJob(ctx, slug, true), { step: false })
 
   /** The fan-out: one job per asset that needs a file, the reviews when they are on, then the rest of the chain. */
   const dispatchGenerate = async (ctx: JobContext, slug: string, body: { force?: boolean; ids?: string[]; tail?: boolean }): Promise<string> => {
@@ -365,7 +394,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const all: string[] = []
     for (const a of todo) {
       const sheet = a.kind === 'sprite' ? generated.get(a.refs?.[0] ?? '') : undefined
-      const id = await svc.enqueue(slug, TASKS.generate, a.id, run, { depends_on: sheet ? [sheet] : [], body: { force: !!body.force }, label: `generate ${a.id}` })
+      const id = await svc.enqueue(slug, svc.generateTask(settings, a), a.id, run, { depends_on: sheet ? [sheet] : [], body: { force: !!body.force }, label: `generate ${a.id}` })
       generated.set(a.id, id)
       all.push(id)
       if (reviewOn && IMAGE_KINDS.has(a.kind)) all.push(await svc.enqueue(slug, TASKS.review, a.id, run, { depends_on: [id], vision: true, label: `review ${a.id}` }))
@@ -648,6 +677,11 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
           return e ? resolveFile(dir, e) : null
         },
         voice: await voiceSource(slug, settings),
+        musicLoops: (id) => {
+          const e = byId.get(id)
+          // a custom file (uploaded by hand) has no known loop points: it plays from the start as before
+          return e && e.source === 'generated' ? e.versions.find((v) => v.n === e.selected)?.loopStartSec : undefined
+        },
         cues,
         sdkPath: renpy.sdkPath,
         resolution: renpy.resolution,

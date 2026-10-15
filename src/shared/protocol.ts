@@ -391,10 +391,30 @@ export type EngineEvent =
   | { type: 'voice.status'; ok: boolean; url: string; error: string; omniInstalled: boolean; voices: VibeVoiceView[] }
   /** A preview clip of a voice (`designVoice`, `previewVoice`): `file` is relative to the project folder; `rev` busts the player's cache. */
   | { type: 'voice.preview'; slug: string; speakerKey: string; voice: string; file: string; rev: number; description: string; seed: number | null; lang: Lang }
+  /** Pixel Studio and Chiptune Studio (MCP): reachable or not. The answer to `studiosStatus`. */
+  | { type: 'studios.status'; studios: StudioStatusView[] }
+  /** An asset was opened in a studio (`openInStudio`): `window` when a window was started, `mcp` when a running studio was asked. Saving there makes a new version. */
+  | { type: 'studio.opened'; slug: string; id: string; studio: 'pixel' | 'chiptune'; mode: 'window' | 'mcp'; message: string }
   /** The game was started (`runGame`). */
   | { type: 'game.started'; slug: string; pid: number | null }
   /** The Ren'Py settings (config/renpy.md): the answer to `getRenpyConfig` and `saveRenpyConfig`. */
   | ({ type: 'renpy.config' } & RenpyConfigView)
+
+/** One studio app (Pixel Studio, Chiptune Studio) as `studiosStatus` saw it. */
+export interface StudioStatusView {
+  id: 'pixel' | 'chiptune'
+  name: string
+  ok: boolean
+  url: string
+  /** Why it is not reachable (includes how to start it). */
+  error: string
+  /** The app folder from config/studios.md. */
+  repo: string
+  /** How to start it headless. */
+  hint: string
+  /** The number of tools it offers, when reachable. */
+  tools: number
+}
 
 /** A VibeTTS voice as `list_voices` gives it (OmniVoice presets have `kind`, `description` and the sample `lang`). */
 export interface VibeVoiceView {
@@ -501,6 +521,10 @@ export type Command =
   | { type: 'generateVoice'; slug: string; lang?: Lang; beatId?: string; limit?: number }
   /** Checks VibeTTS (its MCP server) and lists its voices. Answers with `voice.status`. */
   | { type: 'voiceStatus' }
+  /** Checks Pixel Studio and Chiptune Studio (their MCP servers). Answers with `studios.status`. */
+  | { type: 'studiosStatus' }
+  /** Opens an asset in its studio (images in Pixel Studio, music in Chiptune Studio). Each save there becomes a new custom, locked version. Answers with `studio.opened`. */
+  | { type: 'openInStudio'; slug: string; id: string }
   /** Enqueues the voice plan: a VibeTTS voice per character and the narrator (existing ones are kept unless `overwrite`). */
   | { type: 'planVoices'; slug: string; overwrite?: boolean }
   /** Designs the voice of a speaker (a character key or `narrator`) from a description (the allowed words) and a seed, assigns it and answers with `voice.preview`. */
@@ -511,9 +535,16 @@ export type Command =
 /** The settings an `updateProjectSettings` command may change (each part is merged into the current one). */
 export interface ProjectSettingsPatch {
   theme?: string | null
-  /** `null` clears an optional field (`palette`, `stylePrompt`). */
-  art?: Partial<Omit<ProjectSettings['art'], 'palette' | 'stylePrompt'>> & { palette?: string | null; stylePrompt?: string | null }
-  music?: Partial<ProjectSettings['music']>
+  /** `null` clears an optional field (`palette`, `stylePrompt`, `provider`, `pixelProvider`, `pixel`). `pixel` is merged field by field. */
+  art?: Partial<Omit<ProjectSettings['art'], 'palette' | 'stylePrompt' | 'provider' | 'pixelProvider' | 'pixel'>> & {
+    palette?: string | null
+    stylePrompt?: string | null
+    provider?: ProjectSettings['art']['provider'] | null
+    pixelProvider?: ProjectSettings['art']['pixelProvider'] | null
+    pixel?: ProjectSettings['art']['pixel'] | null
+  }
+  /** `null` clears an optional field (`provider`, `chip`). */
+  music?: Partial<Omit<ProjectSettings['music'], 'provider' | 'chip'>> & { provider?: ProjectSettings['music']['provider'] | null; chip?: ProjectSettings['music']['chip'] | null }
   voice?: Partial<ProjectSettings['voice']>
 }
 
@@ -554,6 +585,8 @@ export type VnCommand = Extract<
       | 'generateVoice'
       | 'voiceStatus'
       | 'planVoices'
+      | 'studiosStatus'
+      | 'openInStudio'
       | 'designVoice'
       | 'previewVoice'
       | 'getRenpyConfig'
@@ -607,6 +640,8 @@ const COMMAND_TYPE_SET: Record<CommandType, true> = {
   generateVoice: true,
   voiceStatus: true,
   planVoices: true,
+  studiosStatus: true,
+  openInStudio: true,
   designVoice: true,
   previewVoice: true,
   getRenpyConfig: true,

@@ -12,6 +12,7 @@ import type {
   ProjectSummary,
   SourceBook,
   StepStatus,
+  StudioStatusView,
   ThemeInfo,
   VibeVoiceView
 } from '../../shared/protocol'
@@ -73,6 +74,10 @@ export interface VnData {
   comfy: ComfyStatusView | null
   /** VibeTTS (null until `voiceStatus` was answered). */
   vibetts: VoiceStatusView | null
+  /** Pixel Studio and Chiptune Studio (null until `studiosStatus` was answered). */
+  studios: StudioStatusView[] | null
+  /** `<slug>:<assetId>` -> what the last "Open in ... Studio" said. */
+  studioOpened: Record<string, string>
   /** `<slug>:<speakerKey>` -> the last preview clip. */
   voicePreviews: Record<string, VoicePreviewView>
   /** config/renpy.md, from `getRenpyConfig` / `saveRenpyConfig`. */
@@ -106,6 +111,8 @@ export function initialVn(): VnData {
     workflows: [],
     comfy: null,
     vibetts: null,
+    studios: null,
+    studioOpened: {},
     voicePreviews: {},
     freed: null,
     renpy: null,
@@ -202,6 +209,10 @@ export function reduceVn(s: VnData, e: EngineEvent, now = Date.now()): Partial<V
       const { type: _t, ...view } = e
       return { vibetts: view }
     }
+    case 'studios.status':
+      return { studios: e.studios }
+    case 'studio.opened':
+      return { studioOpened: { ...s.studioOpened, [`${e.slug}:${e.id}`]: e.message } }
     case 'voice.preview':
       return { voicePreviews: { ...s.voicePreviews, [`${e.slug}:${e.speakerKey}`]: { voice: e.voice, file: e.file, rev: e.rev, description: e.description, seed: e.seed, lang: e.lang } } }
     case 'comfy.freed':

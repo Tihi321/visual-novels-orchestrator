@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import type { ComfyClient, ComfyRequest, ComfyResult } from '../src/engine/comfy/client'
+import type { EngineOptions } from '../src/engine/engine'
 import type { ChatRequest } from '../src/engine/models/types'
 import { ROLES } from '../src/shared/schemas'
 import { makeEnv, waitFor } from './helpers'
@@ -42,11 +43,11 @@ export interface VnEnv extends TestEnv {
 }
 
 /** A mock-model engine with all eight agents, a fake ComfyUI, and no Ren'Py SDK (build and lint run without it). */
-export async function makeVnEnv(o: { sdk?: string | false } = {}): Promise<VnEnv> {
+export async function makeVnEnv(o: { sdk?: string | false; engine?: Partial<EngineOptions> } = {}): Promise<VnEnv> {
   const comfy = new FakeComfy()
   const env = await makeEnv(
     { roles: Object.fromEntries(ROLES.map((r) => [r, ['loc/m1']])), agents: ROLES.map((r) => ({ role: r, name: 'Test' })) },
-    { comfy }
+    { comfy, ...(o.engine ?? {}) }
   )
   if (o.sdk !== undefined) {
     const sdkPath = o.sdk === false ? path.join(env.dir, 'no-renpy-sdk') : o.sdk

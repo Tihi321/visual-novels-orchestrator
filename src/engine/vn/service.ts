@@ -9,6 +9,7 @@ import type {
   EngineEvent,
   EngineInfo,
   ImportPreview,
+  StudioStatusView,
   PipelineStatus,
   PipelineStep,
   ProjectDetail,
@@ -19,7 +20,7 @@ import type {
   ThemeInfo,
   VnCommand
 } from '../../shared/protocol'
-import { projectSettingsSchema } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
 import type { AssetEntry, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets } from '../assets/derive'
 import { lock, mergeDerived, pickVersion, resolveFile, setCustom, unlock } from '../assets/manifest'
@@ -55,6 +56,13 @@ import type { VoiceConfig } from '../voice/config'
 import { designVoice, previewVoice } from '../voice/jobs'
 import type { VoicePreview } from '../voice/jobs'
 import type { VibeTtsClient } from '../voice/vibetts'
+import { chiptuneClientFor, loadStudiosConfig, pixelClientFor, startHint, studioRepo, studioUrl, STUDIO_NAMES } from '../studios/config'
+import type { StudioId, StudiosConfig } from '../studios/config'
+import type { ChiptuneClient } from '../studios/chiptune'
+import type { PixelClient } from '../studios/pixel'
+import type { Watch } from '../studios/launch'
+import { openAssetInStudio } from './roundtrip'
+import type { OpenOptions, OpenResult } from './roundtrip'
 
 /** What the VN pipeline gets from the engine. */
 export interface VnDeps {
@@ -73,6 +81,10 @@ export interface VnDeps {
   comfy?: ComfyClient | (() => ComfyClient | Promise<ComfyClient>)
   /** A VibeTTS client (tests pass a fake). Default: one made from `config/voice.md`. */
   vibetts?: VibeTtsClient
+  /** A Pixel Studio client (tests pass a fake). Default: one made from `config/studios.md`. */
+  pixel?: PixelClient
+  /** A Chiptune Studio client (tests pass a fake). Default: one made from `config/studios.md`. */
+  chiptune?: ChiptuneClient
   /** The folders that ship with the app. Default: found relative to this code. */
   dirs?: Partial<AppDirs>
 }
@@ -89,7 +101,7 @@ export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings): 
     case 'sprite':
       return settings.art.editor
     case 'music':
-      return settings.music.engine
+      return resolveMusicProvider(settings) === 'chiptune' ? CHIPTUNE_ENGINE : settings.music.engine
     default:
       return null
   }
@@ -111,6 +123,7 @@ export class VnService {
   readonly dirs: AppDirs
   private readonly updateTimers = new Map<string, NodeJS.Timeout>()
   private comfyOverride: VnDeps['comfy']
+  private readonly watches = new Map<string, Watch>()
 
   constructor(readonly deps: VnDeps) {
     this.store = new ProjectStore(deps.dataDir)
@@ -139,6 +152,22 @@ export class VnService {
     const o = this.comfyOverride
     if (o) return typeof o === 'function' ? o() : o
     return createComfyClient({ config: await loadComfyConfigFor(this.dataDir), dataDir: this.dataDir })
+  }
+
+  /** Stops the file watchers of the studio round trips (the engine is stopping). */
+  dispose(): void {
+    for (const w of this.watches.values()) w.stop()
+    this.watches.clear()
+  }
+
+  /** Remembers a round-trip watcher under a key (one per asset: a new one replaces the old). */
+  keepWatch(key: string, watch: Watch): void {
+    this.watches.get(key)?.stop()
+    this.watches.set(key, watch)
+  }
+
+  async renpyResolution(): Promise<{ w: number; h: number }> {
+    return (await loadRenpyConfig(this.dataDir)).resolution
   }
 
   // ---- sources and import ----
@@ -337,11 +366,14 @@ export class VnService {
   /** Merges a settings patch (theme, art, music, voice) into project.md and brings the asset list in line with it. */
   async updateSettings(slug: string, patch: ProjectSettingsPatch): Promise<ProjectSettings> {
     const { settings: cur } = await this.store.loadSettings(slug)
+    const art: Record<string, unknown> = clearNulls({ ...cur.art, ...(patch.art ?? {}) })
+    // the pixel settings are merged field by field (a patch with only the dither keeps the size)
+    if (patch.art?.pixel) art.pixel = clearNulls({ ...(cur.art.pixel ?? {}), ...patch.art.pixel })
     const next = projectSettingsSchema.parse({
       ...cur,
       theme: patch.theme !== undefined ? patch.theme : cur.theme,
-      art: clearNulls({ ...cur.art, ...(patch.art ?? {}) }),
-      music: { ...cur.music, ...(patch.music ?? {}) },
+      art,
+      music: clearNulls({ ...cur.music, ...(patch.music ?? {}) }),
       voice: { ...cur.voice, ...(patch.voice ?? {}) }
     })
     await this.store.saveSettings(next)
@@ -367,7 +399,9 @@ export class VnService {
       const merged = mergeDerived(await this.store.loadAssets(slug), deriveAssets(book, settings))
       const assets = merged.manifest.assets.map((a) => {
         const engine = engineFor(a.kind, settings)
-        return engine && !a.locked && a.versions.length === 0 && a.source === 'generated' && a.engine !== engine ? { ...a, engine } : a
+        if (!engine || a.locked || a.source !== 'generated' || a.engine === engine) return a
+        // an asset with versions keeps its engine, except music: that follows the project's music provider (chiptune or the configured ComfyUI engine)
+        return a.versions.length === 0 || a.kind === 'music' ? { ...a, engine } : a
       })
       await this.store.saveAssets(slug, { assets })
       return { added: merged.added, orphaned: merged.orphaned }
@@ -589,10 +623,16 @@ export class VnService {
     const entry = await this.requireAsset(slug, id)
     if (entry.kind === 'voiceRef') throw new Error('voice references are uploaded (setVoiceRef), not generated')
     const run = await this.nextRun(slug)
-    const gen = await this.enqueue(slug, TASKS.generate, id, run, { body: { force: true, prompt: edits.prompt, engine: edits.engine, seed: edits.seed }, label: `regenerate ${id}` })
+    const { settings } = await this.store.loadSettings(slug)
+    const gen = await this.enqueue(slug, this.generateTask(settings, entry), id, run, { body: { force: true, prompt: edits.prompt, engine: edits.engine, seed: edits.seed }, label: `regenerate ${id}` })
     const ids = [gen]
     if (edits.rebuild !== false) ids.push(await this.enqueue(slug, TASKS.build, `regen-${id}`, run, { depends_on: [gen] }))
     return ids
+  }
+
+  /** The job that makes an asset: sprites of a `pixel-studio-draw` book are drawn by an agent (needs a model), the rest are generated. */
+  generateTask(settings: ProjectSettings, entry: Pick<AssetEntry, 'kind'>): VnTask {
+    return entry.kind === 'sprite' && settings.art.style === 'pixel' && resolveArtProvider(settings.art) === 'pixel-studio-draw' ? TASKS.draw : TASKS.generate
   }
 
   /** Uses a file for the asset (custom, locked) and rebuilds the game. */
@@ -647,6 +687,36 @@ export class VnService {
     })
     await this.emitAsset(slug, next)
     return next
+  }
+
+  // ---- Pixel Studio and Chiptune Studio ----
+
+  /** The studio clients and `config/studios.md` (the clients are the ones the engine was given, else made from the config). */
+  async studios(): Promise<{ pixel: PixelClient; chiptune: ChiptuneClient; config: StudiosConfig }> {
+    const config = await loadStudiosConfig(this.dataDir)
+    return { pixel: this.deps.pixel ?? pixelClientFor(config), chiptune: this.deps.chiptune ?? chiptuneClientFor(config), config }
+  }
+
+  /** Asks both studios for their tools. Never throws: an unreachable studio is `ok: false` with the message (and how to start it). */
+  async studiosStatus(): Promise<StudioStatusView[]> {
+    const { pixel, chiptune, config } = await this.studios()
+    const probe = async (id: StudioId, client: PixelClient | ChiptuneClient): Promise<StudioStatusView> => {
+      const base = { id, name: STUDIO_NAMES[id], url: client.url || studioUrl(config, id), repo: studioRepo(config, id), hint: startHint(config, id) }
+      try {
+        const tools = await client.listTools()
+        return { ...base, ok: true, error: '', tools: tools.length }
+      } catch (e) {
+        return { ...base, ok: false, error: (e as Error).message, tools: 0 }
+      }
+    }
+    return Promise.all([probe('pixel', pixel), probe('chiptune', chiptune)])
+  }
+
+  /** Opens an asset in its studio; each save there makes a new custom, locked version (see `vn/roundtrip.ts`). */
+  async openInStudio(slug: string, id: string, opts: OpenOptions = {}): Promise<OpenResult> {
+    const r = await openAssetInStudio(this, slug, id, opts)
+    this.emit({ type: 'studio.opened', slug, id, studio: r.studio, mode: r.mode, message: r.message })
+    return r
   }
 
   /** The VibeTTS client and `config/voice.md` (the client is the one the engine was given, else made from the config). */
@@ -987,6 +1057,12 @@ export class VnService {
           return
         case 'planVoices':
           await this.planVoices(cmd.slug, { overwrite: cmd.overwrite })
+          return
+        case 'studiosStatus':
+          this.emit({ type: 'studios.status', studios: await this.studiosStatus() })
+          return
+        case 'openInStudio':
+          await this.openInStudio(cmd.slug, cmd.id)
           return
         case 'designVoice':
         case 'previewVoice': {

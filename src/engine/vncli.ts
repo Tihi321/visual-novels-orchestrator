@@ -1,5 +1,6 @@
 import path from 'node:path'
-import type { EngineEvent, PipelineStep } from '../shared/protocol'
+import type { EngineEvent, PipelineStep, ProjectSettingsPatch } from '../shared/protocol'
+import { ART_PROVIDERS, CHIPS, DITHERS, MUSIC_PROVIDERS, PIXEL_PROVIDERS, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../shared/vn'
 import type { Lang } from '../shared/vn'
 import { Engine } from './engine'
 import type { EngineOptions } from './engine'
@@ -37,14 +38,19 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   voice plan <slug> [--overwrite]        create the VibeTTS voices (one per character and the narrator)
   voice status                           is VibeTTS reachable, and its voices
   comfy status|free                      ComfyUI lanes and engines / free its VRAM
+  settings <slug> [--style pixel|illustrated] [--palette name|none] [--music-provider chiptune|comfy|auto] [--chip nes|gb|genesis|snes|pce|auto]
+           [--pixel-provider pixel-studio|vno] [--art-provider pixel-studio-draw|comfy] [--pixel-size 320x180] [--dither none|ordered|floyd] [--outline[=false]] [--tracks n]
+                                         show or change the look settings of a project
+  studios status                         are Pixel Studio and Chiptune Studio reachable (how to start them if not)
+  studio open <slug> <assetId> [--wait] [--via launch|mcp] [--timeout seconds]   open an asset in Pixel Studio / Chiptune Studio; a save there makes a new custom, locked version (--wait: until the first save)
   themes                                 list the game themes
   mcp                                    run the MCP server on stdio
 `
 
 /** The commands the VN CLI handles (the rest of index.ts handles `probe`, `key-set` and the plain engine). */
-export const CLI_COMMANDS = new Set(['books', 'import', 'projects', 'run', 'edition', 'analyse', 'plan', 'assets', 'generate', 'asset', 'build', 'lint', 'play', 'android', 'voice', 'comfy', 'themes', 'help'])
+export const CLI_COMMANDS = new Set(['books', 'import', 'projects', 'run', 'edition', 'analyse', 'plan', 'assets', 'generate', 'asset', 'build', 'lint', 'play', 'android', 'voice', 'comfy', 'settings', 'studios', 'studio', 'themes', 'help'])
 
-const BOOL_FLAGS = new Set(['force', 'preflight', 'bundle', 'run', 'verbose', 'json', 'no-build', 'refresh-prompts', 'help'])
+const BOOL_FLAGS = new Set(['force', 'preflight', 'bundle', 'run', 'verbose', 'json', 'no-build', 'refresh-prompts', 'help', 'outline', 'wait'])
 
 export interface ParsedCli {
   command: string
@@ -94,6 +100,53 @@ function lang(p: ParsedCli): Lang | undefined {
 function need(p: ParsedCli, n: number, usage: string): string[] {
   if (p.args.length < n) throw new Error(`usage: ${usage}`)
   return p.args
+}
+
+/** The settings patch of `settings <slug>` flags. */
+export function settingsPatchFromFlags(p: ParsedCli): ProjectSettingsPatch {
+  const art: NonNullable<ProjectSettingsPatch['art']> = {}
+  const music: NonNullable<ProjectSettingsPatch['music']> = {}
+  const pick = <T extends string>(name: string, allowed: readonly T[], auto: readonly string[] = ['auto', 'none', 'default']): T | null | undefined => {
+    const v = flag(p, name)
+    if (v === undefined) return undefined
+    if (auto.includes(v)) return null
+    if (!(allowed as readonly string[]).includes(v)) throw new Error(`--${name} must be one of ${[...allowed, 'auto'].join(', ')}, not "${v}"`)
+    return v as T
+  }
+  const style = flag(p, 'style')
+  if (style !== undefined) {
+    if (style !== 'illustrated' && style !== 'pixel') throw new Error('--style must be illustrated or pixel')
+    art.style = style
+  }
+  const palette = flag(p, 'palette')
+  if (palette !== undefined) art.palette = palette === 'none' ? null : palette
+  const pp = pick('pixel-provider', PIXEL_PROVIDERS)
+  if (pp !== undefined) art.pixelProvider = pp
+  const ap = pick('art-provider', ART_PROVIDERS)
+  if (ap !== undefined) art.provider = ap
+  const pixel: NonNullable<ProjectSettingsPatch['art']>['pixel'] = {}
+  const size = flag(p, 'pixel-size')
+  if (size !== undefined) {
+    const m = /^(\d{2,3})x(\d{2,3})$/.exec(size)
+    if (!m) throw new Error('--pixel-size must be WIDTHxHEIGHT, for example 320x180')
+    pixel.width = Number(m[1])
+    pixel.height = Number(m[2])
+  }
+  const dither = pick('dither', DITHERS, ['default'])
+  if (dither !== undefined && dither !== null) pixel.dither = dither
+  if (p.flags.outline !== undefined) pixel.outline = p.flags.outline !== 'false'
+  if (Object.keys(pixel).length) art.pixel = pixel
+  const mp = pick('music-provider', MUSIC_PROVIDERS)
+  if (mp !== undefined) music.provider = mp
+  const chip = pick('chip', CHIPS)
+  if (chip !== undefined) music.chip = chip
+  const tracks = flag(p, 'tracks')
+  if (tracks !== undefined) {
+    const n = Number(tracks)
+    if (!Number.isInteger(n) || n < 0 || n > 20) throw new Error('--tracks must be a whole number from 0 to 20')
+    music.tracks = n
+  }
+  return { ...(Object.keys(art).length ? { art } : {}), ...(Object.keys(music).length ? { music } : {}) }
 }
 
 /** A headless engine for a CLI run: the data folder is created from the seed, events are printed. */
@@ -366,6 +419,49 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
         out(`custom workflows: ${s.customWorkflows.join(', ') || 'none'}; background removal: ${s.backgroundRemoval.available ? s.backgroundRemoval.models.join(', ') : 'not available'}`)
       }
       return s.ok ? 0 : 1
+    }
+    case 'settings': {
+      const [slug] = need(p, 1, 'settings <slug> [--music-provider ...] [--pixel-provider ...] ...')
+      const patch = settingsPatchFromFlags(p)
+      const next = Object.keys(patch).length ? await svc.updateSettings(slug!, patch) : (await svc.store.loadSettings(slug!)).settings
+      const px = resolvePixel(next.art)
+      out(`${slug}: art ${next.art.style}${next.art.palette ? ` (palette ${next.art.palette})` : ''}, sprites by ${resolveArtProvider(next.art)}, pixel art by ${resolvePixelProvider(next.art)} at ${px.width}x${px.height}, dither ${px.dither}, outline ${px.outline ? 'on' : 'off'}`)
+      out(`${slug}: music by ${resolveMusicProvider(next)}${next.music.provider ? '' : ' (auto)'}, chip ${next.music.chip ?? 'auto'}, ${next.music.tracks} track(s)`)
+      return 0
+    }
+    case 'studios': {
+      if (p.args[0] && p.args[0] !== 'status') throw new Error('usage: studios status')
+      let code = 0
+      for (const s of await svc.studiosStatus()) {
+        if (s.ok) out(`${s.name} (${s.url}) is reachable, ${s.tools} tool(s)`)
+        else {
+          out(`${s.name} (${s.url}) is not reachable: ${s.error}`)
+          code = 1
+        }
+      }
+      return code
+    }
+    case 'studio': {
+      if (p.args[0] !== 'open') throw new Error('usage: studio open <slug> <assetId> [--wait] [--via launch|mcp] [--timeout seconds]')
+      const [, slug, id] = need(p, 3, 'studio open <slug> <assetId> [--wait] [--via launch|mcp] [--timeout seconds]')
+      const via = flag(p, 'via')
+      if (via !== undefined && via !== 'launch' && via !== 'mcp') throw new Error('--via must be launch or mcp')
+      let saved: (() => void) | undefined
+      const first = new Promise<void>((resolve) => (saved = resolve))
+      const r = await svc.openInStudio(slug!, id!, { via: via as 'launch' | 'mcp' | undefined, rebuild: p.flags['no-build'] !== true, onVersion: (_e, v) => {
+        out(`${id}: version ${v.n} saved (${v.file}), custom and locked`)
+        saved?.()
+      } })
+      out(r.message)
+      out(`editing a copy: ${r.source}`)
+      if (!p.flags.wait) return 0
+      const secs = Number(flag(p, 'timeout') ?? 600)
+      const got = await Promise.race([first.then(() => true), new Promise<boolean>((res) => setTimeout(() => res(false), secs * 1000))])
+      if (!got) {
+        out(`no save within ${secs} s`)
+        return 1
+      }
+      return p.flags['no-build'] === true ? 0 : waitAndReport(svc, slug!)
     }
     case 'themes': {
       for (const t of svc.listThemes()) out(`${t.name.padEnd(14)} ${t.label.padEnd(16)} ${t.description}`)

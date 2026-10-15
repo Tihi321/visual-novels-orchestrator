@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
+import { CHIPTUNE_ENGINE, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../shared/vn'
 import type { AssetEntry, AssetManifest, AssetVersion, ProjectSettings, VnBook } from '../../shared/vn'
 import type { ComfyClient, ComfyProgress, ComfyResult } from '../comfy/client'
 import { randomSeed } from '../comfy/graphs'
@@ -9,6 +10,14 @@ import { fallbackNegative, fallbackPrompt, LANDSCAPE, PORTRAIT } from './derive'
 import { addVersion, assetDir, getEntry, nextVersionN, replaceEntry, resolveFile, saveManifest } from './manifest'
 import { loadPalette, type Rgb } from './palettes'
 import { fitBackground, keepMainSubject, keyOutFlatBackground, pixelate, prepareSprite, toWebp } from './postprocess'
+import { drawSpriteWithStudio } from '../studios/draw'
+import type { ModelReply } from '../studios/draw'
+import { fallbackChipPlan } from '../studios/chip-plan'
+import type { ChipTrackPlan } from '../studios/chip-plan'
+import type { ChiptuneClient } from '../studios/chiptune'
+import { makeChiptuneTrack } from '../studios/music'
+import { pixelateWithStudio } from '../studios/pixelate'
+import type { PixelClient } from '../studios/pixel'
 
 export interface GenerateOptions {
   /** Regenerate even when the asset is locked or custom. */
@@ -67,6 +76,16 @@ export interface GenerateContext {
   onProgress?: (e: GenerateProgress) => void
   signal?: AbortSignal
   now?: () => Date
+  /** Pixel Studio, for `pixelProvider: pixel-studio` and `provider: pixel-studio-draw`. Without it the built-in pixelate runs. */
+  pixel?: PixelClient
+  /** Chiptune Studio, for music assets with the `chiptune` engine. */
+  chiptune?: ChiptuneClient
+  /** The composer's plan of this track; default: the deterministic plan. */
+  chipPlan?: ChipTrackPlan
+  /** The agent's model, for the drawing mode (`pixel-studio-draw`). Without it (or when it fails) the import path runs. */
+  ask?: ModelReply
+  /** Limits of the drawing loop. */
+  draw?: { steps: number; ms: number }
 }
 
 export type GenerateResult =
@@ -160,6 +179,11 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     ...(opts.engine !== undefined ? { engine: opts.engine } : {}),
     ...(opts.seed !== undefined ? { seed: opts.seed } : {})
   }
+  // Music follows the project's provider: an unlocked generated track is made by Chiptune Studio or by the configured ComfyUI engine,
+  // whatever made its earlier versions. An engine given for this one run, a locked track and a custom file keep theirs.
+  if (edited.kind === 'music' && opts.engine === undefined && !edited.locked && edited.source === 'generated') {
+    edited.engine = resolveMusicProvider(ctx.settings) === 'chiptune' ? CHIPTUNE_ENGINE : edited.engine === CHIPTUNE_ENGINE ? ctx.settings.music.engine : edited.engine
+  }
   try {
     progress('start', `${entry.kind} with ${edited.engine}`)
     const pixel = ctx.settings.art.style === 'pixel'
@@ -176,23 +200,102 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
       if (!ctx.palettesDir) throw new Error('pixel mode with a palette needs palettesDir')
       palette = await loadPalette(ctx.palettesDir, ctx.settings.art.palette)
     }
-    const scale = sizes.pixelScale ?? 4
-    const finishPixel = async (png: Buffer) => toWebp(await pixelate(png, { scale, palette }), { lossless: true })
-
-    let out: { bytes: Buffer; ext: string }
-    let rawOut: { bytes: Buffer; ext: string } | undefined
     const warnings: string[] = []
     const warn = (m: string) => {
       warnings.push(m)
       progress('post', `warning: ${m}`)
     }
+    const px = resolvePixel(ctx.settings.art)
+    const bgSize = sizes.background ?? { w: 1920, h: 1080 }
+    // the built-in pixelate keeps its legacy scale (4) unless the project sets a pixel grid
+    const scale = sizes.pixelScale ?? (ctx.settings.art.pixel?.width !== undefined ? bgSize.w / px.width : 4)
+    // every pixel of the art is a whole number of screen pixels: the final image is the grid times this factor (6 for 320x180 on 1920x1080)
+    const factor = Math.max(1, Math.round(bgSize.w / px.width))
+    const studioPixels = pixel && resolvePixelProvider(ctx.settings.art) === 'pixel-studio'
+    const drawing = pixel && edited.kind === 'sprite' && resolveArtProvider(ctx.settings.art) === 'pixel-studio-draw'
+    const tmpRoot = path.join(ctx.projectDir, '.vno-tmp')
+    /** The pixel art of the pixel grid at its native size (a PNG), when Pixel Studio made it: kept for "Open in Pixel Studio". */
+    let native: Buffer | undefined
+
+    /**
+     * Pixel art from an image (a PNG): drawn by the agent in Pixel Studio (sprites, `pixel-studio-draw`), converted by Pixel Studio
+     * (`pixelProvider: pixel-studio`), or the built-in pixelate. When a studio was asked and fails, the built-in one runs and a warning is kept.
+     */
+    const finishPixel = async (png: Buffer): Promise<Buffer> => {
+      const meta = await sharp(png).metadata()
+      const raw = { w: meta.width ?? 1, h: meta.height ?? 1 }
+      const grid = edited.kind === 'background' ? { w: px.width, h: px.height } : { w: Math.max(8, Math.round(raw.w / factor)), h: Math.max(8, Math.round(raw.h / factor)) }
+      const out = { w: grid.w * factor, h: grid.h * factor }
+      if (drawing && ctx.ask && ctx.pixel) {
+        const dir = path.join(tmpRoot, `ref-${edited.id}`)
+        try {
+          progress('post', 'draw the sprite in Pixel Studio')
+          // Pixel Studio draws at most 128 px: a bigger sprite is drawn on a grid k times smaller and scaled k times more (still whole pixels)
+          const k = Math.ceil(Math.max(grid.w, grid.h) / 128)
+          const drawGrid = { w: Math.max(8, Math.round(grid.w / k)), h: Math.max(8, Math.round(grid.h / k)) }
+          const drawOut = { w: drawGrid.w * factor * k, h: drawGrid.h * factor * k }
+          const pal = palette ?? (ctx.palettesDir ? await loadPalette(ctx.palettesDir, 'db16').catch(() => undefined) : undefined)
+          if (!pal) throw new Error('no palette to draw with: choose one in the Look tab')
+          await fs.mkdir(dir, { recursive: true })
+          const reference = path.join(dir, 'reference.png')
+          await fs.writeFile(reference, png)
+          const d = await drawSpriteWithStudio({
+            client: ctx.pixel,
+            ask: ctx.ask,
+            reference,
+            grid: drawGrid,
+            palette: pal,
+            expression: edited.id.split('_').pop(),
+            name: edited.id,
+            out: drawOut,
+            tmpRoot,
+            maxSteps: ctx.draw?.steps ?? 12,
+            maxMs: ctx.draw?.ms ?? 240_000,
+            signal: ctx.signal,
+            log: (m) => progress('post', m)
+          })
+          native = d.native
+          return d.png
+        } catch (e) {
+          if (ctx.signal?.aborted) throw e
+          warn(`Pixel Studio drawing failed (${(e as Error).message}); used the import path`)
+        } finally {
+          await fs.rm(dir, { recursive: true, force: true })
+        }
+      } else if (drawing) {
+        warn(ctx.ask ? 'Pixel Studio is not configured' : 'no model answered for the drawing agent; used the import path')
+      }
+      if (studioPixels || drawing) {
+        if (ctx.pixel) {
+          try {
+            progress('post', 'pixel art with Pixel Studio')
+            const r = await pixelateWithStudio(ctx.pixel, png, { tmpRoot, grid, out, palette, dither: px.dither, outline: px.outline, name: edited.id, signal: ctx.signal })
+            native = r.native
+            return r.png
+          } catch (e) {
+            if (ctx.signal?.aborted) throw e
+            warn(`Pixel Studio could not convert the image (${(e as Error).message}); used the built-in pixelate`)
+          }
+        } else {
+          warn('Pixel Studio is not configured; used the built-in pixelate')
+        }
+      }
+      // the built-in pixelate: a whole-number scale, and the result is the grid times it
+      const whole = studioPixels || drawing ? factor : Math.max(1, Math.round(scale))
+      return pixelate(png, { scale: whole, palette, exactScale: true })
+    }
+    const finishPixelWebp = async (png: Buffer) => toWebp(await finishPixel(png), { lossless: true })
+
+    let out: { bytes: Buffer; ext: string }
+    let rawOut: { bytes: Buffer; ext: string } | undefined
+    let chiptune: Awaited<ReturnType<typeof makeChiptuneTrack>> | undefined
     switch (edited.kind) {
       case 'background': {
         const r = await ctx.comfy.generate({ ...base, width: size.w, height: size.h })
         progress('post', 'fit background')
         const t = sizes.background ?? { w: 1920, h: 1080 }
         const fitted = await fitBackground(r.bytes, t.w, t.h, { lossless: pixel })
-        out = { bytes: pixel ? await finishPixel(fitted) : fitted, ext: 'webp' }
+        out = { bytes: pixel ? await finishPixelWebp(fitted) : fitted, ext: 'webp' }
         break
       }
       case 'sheet': {
@@ -219,7 +322,7 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
         let cut = await removeBackground(ctx, raw.bytes, ctx.settings.art.bgRemoval ?? 'birefnet', { seed, size, onProgress }, warn)
         cut = await keepMainSubject(cut) // one figure: stray islands and a second figure are dropped before the trim
         const sprite = await prepareSprite(cut, { targetHeight: sizes.spriteHeight ?? 972 })
-        out = { bytes: pixel ? await finishPixel(sprite) : sprite, ext: 'webp' }
+        out = { bytes: pixel ? await finishPixelWebp(sprite) : sprite, ext: 'webp' }
         break
       }
       case 'cover': {
@@ -227,10 +330,19 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
         progress('post', 'fit cover')
         const t = sizes.cover ?? { w: 1080, h: 1920 }
         const fitted = await fitBackground(r.bytes, t.w, t.h, { lossless: pixel })
-        out = { bytes: pixel ? await finishPixel(fitted) : fitted, ext: 'webp' }
+        out = { bytes: pixel ? await finishPixelWebp(fitted) : fitted, ext: 'webp' }
         break
       }
       case 'music': {
+        if (edited.engine === CHIPTUNE_ENGINE) {
+          if (!ctx.chiptune) throw new Error('Chiptune Studio is not configured')
+          progress('comfy', 'compose with Chiptune Studio')
+          const plan = ctx.chipPlan ?? fallbackChipPlan(edited.id, { genreText: `${ctx.book.genre ?? ''} ${ctx.book.format} ${ctx.book.style}`, chip: ctx.settings.music.chip, palette: ctx.settings.art.palette, seconds: sizes.musicSeconds })
+          chiptune = await makeChiptuneTrack(ctx.chiptune, { dir: assetDir(ctx.projectDir, edited.id), n: nextVersionN(edited), plan, seed: edited.seed ?? undefined, name: `${ctx.book.title} ${edited.id}`, signal: ctx.signal })
+          for (const w of chiptune.warnings) warn(w)
+          out = { bytes: Buffer.alloc(0), ext: path.extname(chiptune.file).slice(1) }
+          break
+        }
         const r: ComfyResult = await ctx.comfy.generate({
           engine: edited.engine,
           prompt,
@@ -248,11 +360,28 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     }
 
     const n = nextVersionN(edited)
-    const file = `v${n}.${out.ext}`
-    await writeFileAtomic(path.join(assetDir(ctx.projectDir, edited.id), file), out.bytes)
+    const file = chiptune ? chiptune.file : `v${n}.${out.ext}`
+    // Chiptune Studio writes its own files (in the asset folder); the others are written here.
+    if (!chiptune) await writeFileAtomic(path.join(assetDir(ctx.projectDir, edited.id), file), out.bytes)
     // The raw edit output stays next to the version so background removal can be redone without regenerating.
     if (rawOut) await writeFileAtomic(path.join(assetDir(ctx.projectDir, edited.id), `v${n}.raw.${rawOut.ext}`), rawOut.bytes)
-    const version: AssetVersion = { n, file, createdAt: (ctx.now?.() ?? new Date()).toISOString(), seed, engine: edited.engine, prompt }
+    // The pixel art at its native size: what "Open in Pixel Studio" edits.
+    let nativeFile: string | undefined
+    if (native) {
+      nativeFile = `v${n}.px.png`
+      await writeFileAtomic(path.join(assetDir(ctx.projectDir, edited.id), nativeFile), native)
+    }
+    const version: AssetVersion = {
+      n,
+      file,
+      createdAt: (ctx.now?.() ?? new Date()).toISOString(),
+      seed: chiptune ? chiptune.seed : seed,
+      engine: edited.engine,
+      prompt,
+      ...(chiptune ? { loopStartSec: chiptune.loopStartSec, loopEndSec: chiptune.loopEndSec, ...(chiptune.songFile ? { songFile: chiptune.songFile } : {}) } : {}),
+      ...(nativeFile ? { nativeFile } : {}),
+      ...(warnings.length ? { warnings } : {})
+    }
     const updated = addVersion({ ...edited, seed: edited.seed }, version)
     progress('done', file)
     return { ok: true, skipped: false, entry: updated, version, ...(warnings.length ? { warnings } : {}) }

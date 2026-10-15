@@ -26,6 +26,8 @@ export interface BuildGameInput {
   settings: ProjectSettings
   /** The absolute file of the selected version of an asset, or null when it has none yet (a placeholder is made). */
   resolveAsset: (id: string) => string | null
+  /** Music asset id -> loop start in seconds (Chiptune Studio tracks): the music plays with a `<loop S>` prefix. */
+  musicLoops?: (id: string) => number | null | undefined
   /** Voice clips, only when the book has voice on. Omit for no voice at all. */
   voice?: VoiceSource
   /** Stage cues (the stage-director's); the default heuristic is used when omitted. */
@@ -123,6 +125,7 @@ export async function buildGame(inp: BuildGameInput): Promise<BuildGameResult> {
 
   // 5. Music and voice files.
   const music: Record<string, string> = {}
+  const musicLoops: Record<string, number | null | undefined> = {}
   const musicIds: string[] = []
   for (let i = 1; i <= Math.max(0, settings.music.tracks); i++) {
     const id = `music_${String(i).padStart(2, '0')}`
@@ -131,6 +134,7 @@ export async function buildGame(inp: BuildGameInput): Promise<BuildGameResult> {
     const rel = `audio/${id}${path.extname(src) || '.ogg'}`
     fs.copyFileSync(src, path.join(sub, rel))
     music[id] = rel
+    musicLoops[id] = inp.musicLoops?.(id)
     musicIds.push(id)
   }
 
@@ -151,7 +155,7 @@ export async function buildGame(inp: BuildGameInput): Promise<BuildGameResult> {
 
   // 6. Scripts.
   const cues = inp.cues ?? defaultCues(book, { musicIds, warn: (m) => warnings.push(m) })
-  const emitted = emitScripts({ book, editions: inp.editions, cues, voice, music, lightTheme: loaded.theme.light, uniformNames: themed.uniformNames })
+  const emitted = emitScripts({ book, editions: inp.editions, cues, voice, music, musicLoops, lightTheme: loaded.theme.light, uniformNames: themed.uniformNames })
   warnings.push(...emitted.warnings)
   for (const [name, content] of Object.entries(emitted.files)) fs.writeFileSync(path.join(sub, name), content, 'utf8')
 

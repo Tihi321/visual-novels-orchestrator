@@ -141,3 +141,12 @@ The same operations run headless: `yarn engine -- help` lists the CLI (`books`, 
 ### Art style words
 
 `ProjectSettings.art.stylePrompt` (optional string, user-editable with `updateProjectSettings { patch: { art: { stylePrompt } } }`) is the style prefix of every image prompt. When it is empty the engine derives one from the format, genre and art mode (kids formats: soft watercolor; pixel mode: pixel art; others by genre). The bible's `## Style` section is a writing note and is never put into an image prompt. Show the derived default as the field's placeholder.
+
+## Studios (VNO-02)
+
+- Commands: `studiosStatus` (answers `studios.status`: Pixel Studio and Chiptune Studio, reachable or not, with the start hint) and `openInStudio {slug, id}` (answers `studio.opened`; each save in the studio makes a new custom, locked version, announced by `asset.updated`).
+- Settings (`updateProjectSettings`): `art.pixelProvider` (`vno` | `pixel-studio`), `art.provider` (`comfy` | `pixel-studio-draw`), `art.pixel {width, height, dither, outline}`, `music.provider` (`comfy` | `chiptune`; missing: chiptune for pixel books), `music.chip`. `null` clears an optional one.
+- Asset versions may carry `loopStartSec`, `loopEndSec`, `songFile` (Chiptune Studio), `nativeFile` (Pixel Studio, the PNG at the pixel size), `warnings` and `custom`.
+- Config: `config/studios.md` (URLs, app folders, timeouts); `VNO_PIXEL_STUDIO_URL`, `VNO_CHIPTUNE_STUDIO_URL` override the URLs. The studio contract is in `.claude/tickets/VNO-02-chiptune-and-pixel-studio/contracts.md`.
+- CLI: `settings <slug> ...`, `studios status`, `studio open <slug> <assetId> [--wait]`.
+- Seed refresh: `.seed-hashes.json` in the data folder records the seed hashes; an untouched seeded file is updated on upgrade, an edited one is kept and listed as an update available (an `engine.warning` at start).

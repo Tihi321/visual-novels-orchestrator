@@ -4,8 +4,31 @@ import { langName } from '../lib/voice'
 import { useVn } from '../store/hooks'
 import { Pill } from './common'
 
+/** One generator app as a status card: reachable or not, what it does for a project, and how to start it. */
+function GeneratorCard({ id, name, role, ok, detail, hint }: { id: string; name: string; role: string; ok: boolean | null; detail: string; hint: string }) {
+  return (
+    <div className="card" data-testid={`gen-${id}`} style={{ minWidth: 220, flex: 1 }}>
+      <div className="row spread">
+        <b>{name}</b>
+        <Pill tone={ok === null ? 'dim' : ok ? 'good' : 'bad'} testId={`gen-${id}-status`}>
+          {ok === null ? 'checking' : ok ? 'running' : 'not running'}
+        </Pill>
+      </div>
+      <div className="dim">{role}</div>
+      {detail && <div className="dim ellipsis" title={detail}>{detail}</div>}
+      {ok === false && (
+        <div className="warn" data-testid={`gen-${id}-hint`} style={{ marginTop: 4 }}>
+          {hint}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ComfyPage() {
   const comfy = useVn((s) => s.comfy)
+  const vibetts = useVn((s) => s.vibetts)
+  const studios = useVn((s) => s.studios)
   const engines = useVn((s) => s.engines)
   const workflows = useVn((s) => s.workflows)
   const freed = useVn((s) => s.freed)
@@ -14,6 +37,8 @@ export function ComfyPage() {
     sendCommand({ type: 'comfyStatus' })
     sendCommand({ type: 'listEngines' })
     sendCommand({ type: 'listCustomWorkflows' })
+    sendCommand({ type: 'voiceStatus' })
+    sendCommand({ type: 'studiosStatus' })
   }
   useEffect(() => {
     if (connected) refresh()
@@ -22,10 +47,12 @@ export function ComfyPage() {
   const lanes = comfy?.lanes ?? []
   const reachable = lanes.filter((l) => l.reachable).length
   const ready = comfy?.engines.filter((e) => e.ready).length ?? 0
+  const pixel = studios?.find((s) => s.id === 'pixel')
+  const chiptune = studios?.find((s) => s.id === 'chiptune')
   return (
     <div className="stack" style={{ maxWidth: 960 }} data-testid="page-comfy">
       <div className="row spread">
-        <div className="panel-title">ComfyUI</div>
+        <div className="panel-title">Generators</div>
         <div className="row">
           <button onClick={refresh} data-testid="comfy-refresh">
             Refresh
@@ -36,8 +63,43 @@ export function ComfyPage() {
         </div>
       </div>
 
+      <div className="row" style={{ alignItems: 'stretch', flexWrap: 'wrap' }} data-testid="generators">
+        <GeneratorCard
+          id="comfy"
+          name="ComfyUI"
+          role="Images (and music, and voices as a fallback)"
+          ok={comfy ? comfy.ok : null}
+          detail={comfy ? `${reachable} of ${lanes.length} lanes, ${ready} engines ready` : ''}
+          hint="Start ComfyUI (python main.py), then press Refresh. The lanes are in config/comfy.md."
+        />
+        <GeneratorCard
+          id="vibetts"
+          name="VibeTTS"
+          role="Spoken lines"
+          ok={vibetts ? vibetts.ok : null}
+          detail={vibetts ? (vibetts.ok ? `${vibetts.voices.length} voices at ${vibetts.url}` : vibetts.url) : ''}
+          hint={vibetts?.error || 'Start VibeTTS: python -m vibetts --mcp-only in C:\\projects\\Personal\\vibe-tts-flow'}
+        />
+        <GeneratorCard
+          id="pixel"
+          name="Pixel Studio"
+          role="Pixel art: converts images, or draws small sprites"
+          ok={pixel ? pixel.ok : null}
+          detail={pixel ? (pixel.ok ? `${pixel.tools} tools at ${pixel.url}` : pixel.url) : ''}
+          hint={pixel?.error || 'Start it headless: yarn build && yarn mcp in the Pixel Studio folder'}
+        />
+        <GeneratorCard
+          id="chiptune"
+          name="Chiptune Studio"
+          role="Chip music: calm loops that play seamlessly"
+          ok={chiptune ? chiptune.ok : null}
+          detail={chiptune ? (chiptune.ok ? `${chiptune.tools} tools at ${chiptune.url}` : chiptune.url) : ''}
+          hint={chiptune?.error || 'Start it headless: yarn build && yarn mcp in the Chiptune Studio folder'}
+        />
+      </div>
+
       <div className="card" data-testid="comfy-status">
-        <h3>Status</h3>
+        <h3>ComfyUI status</h3>
         {!comfy && <div className="dim">Asking the engine...</div>}
         {comfy && (
           <div className="stack">
