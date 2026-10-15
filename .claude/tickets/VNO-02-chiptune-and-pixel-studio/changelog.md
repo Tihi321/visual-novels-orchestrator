@@ -7,7 +7,7 @@
 - Plan: [plan.md](plan.md)
 - Shared MCP contract: [contracts.md](contracts.md)
 
-**Commit status:** uncommitted in all three repos. No branches are pushed.
+**Commit status:** committed on the ticket branches: VN Studio `7de17cd` (plus a docs commit), Chiptune Studio `02c867b`, Pixel Studio `2ddfe83`. Not pushed or merged. What remains is in [next-steps.md](next-steps.md).
 
 ### Repos changed
 
