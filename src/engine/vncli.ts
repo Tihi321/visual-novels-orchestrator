@@ -1,0 +1,396 @@
+import path from 'node:path'
+import type { EngineEvent, PipelineStep } from '../shared/protocol'
+import type { Lang } from '../shared/vn'
+import { Engine } from './engine'
+import type { EngineOptions } from './engine'
+import { initDataFolder, resolveDataDir } from './store/dataFolder'
+import { isStep, STEPS, TASKS } from './vn/pipeline'
+import type { VnService } from './vn/service'
+
+/**
+ * The CLI for the VN pipeline: `yarn engine -- <command> ...`. It starts the same engine as the app (scheduler, agents,
+ * handlers) headless, enqueues the jobs and waits until the project has nothing left to run.
+ */
+
+export const USAGE = `VN Studio command line
+
+Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <dir>, --verbose)
+
+  books                                  list the books in the Scriptorium library
+  import <folder|slug> [--lang en|hr] [--run]   make a project from a book (--run: start the pipeline)
+  projects                               list the projects
+  run <slug> [--from <step>] [--force]   run the pipeline; steps: ${STEPS.join(', ')}
+  edition add <slug> <folder> --lang hr  add a translated edition
+  analyse <slug>                         let the script-analyst settle the items the parser could not
+  plan <slug> [--refresh-prompts]        write the art and music prompts (--refresh-prompts: write the art prompts again, also for assets that have a file; locked and custom ones stay)
+  assets <slug> [--kind k]               list the assets with their versions and files
+  generate <slug> [--kind k] [--only id] [--force]   generate the assets that have no file (k: background, sheet, sprite, cover, music)
+  asset replace <slug> <id> <file>       use your own file (custom, locked)
+  asset pick <slug> <id> <version>       use another version
+  asset regen <slug> <id> [--prompt text] [--engine id] [--seed n]
+  asset lock|unlock <slug> <id>
+  build <slug>                           build the Ren'Py game
+  lint <slug>                            run Ren'Py lint on the built game
+  play <slug>                            start the built game
+  android <slug> [--preflight] [--bundle]   check the setup / build the Android package
+  voice <slug> [--lang hr] [--only <beatId>] [--limit n]   generate the voice clips (only when the project's voice is on)
+  voice plan <slug> [--overwrite]        create the VibeTTS voices (one per character and the narrator)
+  voice status                           is VibeTTS reachable, and its voices
+  comfy status|free                      ComfyUI lanes and engines / free its VRAM
+  themes                                 list the game themes
+  mcp                                    run the MCP server on stdio
+`
+
+/** The commands the VN CLI handles (the rest of index.ts handles `probe`, `key-set` and the plain engine). */
+export const CLI_COMMANDS = new Set(['books', 'import', 'projects', 'run', 'edition', 'analyse', 'plan', 'assets', 'generate', 'asset', 'build', 'lint', 'play', 'android', 'voice', 'comfy', 'themes', 'help'])
+
+const BOOL_FLAGS = new Set(['force', 'preflight', 'bundle', 'run', 'verbose', 'json', 'no-build', 'refresh-prompts', 'help'])
+
+export interface ParsedCli {
+  command: string
+  /** The words after the command that are not options. */
+  args: string[]
+  flags: Record<string, string | true>
+}
+
+/** `import ./book --lang hr --run` -> `{ command: 'import', args: ['./book'], flags: { lang: 'hr', run: true } }`. */
+export function parseCliArgs(argv: readonly string[]): ParsedCli {
+  const words = argv[0] === '--' ? argv.slice(1) : [...argv]
+  const flags: Record<string, string | true> = {}
+  const rest: string[] = []
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i]!
+    if (w.startsWith('--') && w.length > 2) {
+      const eq = w.indexOf('=')
+      if (eq > 0) flags[w.slice(2, eq)] = w.slice(eq + 1)
+      else {
+        const name = w.slice(2)
+        const next = words[i + 1]
+        if (BOOL_FLAGS.has(name) || next === undefined || next.startsWith('--')) flags[name] = true
+        else {
+          flags[name] = next
+          i++
+        }
+      }
+    } else rest.push(w)
+  }
+  return { command: rest[0] ?? '', args: rest.slice(1), flags }
+}
+
+const out = (s = '') => process.stdout.write(s + '\n')
+
+function flag(p: ParsedCli, name: string): string | undefined {
+  const v = p.flags[name]
+  return typeof v === 'string' ? v : undefined
+}
+
+function lang(p: ParsedCli): Lang | undefined {
+  const l = flag(p, 'lang')
+  if (l === undefined) return undefined
+  if (l !== 'en' && l !== 'hr') throw new Error(`--lang must be en or hr, not "${l}"`)
+  return l
+}
+
+function need(p: ParsedCli, n: number, usage: string): string[] {
+  if (p.args.length < n) throw new Error(`usage: ${usage}`)
+  return p.args
+}
+
+/** A headless engine for a CLI run: the data folder is created from the seed, events are printed. */
+export async function startHeadless(argv: readonly string[], o: Partial<EngineOptions> & { print?: boolean } = {}): Promise<Engine> {
+  const dataDir = resolveDataDir({ argv })
+  const seedIdx = argv.indexOf('--seed')
+  await initDataFolder(dataDir, seedIdx >= 0 && argv[seedIdx + 1] ? path.resolve(argv[seedIdx + 1]!) : undefined)
+  const verbose = argv.includes('--verbose')
+  const engine = new Engine({
+    dataDir,
+    emit: (e) => {
+      if (o.print !== false) printEvent(e)
+      o.emit?.(e)
+    },
+    log: (m) => {
+      if (verbose) process.stderr.write(`[engine] ${m}\n`)
+    },
+    ...o
+  })
+  await engine.start()
+  return engine
+}
+
+/** One line per event that matters to someone watching a run. */
+export function printEvent(e: EngineEvent): void {
+  switch (e.type) {
+    case 'pipeline.progress': {
+      const s = e.status
+      if (s.status === 'queued') return
+      out(`[${e.slug}] ${e.step}: ${s.status}${s.total ? ` ${s.done ?? 0}/${s.total}` : ''}${s.message ? ` - ${s.message}` : ''}`)
+      return
+    }
+    case 'job.done':
+      if (!e.ok && e.error && !/^stopped/.test(e.error)) out(`  job ${e.jobId} failed: ${e.error}`)
+      return
+    case 'command.error':
+      out(`error (${e.command}): ${e.message}`)
+      return
+    case 'engine.warning':
+      out(`warning: ${e.message}`)
+      return
+    case 'build.result':
+      out(`[${e.result.slug}] ${e.result.action}: ${e.result.skipped ? 'skipped' : e.result.ok ? 'ok' : 'problems'}`)
+      return
+    default:
+  }
+}
+
+async function waitAndReport(svc: VnService, slug: string, o: { timeoutMs?: number } = {}): Promise<number> {
+  const r = await svc.waitIdle(slug, { timeoutMs: o.timeoutMs })
+  const st = await svc.status(slug)
+  if (r.timedOut) out(`stopped waiting: ${st.jobs.queued} queued, ${st.jobs.running} running`)
+  if (r.failed.length) {
+    out(`failed job(s): ${r.failed.join(', ')}`)
+    for (const f of st.failed.filter((x) => r.failed.includes(x.id))) out(`  ${f.id}: ${f.failure.slice(0, 300)}`)
+    return 1
+  }
+  return r.timedOut ? 1 : 0
+}
+
+function printAssets(assets: { id: string; kind: string; selected: number | null; versions: unknown[]; source: string; locked: boolean; fileRel: string | null; orphaned: boolean }[]): void {
+  for (const a of assets) {
+    out(`${a.id.padEnd(34)} ${a.kind.padEnd(10)} ${a.fileRel ? `v${a.selected ?? '?'}/${a.versions.length}${a.source === 'custom' ? ' custom' : ''}` : 'no file'}${a.locked ? ' locked' : ''}${a.orphaned ? ' (unused)' : ''}`)
+  }
+}
+
+/** Runs one CLI command against a started engine. Returns the exit code. */
+export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> {
+  const svc = engine.vn
+  switch (p.command) {
+    case 'books': {
+      const books = await svc.listSourceBooks()
+      if (!books.length) out(`no books in ${svc.scriptoriumDir()}/books`)
+      for (const b of books) out(`${b.slug.padEnd(48)} ${b.format.padEnd(24)} ${b.stage.padEnd(12)} ${b.path}`)
+      return 0
+    }
+    case 'import': {
+      const [source] = need(p, 1, 'import <folder|slug> [--lang en|hr] [--run]')
+      const r = await svc.importProject(source!, { lang: lang(p) })
+      const pv = r.preview
+      out(`project ${r.slug}: "${pv.title}" (${pv.format}, ${pv.kind}), language ${pv.detected.lang} (confidence ${pv.detected.confidence})`)
+      out(`${pv.chapters} chapter(s), ${pv.characters} character(s), ${pv.places} place(s), ${pv.uncertain} item(s) for the script-analyst`)
+      for (const w of pv.warnings) out(`  warning: ${w}`)
+      if (p.flags.run) {
+        const run = await svc.runPipeline(r.slug, 'analyse')
+        out(`pipeline run ${run.run} started`)
+        return waitAndReport(svc, r.slug)
+      }
+      return 0
+    }
+    case 'projects': {
+      const list = await svc.listProjects()
+      if (!list.length) out('no projects yet')
+      for (const s of list) out(`${s.slug.padEnd(40)} ${s.primaryLang} ${s.kind.padEnd(7)} ${s.chapters} ch  assets ${s.assets.ready}/${s.assets.total}  editions ${s.editions.join(',')}${s.voice ? '  voice' : ''}`)
+      return 0
+    }
+    case 'run': {
+      const [slug] = need(p, 1, 'run <slug> [--from <step>] [--force]')
+      const from = flag(p, 'from')
+      if (from && !isStep(from)) throw new Error(`--from must be one of ${STEPS.join(', ')}`)
+      const r = await svc.runPipeline(slug!, from as PipelineStep | undefined, { force: !!p.flags.force })
+      out(`pipeline run ${r.run} from ${r.from}`)
+      return waitAndReport(svc, slug!)
+    }
+    case 'edition': {
+      if (p.args[0] !== 'add') throw new Error('usage: edition add <slug> <folder> --lang hr')
+      const [, slug, folder] = need(p, 3, 'edition add <slug> <folder> --lang hr')
+      const l = lang(p)
+      if (!l) throw new Error('usage: edition add <slug> <folder> --lang hr')
+      await svc.addEdition(slug!, folder!, l)
+      const code = await waitAndReport(svc, slug!)
+      const rep = await svc.alignReport(slug!, l)
+      if (rep) out(`${l}: ${rep.matched} beat(s) matched, ${rep.missing.length} missing, ${rep.extra.length} extra${rep.warnings.length ? `, ${rep.warnings.length} warning(s)` : ''}`)
+      return code
+    }
+    case 'analyse': {
+      const [slug] = need(p, 1, 'analyse <slug>')
+      await svc.enqueue(slug!, TASKS.analyse, 'all', await svc.nextRun(slug!))
+      return waitAndReport(svc, slug!)
+    }
+    case 'assets': {
+      const [slug] = need(p, 1, 'assets <slug> [--kind k]')
+      const kind = flag(p, 'kind')
+      printAssets((await svc.listAssets(slug!)).filter((a) => !kind || a.kind === kind))
+      return 0
+    }
+    case 'plan': {
+      const [slug] = need(p, 1, 'plan <slug> [--refresh-prompts]')
+      const refresh = !!(p.flags.force || p.flags['refresh-prompts'])
+      const run = await svc.nextRun(slug!)
+      const art = await svc.enqueue(slug!, TASKS.artPlan, 'all', run, { body: { force: refresh } })
+      await svc.enqueue(slug!, TASKS.musicPlan, 'all', run, { depends_on: [art], body: { force: refresh } })
+      return waitAndReport(svc, slug!)
+    }
+    case 'generate': {
+      const [slug] = need(p, 1, 'generate <slug> [--kind k] [--only id] [--force]')
+      await svc.reconcileAssets(slug!)
+      let ids: string[] | undefined
+      const only = flag(p, 'only')
+      const kind = flag(p, 'kind')
+      if (only || kind) {
+        const assets = await svc.listAssets(slug!)
+        ids = assets.filter((a) => (!only || only.split(',').includes(a.id)) && (!kind || a.kind === kind) && !a.orphaned).map((a) => a.id)
+        if (!ids.length) throw new Error(`no asset matches ${only ? `--only ${only}` : ''} ${kind ? `--kind ${kind}` : ''}`.trim())
+      }
+      const run = await svc.nextRun(slug!)
+      await svc.enqueue(slug!, TASKS.generate, 'all', run, { body: { dispatch: true, force: !!p.flags.force, ids, tail: false } })
+      const code = await waitAndReport(svc, slug!)
+      printAssets((await svc.listAssets(slug!)).filter((a) => !ids || ids.includes(a.id)))
+      return code
+    }
+    case 'asset': {
+      const sub = p.args[0]
+      const [, slug, id, extra] = p.args
+      if (!sub || !slug || !id) throw new Error('usage: asset replace|pick|regen|lock|unlock <slug> <id> ...')
+      const rebuild = p.flags['no-build'] !== true
+      switch (sub) {
+        case 'replace': {
+          if (!extra) throw new Error('usage: asset replace <slug> <id> <file>')
+          await svc.replaceAsset(slug, id, path.resolve(extra), { rebuild })
+          out(`${id}: ${path.resolve(extra)} is now the asset (custom, locked)`)
+          return rebuild ? waitAndReport(svc, slug) : 0
+        }
+        case 'pick': {
+          const n = Number(extra)
+          if (!Number.isInteger(n) || n < 1) throw new Error('usage: asset pick <slug> <id> <version>')
+          await svc.pickAssetVersion(slug, id, n, { rebuild })
+          out(`${id}: version ${n} selected`)
+          return rebuild ? waitAndReport(svc, slug) : 0
+        }
+        case 'regen': {
+          const seed = flag(p, 'seed')
+          await svc.regenerateAsset(slug, id, { prompt: flag(p, 'prompt'), engine: flag(p, 'engine'), seed: seed === undefined ? undefined : Number(seed), rebuild })
+          const code = await waitAndReport(svc, slug)
+          printAssets((await svc.listAssets(slug)).filter((a) => a.id === id))
+          return code
+        }
+        case 'lock':
+        case 'unlock':
+          await svc.lockAsset(slug, id, sub === 'lock')
+          out(`${id}: ${sub}ed`)
+          return 0
+        default:
+          throw new Error('usage: asset replace|pick|regen|lock|unlock <slug> <id> ...')
+      }
+    }
+    case 'build': {
+      const [slug] = need(p, 1, 'build <slug>')
+      await svc.enqueueBuild(slug!)
+      const code = await waitAndReport(svc, slug!)
+      const b = (await svc.detail(slug!)).build
+      if (b) {
+        out(`game: ${b.gameDir} (theme ${b.theme}, ${b.placeholders?.length ?? 0} placeholder image(s))`)
+        for (const m of b.messages) out(`  ${m}`)
+      }
+      return code
+    }
+    case 'lint': {
+      const [slug] = need(p, 1, 'lint <slug>')
+      await svc.enqueueLint(slug!)
+      const code = await waitAndReport(svc, slug!)
+      const l = (await svc.detail(slug!)).lint
+      if (l) {
+        out(l.skipped ? l.messages.join('\n') : l.ok ? 'lint: clean' : `lint: ${l.messages.length} problem(s)`)
+        if (!l.ok && !l.skipped) for (const m of l.messages) out(`  ${m}`)
+        if (l.statistics) out(l.statistics)
+        return code || (l.skipped ? 3 : l.ok ? 0 : 1) // 3: lint could not run (no SDK, not built)
+      }
+      return code
+    }
+    case 'play': {
+      const [slug] = need(p, 1, 'play <slug>')
+      const r = await svc.runGame(slug!)
+      out(`started the game (pid ${r.pid ?? '?'})`)
+      return 0
+    }
+    case 'android': {
+      const [slug] = need(p, 1, 'android <slug> [--preflight] [--bundle]')
+      if (p.flags.preflight) {
+        const r = await svc.androidPreflight(slug!)
+        for (const m of r.messages) out(`${r.ok ? 'ok' : 'missing'}: ${m}`)
+        return r.ok ? 0 : 1
+      }
+      await svc.enqueueAndroid(slug!, !!p.flags.bundle)
+      return waitAndReport(svc, slug!, { timeoutMs: 70 * 60_000 })
+    }
+    case 'voice': {
+      if (p.args[0] === 'status') {
+        const st = await svc.voiceStatus()
+        if (!st.ok) {
+          out(`VibeTTS (${st.url}) is not reachable: ${st.error}`)
+          return 1
+        }
+        out(`VibeTTS (${st.url}) is reachable, ${st.voices.length} voice(s):`)
+        for (const v of st.voices) out(`  ${v.id.padEnd(28)} ${v.kind.padEnd(12)} ${v.lang.padEnd(3)} ${v.description}`)
+        return 0
+      }
+      if (p.args[0] === 'plan') {
+        const [, planSlug] = need(p, 2, 'voice plan <slug> [--overwrite]')
+        const planIds = await svc.planVoices(planSlug!, { overwrite: !!p.flags.overwrite })
+        if (!planIds.length) {
+          out('voice is off for this project: set voice.enabled in its project.md (or updateProjectSettings); nothing was planned')
+          return 0
+        }
+        return waitAndReport(svc, planSlug!)
+      }
+      const [slug] = need(p, 1, 'voice <slug> [--lang hr] [--only <beatId>] [--limit n]')
+      const limitFlag = flag(p, 'limit')
+      const limit = limitFlag === undefined ? undefined : Number(limitFlag)
+      if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) throw new Error(`--limit must be a positive whole number, not "${limitFlag}"`)
+      const ids = await svc.generateVoice(slug!, { lang: lang(p), beatId: flag(p, 'only'), limit })
+      if (!ids.length) {
+        out('voice is off for this project: set voice.enabled in its project.md (or updateProjectSettings); nothing was generated')
+        return 0
+      }
+      return waitAndReport(svc, slug!)
+    }
+    case 'comfy': {
+      const sub = p.args[0]
+      if (sub === 'free') {
+        for (const r of await svc.comfyFree()) out(`${r.lane}: ${r.ok ? 'freed' : `failed (${r.error})`}`)
+        return 0
+      }
+      if (sub !== 'status') throw new Error('usage: comfy status|free')
+      const s = await svc.comfyStatus()
+      for (const l of s.lanes) out(`${l.url}: ${l.reachable ? `up (running ${l.running}, pending ${l.pending})` : `down (${l.error})`}`)
+      if (s.ok) {
+        out(`engines ready: ${s.engines.filter((e) => e.ready).map((e) => e.id).join(', ') || 'none'}`)
+        for (const e of s.engines.filter((x) => !x.ready)) out(`  not ready: ${e.id} (missing ${e.missing.join(', ')})`)
+        out(`custom workflows: ${s.customWorkflows.join(', ') || 'none'}; background removal: ${s.backgroundRemoval.available ? s.backgroundRemoval.models.join(', ') : 'not available'}`)
+      }
+      return s.ok ? 0 : 1
+    }
+    case 'themes': {
+      for (const t of svc.listThemes()) out(`${t.name.padEnd(14)} ${t.label.padEnd(16)} ${t.description}`)
+      return 0
+    }
+    default:
+      out(USAGE)
+      return p.command ? 2 : 0
+  }
+}
+
+/** The entry point of the VN CLI: starts a headless engine, runs the command, stops the engine. */
+export async function runCli(argv: readonly string[]): Promise<number> {
+  const p = parseCliArgs(argv)
+  if (p.flags.help || p.command === 'help' || !p.command) {
+    out(USAGE)
+    return 0
+  }
+  const engine = await startHeadless(argv)
+  try {
+    return await runCliWith(engine, p)
+  } catch (e) {
+    out(`error: ${(e as Error).message}`)
+    return 1
+  } finally {
+    await engine.stop()
+  }
+}

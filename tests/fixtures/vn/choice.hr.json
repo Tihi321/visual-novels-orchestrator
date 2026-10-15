@@ -1,0 +1,29 @@
+{
+  "lang": "hr",
+  "title": "Dvije ulice",
+  "chapterTitles": {
+    "1": "Raskrižje",
+    "2": "Pekarska ulica",
+    "3": "Riječna ulica"
+  },
+  "choiceTexts": {
+    "1:0": "Idi Pekarskom ulicom",
+    "1:1": "Idi Riječnom ulicom"
+  },
+  "endings": {
+    "2": "Petra je jela toplu pitu i svi su bili sretni.",
+    "3": "Petra je pronašla rijeku, i bila je prekrasna."
+  },
+  "characterNames": {
+    "petra": "Petra",
+    "mango": "Mango"
+  },
+  "beats": {
+    "ch01.s01.b002": "Kamo, Mango?",
+    "ch01.s01.b003": "Tamo gdje miriše kruh!",
+    "ch01.s01.b004": "Dvije ulice pružale su se pred njima.",
+    "ch02.s01.b002": "Topli kruh!",
+    "ch03.s01.b002": "Sve je tako mokro!",
+    "ch03.s01.b003": "Gledali su vodu."
+  }
+}

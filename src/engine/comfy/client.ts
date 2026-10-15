@@ -1,0 +1,555 @@
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { z } from 'zod'
+import { readMd } from '../store/atomic'
+import { fillWorkflow, loadCustomWorkflow, workflowDirs, workflowKind } from './custom-workflow'
+import {
+  buildRemoveBackground,
+  ENGINES,
+  mergeFiles,
+  randomSeed,
+  sizeOf,
+  snap16,
+  type EngineKind,
+  type Graph
+} from './graphs'
+
+/**
+ * ComfyUI client, ported from dsh-comfyui `lib/comfy.js`.
+ *
+ * Design rules:
+ *   - a lane that cannot be reached counts as BUSY, never as free;
+ *   - a job that finishes with no outputs is a FAILURE, not an empty success;
+ *   - every call has a deadline, so a wedged ComfyUI cannot hang a job forever.
+ *
+ * Unlike DSH, the output bytes and extension are returned; the caller saves them into the project's asset folders.
+ */
+
+export const REQUEST_TIMEOUT_MS = 30_000
+export const DEFAULT_LANE = 'http://127.0.0.1:8188'
+
+// ---- config (config/comfy.md frontmatter) ----
+
+export const comfyConfigSchema = z.object({
+  lanes: z.array(z.string()).default([DEFAULT_LANE]),
+  queuePolicy: z.enum(['refuse', 'wait']).default('wait'),
+  requestTimeoutMs: z.number().int().positive().default(REQUEST_TIMEOUT_MS),
+  jobTimeoutMs: z.number().int().positive().default(1_800_000),
+  pollIntervalMs: z.number().int().positive().default(4000),
+  freeBeforeDispatch: z.boolean().default(false),
+  /** Engines offered by the app; empty means all. */
+  enabledEngines: z.array(z.string()).default([]),
+  audioFormat: z.enum(['flac', 'mp3', 'opus', 'wav']).default('mp3'),
+  /** Background-removal model file (from `models/background_removal`); empty picks the first one ComfyUI lists. */
+  backgroundRemovalModel: z.string().default(''),
+  /** Model file overrides per group: `{ zImage: { unet: '...' } }`. */
+  files: z.record(z.string(), z.record(z.string(), z.string())).default({}),
+  /** Per-engine sampler overrides: `{ 'z-image-turbo': { steps: 9 } }`. */
+  engineSettings: z.record(z.string(), z.record(z.string(), z.unknown())).default({})
+})
+export type ComfyConfig = z.output<typeof comfyConfigSchema>
+
+export function parseComfyConfig(data: unknown): ComfyConfig {
+  return comfyConfigSchema.parse(data ?? {})
+}
+
+/** Reads `config/comfy.md`; a missing file gives the defaults. */
+export async function loadComfyConfig(file: string): Promise<ComfyConfig> {
+  try {
+    return parseComfyConfig((await readMd(file)).data)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return parseComfyConfig({})
+    throw e
+  }
+}
+
+// ---- lanes and HTTP ----
+
+function normaliseLane(lane: unknown): string {
+  return String(lane ?? '').trim().replace(/\/+$/, '')
+}
+
+/** Every configured lane, trimmed and de-duplicated, in priority order. */
+export function lanesOf(config: { lanes?: string[] } | undefined): string[] {
+  const raw = Array.isArray(config?.lanes) && config.lanes.length > 0 ? config.lanes : [DEFAULT_LANE]
+  const seen = new Set<string>()
+  const lanes: string[] = []
+  for (const lane of raw) {
+    const url = normaliseLane(lane)
+    if (url.length === 0 || seen.has(url)) continue
+    seen.add(url)
+    lanes.push(url)
+  }
+  return lanes.length > 0 ? lanes : [DEFAULT_LANE]
+}
+
+interface FetchOpts extends RequestInit {
+  timeoutMs?: number
+}
+
+/** `fetch` with a deadline and a message that says which lane failed. */
+export async function fetchWithDeadline(url: string, { timeoutMs = REQUEST_TIMEOUT_MS, ...init }: FetchOpts = {}): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(url, { ...init, signal: controller.signal })
+  } catch (error) {
+    const err = error as { name?: string; code?: string; cause?: { code?: string }; message?: string }
+    if (err?.name === 'AbortError') throw new Error(`timed out after ${timeoutMs}ms: ${url}`, { cause: error })
+    if (err?.cause?.code === 'ECONNREFUSED' || err?.code === 'ECONNREFUSED') {
+      throw new Error(`ComfyUI unreachable at ${url} (connection refused)`, { cause: error })
+    }
+    throw new Error(`${url} failed: ${err?.message ?? String(error)}`, { cause: error })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** JSON request with a useful error body, not just an HTTP code. */
+export async function fetchJson<T = unknown>(url: string, opts: FetchOpts = {}): Promise<T> {
+  const response = await fetchWithDeadline(url, opts)
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`
+    try {
+      const body = (await response.json()) as { error?: unknown; node_errors?: unknown }
+      const errors = body?.error ?? body?.node_errors
+      if (errors !== undefined) detail = typeof errors === 'string' ? errors : JSON.stringify(errors).slice(0, 2000)
+    } catch {
+      /* keep the status line */
+    }
+    throw new Error(`ComfyUI ${opts.method ?? 'GET'} ${url} failed: ${detail}`)
+  }
+  return (await response.json()) as T
+}
+
+/** `{ running, pending }` for one lane. Throws when the lane is unreachable. */
+export async function queueState(lane: string, timeoutMs = 8000): Promise<{ running: number; pending: number }> {
+  const state = await fetchJson<{ queue_running?: unknown[]; queue_pending?: unknown[] }>(`${lane}/queue`, { timeoutMs })
+  return { running: state?.queue_running?.length ?? 0, pending: state?.queue_pending?.length ?? 0 }
+}
+
+/** A lane is busy when it is unreachable, running, or holding a queue. */
+export async function laneBusy(lane: string, timeoutMs = 8000): Promise<boolean> {
+  try {
+    const s = await queueState(lane, timeoutMs)
+    return s.running + s.pending > 0
+  } catch {
+    return true
+  }
+}
+
+/** Chooses a free lane: `{ lane }`, or `{ busy: [reasons] }` when none is free. */
+export async function pickLane(config: { lanes?: string[]; requestTimeoutMs?: number }): Promise<{ lane?: string; busy: string[] }> {
+  const reasons: string[] = []
+  for (const lane of lanesOf(config)) {
+    try {
+      const state = await queueState(lane, Number(config.requestTimeoutMs ?? REQUEST_TIMEOUT_MS) / 4 || 8000)
+      if (state.running + state.pending === 0) return { lane, busy: [] }
+      reasons.push(`${lane} is busy (${state.running} running, ${state.pending} queued)`)
+    } catch (error) {
+      reasons.push(`${lane} is unreachable (${(error as Error).message})`)
+    }
+  }
+  return { busy: reasons }
+}
+
+/** The first lane that answers at all, busy or not: for the `wait` policy, where ComfyUI's own queue holds the job. */
+export async function firstReachableLane(config: { lanes?: string[] }): Promise<string | null> {
+  for (const lane of lanesOf(config)) {
+    try {
+      await queueState(lane, 8000)
+      return lane
+    } catch {
+      /* try the next lane */
+    }
+  }
+  return null
+}
+
+/** Asks ComfyUI to drop cached models and free VRAM (weights stay on disk). */
+export async function freeMemory(lane: string, timeoutMs = 30_000): Promise<unknown> {
+  return fetchJson(`${lane}/free`, {
+    method: 'POST',
+    timeoutMs,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ unload_models: true, free_memory: true })
+  })
+}
+
+/** Model files ComfyUI can see in one folder. */
+export async function listModelFiles(lane: string, folder: string, timeoutMs = REQUEST_TIMEOUT_MS): Promise<string[]> {
+  const files = await fetchJson<unknown>(`${lane}/models/${encodeURIComponent(folder)}`, { timeoutMs })
+  return Array.isArray(files) ? (files as string[]) : []
+}
+
+export type ObjectInfo = Record<string, { input?: { required?: Record<string, unknown>; optional?: Record<string, unknown> }; output?: unknown[] }>
+
+/** The node catalog: tells "not installed" from "wrong filename". */
+export async function objectInfo(lane: string, timeoutMs = 60_000): Promise<ObjectInfo> {
+  return fetchJson<ObjectInfo>(`${lane}/object_info`, { timeoutMs })
+}
+
+export interface UploadedImage {
+  filename: string
+  name: string
+  subfolder: string
+  type: string
+}
+
+/** Uploads one image (or audio) into ComfyUI's input folder; `source` is a file path or bytes. Returns what LoadImage/LoadAudio expect. */
+export async function uploadImage(
+  lane: string,
+  source: string | Buffer,
+  { timeoutMs = 120_000, subfolder = '', name }: { timeoutMs?: number; subfolder?: string; name?: string } = {}
+): Promise<UploadedImage> {
+  const bytes = typeof source === 'string' ? await fs.readFile(source) : source
+  const fileName = name ?? (typeof source === 'string' ? path.basename(source) : `vno_${Date.now().toString(36)}.png`)
+  const form = new FormData()
+  form.append('image', new Blob([new Uint8Array(bytes)]), fileName)
+  form.append('overwrite', 'true')
+  if (subfolder) form.append('subfolder', subfolder)
+  const response = await fetchWithDeadline(`${lane}/upload/image`, { method: 'POST', body: form, timeoutMs })
+  if (!response.ok) throw new Error(`upload to ${lane} failed: HTTP ${response.status}`)
+  const body = (await response.json()) as { name?: string; subfolder?: string; type?: string }
+  if (!body?.name) throw new Error(`upload to ${lane} returned no filename: ${JSON.stringify(body)}`)
+  return {
+    filename: body.subfolder ? `${body.subfolder}/${body.name}` : body.name,
+    name: body.name,
+    subfolder: body.subfolder ?? '',
+    type: body.type ?? 'input'
+  }
+}
+
+/** Queues a graph; resolves with the prompt id. */
+export async function postPrompt(lane: string, graph: Graph, { clientId = 'vn-studio', timeoutMs = REQUEST_TIMEOUT_MS } = {}): Promise<string> {
+  const body = await fetchJson<{ prompt_id?: string }>(`${lane}/prompt`, {
+    method: 'POST',
+    timeoutMs,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prompt: graph, client_id: clientId })
+  })
+  if (!body?.prompt_id) throw new Error(`ComfyUI accepted the prompt but returned no prompt_id: ${JSON.stringify(body)}`)
+  return body.prompt_id
+}
+
+export type ComfyOutputs = Record<string, { images?: OutputItem[]; audio?: OutputItem[] } | undefined>
+
+export interface WaitOptions {
+  timeoutMs: number
+  pollMs?: number
+  signal?: AbortSignal
+  onPoll?: (info: { status: string; elapsedMs: number }) => void
+}
+
+/**
+ * Polls `/history/<id>` until the job reports outputs. A job that errored, was interrupted, or finished with no
+ * outputs throws: a silent empty result is the failure mode this client exists to avoid.
+ */
+export async function waitForOutputs(lane: string, promptId: string, { timeoutMs, pollMs = 4000, signal, onPoll }: WaitOptions): Promise<ComfyOutputs> {
+  const started = Date.now()
+  const deadline = started + timeoutMs
+  let lastStatus = ''
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error(`ComfyUI job ${promptId} cancelled`)
+    await new Promise((resolve) => setTimeout(resolve, pollMs))
+    let history: Record<string, { status?: { status_str?: string; messages?: unknown[] }; outputs?: ComfyOutputs } | undefined>
+    try {
+      history = await fetchJson(`${lane}/history/${promptId}`, { timeoutMs: 15000 })
+    } catch {
+      continue // a transient poll failure is not a job failure
+    }
+    const entry = history?.[promptId]
+    if (!entry) {
+      onPoll?.({ status: 'queued', elapsedMs: Date.now() - started })
+      continue
+    }
+    const status = entry.status?.status_str
+    if (status) lastStatus = status
+    onPoll?.({ status: status ?? 'running', elapsedMs: Date.now() - started })
+    if (status === 'error') {
+      const messages = entry.status?.messages ?? []
+      const details: string[] = []
+      for (const pair of messages) {
+        const [kind, payload] = (pair ?? []) as [string, Record<string, string> | undefined]
+        if (kind === 'execution_error') {
+          details.push(payload?.exception_message ?? payload?.exception_type ?? 'execution error')
+          if (payload?.node_type) details.push(`at node ${payload.node_id} (${payload.node_type})`)
+        } else if (kind === 'execution_interrupted') {
+          details.push(`interrupted at node ${payload?.node_id} (${payload?.node_type}): something stopped it, e.g. the Interrupt button in the ComfyUI window`)
+        }
+      }
+      if (details.length === 0) details.push(`status "error" with no detail; messages: ${JSON.stringify(messages).slice(0, 400)}`)
+      throw new Error(`ComfyUI job ${promptId} failed: ${details.join(' ')}`)
+    }
+    const outputs = entry.outputs
+    if (outputs && Object.keys(outputs).length > 0) return outputs
+  }
+  throw new Error(`ComfyUI job ${promptId} did not finish within ${Math.round(timeoutMs / 1000)}s${lastStatus ? ` (last status: ${lastStatus})` : ''}`)
+}
+
+export interface OutputItem {
+  filename: string
+  subfolder?: string
+  type?: string
+}
+
+/** Flattens outputs into the media entries they carry, in node order. `preferNode` restricts to one node when it has output. */
+export function collectOutputs(outputs: ComfyOutputs | undefined, preferNode?: string): { images: OutputItem[]; audio: OutputItem[] } {
+  const pick = (entries: Array<[string, NonNullable<ComfyOutputs[string]>]>) => {
+    const images: OutputItem[] = []
+    const audio: OutputItem[] = []
+    for (const [, out] of entries) {
+      for (const item of out.images ?? []) if (item?.filename) images.push(item)
+      for (const item of out.audio ?? []) if (item?.filename) audio.push(item)
+    }
+    return { images, audio }
+  }
+  const all = Object.entries(outputs ?? {}).filter((e): e is [string, NonNullable<ComfyOutputs[string]>] => !!e[1])
+  if (preferNode) {
+    const own = pick(all.filter(([id]) => id === preferNode))
+    if (own.images.length + own.audio.length > 0) return own
+  }
+  return pick(all)
+}
+
+/** Downloads one output file's bytes through `/view`. */
+export async function downloadOutput(lane: string, item: OutputItem, timeoutMs = 120_000): Promise<Buffer> {
+  const params = new URLSearchParams({ filename: item.filename, subfolder: item.subfolder ?? '', type: item.type ?? 'output' })
+  const response = await fetchWithDeadline(`${lane}/view?${params}`, { timeoutMs })
+  if (!response.ok) throw new Error(`ComfyUI /view failed: HTTP ${response.status}`)
+  return Buffer.from(await response.arrayBuffer())
+}
+
+// ---- engine runs ----
+
+export interface ComfyProgress {
+  stage: 'lane' | 'upload' | 'queued' | 'running' | 'download'
+  message: string
+}
+
+export interface ComfyRequest {
+  /** A built-in engine id (`z-image-turbo`) or `custom:<workflow name>`. */
+  engine: string
+  prompt?: string
+  negative?: string
+  /** Explicit size, snapped to a multiple of 16. */
+  width?: number
+  height?: number
+  seed?: number
+  steps?: number
+  cfg?: number
+  /** Edit engines and custom workflows with a `reference` mapping: file paths or image bytes (uploaded first). */
+  references?: Array<string | Buffer>
+  /** Music engines. */
+  seconds?: number
+  format?: 'flac' | 'mp3' | 'opus' | 'wav'
+  lyrics?: string
+  /** Custom TTS workflows. */
+  text?: string
+  language?: string
+  voiceRef?: string | Buffer
+  filenamePrefix?: string
+  onProgress?: (p: ComfyProgress) => void
+  signal?: AbortSignal
+}
+
+export interface ComfyResult {
+  bytes: Buffer
+  /** Lower-case, without the dot: `png`, `mp3`, `flac`. */
+  ext: string
+  kind: EngineKind
+  seed: number
+  engine: string
+  lane: string
+  promptId: string
+}
+
+/** What asset generation needs from ComfyUI. Tests pass a fake. */
+export interface ComfyClient {
+  generate(req: ComfyRequest): Promise<ComfyResult>
+  /** Cuts out the background (alpha PNG). Null when ComfyUI has no usable removal model. */
+  removeBackground(image: Buffer, opts?: { onProgress?: (p: ComfyProgress) => void; signal?: AbortSignal }): Promise<Buffer | null>
+}
+
+export interface ComfyClientOptions {
+  config: ComfyConfig
+  /** The data folder: custom workflows are read from `<dataDir>/config/workflows` and `<dataDir>/workflows`. */
+  dataDir?: string
+  /** Overrides the workflow folders. */
+  workflowDirs?: string[]
+}
+
+export const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp'])
+
+function extOf(filename: string, kind: EngineKind): string {
+  const ext = path.extname(filename).slice(1).toLowerCase()
+  return ext || (kind === 'image' ? 'png' : 'bin')
+}
+
+/** The ids of the engines the app offers (registry order); `enabledEngines` filters when set. */
+export function availableEngines(config: ComfyConfig): string[] {
+  const all = Object.keys(ENGINES)
+  return config.enabledEngines.length > 0 ? all.filter((id) => config.enabledEngines.includes(id)) : all
+}
+
+/** Names of the background-removal models ComfyUI can load (core `LoadBackgroundRemovalModel` node). Empty when none. */
+export function removalModelsOf(info: ObjectInfo | undefined): string[] {
+  const spec = info?.LoadBackgroundRemovalModel?.input?.required?.bg_removal_name as unknown[] | undefined
+  if (!spec) return []
+  const first = spec[0]
+  if (Array.isArray(first)) return first.map(String)
+  const options = (spec[1] as { options?: unknown[] } | undefined)?.options
+  return Array.isArray(options) ? options.map(String) : []
+}
+
+export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
+  const { config } = opts
+  const files = mergeFiles(config.files as never)
+  const dirs = opts.workflowDirs ?? (opts.dataDir ? workflowDirs(opts.dataDir) : [])
+  let infoCache: ObjectInfo | null = null
+
+  async function chooseLane(): Promise<string> {
+    const lanes = lanesOf(config)
+    if (config.freeBeforeDispatch) for (const lane of lanes) await freeMemory(lane).catch(() => undefined)
+    const { lane, busy } = await pickLane(config)
+    let chosen = lane
+    if (!chosen && config.queuePolicy === 'wait') chosen = (await firstReachableLane(config)) ?? undefined
+    if (!chosen) {
+      throw new Error(
+        `every ComfyUI lane is busy or unreachable: ${busy.join('; ')}. Free a lane, set the queue policy to "wait" in config/comfy.md, or add another endpoint.`
+      )
+    }
+    return chosen
+  }
+
+  async function runGraph(lane: string, graph: Graph, req: { onProgress?: ComfyRequest['onProgress']; signal?: AbortSignal }, preferNode?: string) {
+    const promptId = await postPrompt(lane, graph)
+    req.onProgress?.({ stage: 'queued', message: `queued ${promptId}` })
+    const outputs = await waitForOutputs(lane, promptId, {
+      timeoutMs: config.jobTimeoutMs,
+      pollMs: config.pollIntervalMs,
+      signal: req.signal,
+      onPoll: (p) => req.onProgress?.({ stage: 'running', message: `${p.status} ${Math.round(p.elapsedMs / 1000)}s` })
+    })
+    return { promptId, collected: collectOutputs(outputs, preferNode) }
+  }
+
+  async function finish(lane: string, promptId: string, kind: EngineKind, items: { images: OutputItem[]; audio: OutputItem[] }, req: ComfyRequest, seed: number): Promise<ComfyResult> {
+    const wanted = kind === 'image' ? items.images : items.audio
+    const fallback = kind === 'image' ? items.audio : items.images
+    const chosen = wanted.length > 0 ? wanted : fallback
+    const item = chosen[0]
+    if (!item) throw new Error(`ComfyUI job ${promptId} finished without ${kind} output`)
+    req.onProgress?.({ stage: 'download', message: item.filename })
+    const bytes = await downloadOutput(lane, item)
+    return { bytes, ext: extOf(item.filename, wanted.length > 0 ? kind : kind === 'image' ? 'audio' : 'image'), kind, seed, engine: req.engine, lane, promptId }
+  }
+
+  async function generate(req: ComfyRequest): Promise<ComfyResult> {
+    if (req.engine.startsWith('custom:')) return generateCustom(req)
+    const engine = ENGINES[req.engine]
+    if (!engine) throw new Error(`unknown engine "${req.engine}"`)
+    const lane = await chooseLane()
+    req.onProgress?.({ stage: 'lane', message: lane })
+
+    const references: string[] = []
+    for (const [i, src] of (req.references ?? []).entries()) {
+      req.onProgress?.({ stage: 'upload', message: `reference ${i + 1}` })
+      references.push((await uploadImage(lane, src)).filename)
+    }
+    if (engine.acceptsReferences && references.length === 0) throw new Error(`engine ${req.engine} needs at least one reference image`)
+
+    const seed = req.seed ?? randomSeed()
+    const overrides = config.engineSettings[req.engine] ?? {}
+    const explicitSize = req.width !== undefined && req.height !== undefined
+    const prompt = req.prompt ?? ''
+    const graph = engine.build({
+      ...engine.defaults,
+      ...overrides,
+      ...(req.steps !== undefined ? { steps: req.steps } : {}),
+      ...(req.cfg !== undefined ? { cfg: req.cfg } : {}),
+      files: files[engine.fileGroup],
+      filenamePrefix: req.filenamePrefix ?? (engine.kind === 'image' ? 'vno_image' : 'vno_audio'),
+      seed,
+      prompt,
+      negativePrompt: req.negative ?? '',
+      width: explicitSize ? snap16(req.width!) : references.length > 0 ? undefined : sizeOf('square').width,
+      height: explicitSize ? snap16(req.height!) : references.length > 0 ? undefined : sizeOf('square').height,
+      references,
+      // An edit with no explicit size takes the reference image's own resolution.
+      autoLatent: references.length > 0 && !explicitSize,
+      tags: prompt,
+      style: prompt,
+      caption: prompt,
+      lyrics: req.lyrics ?? '',
+      ...(req.seconds !== undefined ? { seconds: req.seconds } : {}),
+      format: req.format ?? config.audioFormat
+    } as never)
+    const { promptId, collected } = await runGraph(lane, graph, req)
+    return finish(lane, promptId, engine.kind, collected, req, seed)
+  }
+
+  async function generateCustom(req: ComfyRequest): Promise<ComfyResult> {
+    const name = req.engine.slice('custom:'.length)
+    const workflow = await loadCustomWorkflow(dirs, name)
+    const lane = await chooseLane()
+    req.onProgress?.({ stage: 'lane', message: lane })
+    let reference: string | undefined
+    const firstRef = req.references?.[0]
+    if (firstRef !== undefined && workflow.mapping.reference) {
+      req.onProgress?.({ stage: 'upload', message: 'reference image' })
+      reference = (await uploadImage(lane, firstRef)).filename
+    }
+    let voiceRef: string | undefined
+    if (req.voiceRef !== undefined && workflow.mapping.voiceRef) {
+      req.onProgress?.({ stage: 'upload', message: 'voice reference' })
+      const name = typeof req.voiceRef === 'string' ? undefined : `vno_voice_${Date.now().toString(36)}.mp3`
+      voiceRef = (await uploadImage(lane, req.voiceRef, { name })).filename
+    }
+    const { graph, outputNode, seed } = fillWorkflow(workflow, {
+      prompt: req.prompt,
+      negative: req.negative,
+      width: req.width,
+      height: req.height,
+      seed: req.seed,
+      steps: req.steps,
+      reference,
+      text: req.text,
+      language: req.language,
+      voiceRef
+    })
+    const kind = workflowKind(graph, workflow.mapping)
+    const { promptId, collected } = await runGraph(lane, graph, req, outputNode)
+    return finish(lane, promptId, kind, collected, req, seed)
+  }
+
+  async function getInfo(): Promise<ObjectInfo | null> {
+    if (infoCache) return infoCache
+    const lane = await firstReachableLane(config)
+    if (!lane) return null
+    try {
+      infoCache = await objectInfo(lane)
+    } catch {
+      return null
+    }
+    return infoCache
+  }
+
+  async function removeBackground(image: Buffer, o: { onProgress?: ComfyRequest['onProgress']; signal?: AbortSignal } = {}): Promise<Buffer | null> {
+    const info = await getInfo()
+    const listed = removalModelsOf(info ?? undefined)
+    const wanted = config.backgroundRemovalModel?.trim()
+    // The exact file name comes from ComfyUI's own list; a configured name that is not listed falls back to the first.
+    const model = wanted && listed.includes(wanted) ? wanted : listed[0]
+    if (!info?.RemoveBackground || !model) return null
+    const lane = await chooseLane()
+    const uploaded = await uploadImage(lane, image, { name: `vno_rmbg_${Date.now().toString(36)}.png` })
+    const graph = buildRemoveBackground({ image: uploaded.filename, model, filenamePrefix: 'vno_cutout' })
+    const { promptId, collected } = await runGraph(lane, graph, o)
+    const item = collected.images[0]
+    if (!item) throw new Error(`ComfyUI job ${promptId} finished without image output`)
+    return downloadOutput(lane, item)
+  }
+
+  return { generate, removeBackground }
+}

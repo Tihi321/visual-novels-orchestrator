@@ -1,0 +1,182 @@
+{
+  "slug": "two-streets",
+  "title": "Two Streets",
+  "genre": "fantasy",
+  "format": "kids-choice-visual-story",
+  "kind": "choice",
+  "primaryLang": "en",
+  "style": "storybook illustration",
+  "characters": [
+    {
+      "key": "petra",
+      "name": "Petra",
+      "looks": "girl with a scarf"
+    },
+    {
+      "key": "mango",
+      "name": "Mango",
+      "looks": "orange cat"
+    }
+  ],
+  "places": [
+    {
+      "key": "crossroads",
+      "name": "Crossroads",
+      "looks": "two streets"
+    },
+    {
+      "key": "bakery_street",
+      "name": "Bakery street",
+      "looks": "warm shops"
+    },
+    {
+      "key": "river_street",
+      "name": "River street",
+      "looks": "wet stones"
+    }
+  ],
+  "chapters": [
+    {
+      "n": 1,
+      "title": "The Crossroads",
+      "choices": [
+        {
+          "text": "Go down Bakery Street",
+          "to": 2
+        },
+        {
+          "text": "Go down River Street",
+          "to": 3
+        }
+      ],
+      "ending": null,
+      "scenes": [
+        {
+          "id": "ch01.s01",
+          "placeKey": "crossroads",
+          "placeText": "Crossroads",
+          "time": "day",
+          "backgroundId": "bg_crossroads_day",
+          "description": "Two streets.",
+          "breakBefore": false,
+          "beats": [
+            {
+              "id": "ch01.s01.b001",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "petra"
+                },
+                {
+                  "charKey": "mango"
+                }
+              ]
+            },
+            {
+              "id": "ch01.s01.b002",
+              "type": "line",
+              "speakerKey": "petra",
+              "speakerLabel": "Petra",
+              "expression": "thinking",
+              "text": "Which way, Mango?"
+            },
+            {
+              "id": "ch01.s01.b003",
+              "type": "line",
+              "speakerKey": "mango",
+              "speakerLabel": "Mango",
+              "expression": "happy",
+              "text": "Where the bread smells!"
+            },
+            {
+              "id": "ch01.s01.b004",
+              "type": "narration",
+              "text": "Two streets lay ahead."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "title": "Bakery Street",
+      "choices": [],
+      "ending": "Petra ate warm bread, and everyone was happy.",
+      "scenes": [
+        {
+          "id": "ch02.s01",
+          "placeKey": "bakery_street",
+          "placeText": "Bakery street",
+          "time": "day",
+          "backgroundId": "bg_bakery_street_day",
+          "description": "Shops.",
+          "breakBefore": false,
+          "beats": [
+            {
+              "id": "ch02.s01.b001",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "petra"
+                }
+              ]
+            },
+            {
+              "id": "ch02.s01.b002",
+              "type": "line",
+              "speakerKey": "petra",
+              "speakerLabel": "Petra",
+              "expression": "happy",
+              "text": "Warm bread!"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "title": "River Street",
+      "choices": [],
+      "ending": "Petra found the river, and it was beautiful.",
+      "scenes": [
+        {
+          "id": "ch03.s01",
+          "placeKey": "river_street",
+          "placeText": "River street",
+          "time": "day",
+          "backgroundId": "bg_river_street_day",
+          "description": "River.",
+          "breakBefore": false,
+          "beats": [
+            {
+              "id": "ch03.s01.b001",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "petra"
+                },
+                {
+                  "charKey": "mango"
+                }
+              ]
+            },
+            {
+              "id": "ch03.s01.b002",
+              "type": "line",
+              "speakerKey": "mango",
+              "speakerLabel": "Mango",
+              "expression": "scared",
+              "text": "It is so wet!"
+            },
+            {
+              "id": "ch03.s01.b003",
+              "type": "narration",
+              "text": "They watched the water."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "warnings": []
+}

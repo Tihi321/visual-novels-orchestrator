@@ -1,0 +1,35 @@
+---
+kind: comfy
+# One ComfyUI endpoint per GPU, in priority order.
+lanes:
+  - http://127.0.0.1:8188
+# refuse: fail when every lane is busy. wait: hand the job to ComfyUI's own queue.
+queuePolicy: wait
+requestTimeoutMs: 30000
+jobTimeoutMs: 1800000
+pollIntervalMs: 4000
+freeBeforeDispatch: false
+# Engines the app offers. An empty list offers every engine in the registry.
+enabledEngines: []
+# Audio format for generated music (flac, mp3, opus, wav).
+audioFormat: mp3
+# Background removal model (models/background_removal); empty uses the first one ComfyUI lists.
+backgroundRemovalModel: ''
+# Model file overrides, merged over the built-in defaults. Example:
+# files:
+#   zImage:
+#     unet: z_image_turbo_bf16.safetensors
+files: {}
+# Sampler overrides per engine id, for example: { z-image-turbo: { steps: 9 } }
+engineSettings: {}
+---
+# ComfyUI
+
+VN Studio drives a local ComfyUI. The generated images and music are saved into each project's `assets/` folder, not into ComfyUI's output folder.
+
+- `lanes`: the ComfyUI endpoints (one per GPU). A lane that does not answer counts as busy.
+- `queuePolicy`: `refuse` fails when every lane is busy; `wait` queues behind the running job.
+- `files`: model file names (`qwen`, `zImage`, `krea2`, `audio` groups) when yours differ from the defaults.
+- `backgroundRemovalModel`: the BiRefNet file in `models/background_removal` (empty uses the first one ComfyUI lists).
+- `engineSettings`: steps, cfg, sampler or scheduler per engine id.
+- Custom workflows: put an API-format `<name>.json` and a `<name>.map.yaml` in `workflows/` of the data folder and pick `custom:<name>` as an engine. See `workflows/chatterbox-multilingual.map.yaml` for the mapping format.

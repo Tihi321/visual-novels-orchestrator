@@ -1,0 +1,29 @@
+{
+  "lang": "en",
+  "title": "Two Streets",
+  "chapterTitles": {
+    "1": "The Crossroads",
+    "2": "Bakery Street",
+    "3": "River Street"
+  },
+  "choiceTexts": {
+    "1:0": "Go down Bakery Street",
+    "1:1": "Go down River Street"
+  },
+  "endings": {
+    "2": "Petra ate warm bread, and everyone was happy.",
+    "3": "Petra found the river, and it was beautiful."
+  },
+  "characterNames": {
+    "petra": "Petra",
+    "mango": "Mango"
+  },
+  "beats": {
+    "ch01.s01.b002": "Which way, Mango?",
+    "ch01.s01.b003": "Where the bread smells!",
+    "ch01.s01.b004": "Two streets lay ahead.",
+    "ch02.s01.b002": "Warm bread!",
+    "ch03.s01.b002": "It is so wet!",
+    "ch03.s01.b003": "They watched the water."
+  }
+}

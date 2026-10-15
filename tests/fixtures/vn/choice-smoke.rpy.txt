@@ -1,0 +1,24 @@
+testsuite global:
+    teardown:
+        exit
+
+testcase default:
+    $ _test.transition_timeout = 0.05
+    $ _test.timeout = 20.0
+    click "Start"
+    pause 1.0
+    advance until screen "choice"
+    click "Go down River"
+    advance until screen "the_end"
+    click "Back to main menu"
+    click "Preferences"
+    click "Hrvatski"
+    pause 0.5
+    assert eval renpy.get_screen("preferences") is not None
+    click "Povratak"
+    click "Započni"
+    pause 1.0
+    advance until screen "choice"
+    click "Idi Pekarskom"
+    advance until screen "the_end"
+    assert screen "the_end"
