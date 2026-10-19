@@ -53,7 +53,7 @@ import type { VnTask } from './pipeline'
 import { voiceRefId } from './ids'
 import { clientFor, loadVoiceConfig } from '../voice/config'
 import type { VoiceConfig } from '../voice/config'
-import { designVoice, previewVoice } from '../voice/jobs'
+import { previewVoice, setVoice } from '../voice/jobs'
 import type { VoicePreview } from '../voice/jobs'
 import type { VibeTtsClient } from '../voice/vibetts'
 import { chiptuneClientFor, loadStudiosConfig, pixelClientFor, startHint, studioRepo, studioUrl, STUDIO_NAMES } from '../studios/config'
@@ -730,10 +730,14 @@ export class VnService {
     const { client } = await this.vibetts()
     try {
       const r = await client.listVoices()
-      const voices = r.voices.map((v) => ({ id: v.id, label: v.label ?? v.id, engine: v.engine ?? '', kind: v.kind ?? '', description: v.description ?? '', lang: v.lang ?? '' }))
-      return { type: 'voice.status', ok: true, url: client.url, error: '', omniInstalled: r.omnivoice_installed !== false, voices }
+      const voices = r.voices.map((v) => ({ id: v.id, label: v.label || v.id, engine: v.engine ?? '', languages: v.languages ?? [] }))
+      const languages = (r.languages ?? []).map((l) => l.code)
+      const english = { engine: r.english?.engine ?? '', language: 'en', voice: r.english?.voice ?? '' }
+      const other = { engine: '', language: r.other?.language ?? '', voice: r.other?.voice ?? '' }
+      return { type: 'voice.status', ok: true, url: client.url, error: '', supertonicInstalled: r.supertonic_installed === true, languages, english, other, voices }
     } catch (e) {
-      return { type: 'voice.status', ok: false, url: client.url, error: (e as Error).message, omniInstalled: false, voices: [] }
+      const none = { engine: '', language: '', voice: '' }
+      return { type: 'voice.status', ok: false, url: client.url, error: (e as Error).message, supertonicInstalled: false, languages: [], english: none, other: none, voices: [] }
     }
   }
 
@@ -747,11 +751,12 @@ export class VnService {
     return [await this.enqueue(slug, TASKS.voicePlan, 'plan', await this.nextRun(slug), { body: { overwrite: !!opts.overwrite, standalone: true }, label: 'plan the voices' })]
   }
 
-  /** Designs the voice of a speaker and makes its preview (a few seconds to load the model on the first call). */
-  designVoice(slug: string, a: { speakerKey: string; description: string; seed?: number; lang?: Lang }): Promise<VoicePreview> {
-    return designVoice(this, slug, a)
+  /** Gives a speaker the voice for one language and makes its preview (a few seconds to load the model on the first call). */
+  setVoice(slug: string, speakerKey: string, lang: Lang, voice: string): Promise<VoicePreview> {
+    return setVoice(this, slug, speakerKey, lang, voice)
   }
 
+  /** A short sample of a voice in a language (the project's primary one when `lang` is left out). */
   async previewVoice(slug: string, speakerKey: string, voice: string, lang?: Lang): Promise<VoicePreview> {
     const { settings } = await this.store.loadSettings(slug)
     return previewVoice(this, slug, speakerKey, voice, lang ?? settings.primaryLang)
@@ -1064,10 +1069,10 @@ export class VnService {
         case 'openInStudio':
           await this.openInStudio(cmd.slug, cmd.id)
           return
-        case 'designVoice':
+        case 'setVoice':
         case 'previewVoice': {
           // a few seconds (the model loads on the first call): answer when done, and do not hold up the other commands
-          const run = cmd.type === 'designVoice' ? this.designVoice(cmd.slug, cmd) : this.previewVoice(cmd.slug, cmd.speakerKey, cmd.voice, cmd.lang)
+          const run = cmd.type === 'setVoice' ? this.setVoice(cmd.slug, cmd.speakerKey, cmd.lang, cmd.voice) : this.previewVoice(cmd.slug, cmd.speakerKey, cmd.voice, cmd.lang)
           void run
             .then((p) => this.emit({ type: 'voice.preview', ...p }))
             .catch((e: Error) => {

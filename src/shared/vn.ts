@@ -142,6 +142,21 @@ export const pixelSchema = z.object({
 /** The pixel settings a project that has none uses: 320x180 backgrounds (a 6x scale to 1920x1080). */
 export const PIXEL_DEFAULTS = { width: 320, height: 180, dither: 'none' as Dither, outline: false }
 
+/**
+ * Projects from before per-language voices stored one voice id per speaker. An OmniVoice id (`omni:*`) is dropped (the speaker needs
+ * a new plan), a Supertonic id reads every language, any other id (Kokoro) reads English only.
+ */
+function legacyVoices(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
+  const out: Record<string, unknown> = {}
+  for (const [speaker, v] of Object.entries(raw)) {
+    if (typeof v !== 'string') out[speaker] = v
+    else if (v.startsWith('supertonic:')) out[speaker] = Object.fromEntries(LANGS.map((l) => [l, v]))
+    else if (!v.startsWith('omni:') && v) out[speaker] = { en: v }
+  }
+  return out
+}
+
 export const projectSettingsSchema = z.object({
   slug: z.string(),
   /** The book folder the project was imported from. */
@@ -188,12 +203,14 @@ export const projectSettingsSchema = z.object({
     .object({
       enabled: z.boolean().default(false),
       langs: z.array(langSchema).default([]),
-      /** Where clips come from: VibeTTS (OmniVoice over its local MCP server) or a ComfyUI TTS workflow. */
+      /** Where clips come from: VibeTTS (Kokoro and Supertonic over its local MCP server) or a ComfyUI TTS workflow. */
       provider: z.enum(['vibetts', 'comfy']).default('vibetts'),
       /** Language -> TTS engine id (ComfyUI custom workflow name), used when `provider` is `comfy`. */
       engines: z.record(z.string(), z.string()).default({}),
-      /** Speaker key (character key or `narrator`) -> VibeTTS voice id such as `omni:petra`. */
-      voices: z.record(z.string(), z.string()).default({})
+      /** Which engine reads English: the Kokoro voices (the default) or the Supertonic ones. Other languages always use Supertonic. Missing: `kokoro`. */
+      englishEngine: z.enum(['kokoro', 'supertonic']).optional(),
+      /** Speaker key (character key or `narrator`) -> language -> VibeTTS voice id such as `af_heart` (en) or `supertonic:F2`. */
+      voices: z.preprocess(legacyVoices, z.record(z.string(), z.partialRecord(langSchema, z.string()))).default({})
     })
     .default({ enabled: false, langs: [], provider: 'vibetts', engines: {}, voices: {} })
 })

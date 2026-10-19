@@ -77,7 +77,7 @@ export function ComfyPage() {
           name="VibeTTS"
           role="Spoken lines"
           ok={vibetts ? vibetts.ok : null}
-          detail={vibetts ? (vibetts.ok ? `${vibetts.voices.length} voices at ${vibetts.url}` : vibetts.url) : ''}
+          detail={vibetts ? (vibetts.ok ? `${vibetts.voices.length} voices at ${vibetts.url}; Supertonic ${vibetts.supertonicInstalled ? 'installed' : 'not installed'}` : vibetts.url) : ''}
           hint={vibetts?.error || 'Start VibeTTS: python -m vibetts --mcp-only in C:\\projects\\Personal\\vibe-tts-flow'}
         />
         <GeneratorCard

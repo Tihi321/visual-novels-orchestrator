@@ -1,14 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import type { ProjectDetail } from '../../../shared/protocol'
 import type { Lang } from '../../../shared/vn'
-import { VOICE_CATEGORIES, VOICE_VOCAB, buildDescription, parseDescription } from '../../../shared/voice-vocab'
-import type { VoiceCategory } from '../../../shared/voice-vocab'
 import { pickFile, sendCommand, updateSettings } from '../../api'
 import { isAudioPath } from '../../lib/assets'
 import { ttsChoices } from '../../lib/engines'
 import { projectAssetUrl } from '../../lib/urls'
 import { langName, toggleLang, ttsWorkflows, vibettsSupport, voiceOptions, voiceProgress, voiceSupport } from '../../lib/voice'
 import { useVn } from '../../store/hooks'
+import type { VoiceStatusView } from '../../store/vn'
 import { Pill, ProgressBar, useRecentError } from '../common'
 
 type Speaker = { key: string; name: string }
@@ -28,13 +27,13 @@ export function VoiceTab({ slug, detail }: { slug: string; detail: ProjectDetail
         <div className="row" style={{ marginTop: 8 }}>
           <label htmlFor="voice-provider">Voice engine</label>
           <select id="voice-provider" value={voice.provider} disabled={!voice.enabled} onChange={(e) => updateSettings(slug, { voice: { provider: e.target.value as 'vibetts' | 'comfy' } })} data-testid="voice-provider">
-            <option value="vibetts">VibeTTS (OmniVoice: English and Croatian)</option>
+            <option value="vibetts">VibeTTS (Kokoro / Supertonic)</option>
             <option value="comfy">ComfyUI workflow</option>
           </select>
         </div>
         <div className="dim" style={{ marginTop: 4 }}>
           {vibe
-            ? 'Voices are designed from a description and the same voice speaks every edition. VibeTTS must be running with its MCP server on.'
+            ? 'Each character has one fixed voice per edition language (Kokoro reads English, Supertonic reads Croatian and 29 more). VibeTTS must be running with its MCP server on.'
             : 'Voices only exist for languages that have an edition. A character without a reference clip uses the narrator’s.'}
         </div>
       </div>
@@ -49,6 +48,8 @@ function VibeVoice({ slug, detail, speakers }: { slug: string; detail: ProjectDe
   const voice = detail.settings.voice
   const editions = detail.summary.editions
   const status = useVn((s) => s.vibetts)
+  const englishEngine = voice.englishEngine ?? 'kokoro'
+  const needsSupertonic = (voice.langs.length ? voice.langs : [detail.settings.primaryLang]).some((l) => l !== 'en')
   const step = useVn((s) => s.progress[slug]?.voice ?? detail.summary.pipeline?.steps.voice)
   const run = voiceProgress(step)
   const errPlan = useRecentError(slug, 'planVoices')
@@ -66,14 +67,32 @@ function VibeVoice({ slug, detail, speakers }: { slug: string; detail: ProjectDe
           <button onClick={() => sendCommand({ type: 'voiceStatus' })} data-testid="vibetts-refresh">
             Check again
           </button>
-          {status?.ok && <span className="dim">{status.voices.filter((v) => v.id.startsWith('omni:')).length} voice(s)</span>}
+          {status?.ok && <span className="dim">{status.voices.length} voice(s)</span>}
         </div>
         {status && !status.ok && (
           <div className="warn" data-testid="vibetts-error" style={{ marginTop: 6 }}>
             {status.error}
           </div>
         )}
-        {status?.ok && !status.omniInstalled && <div className="warn">OmniVoice is not installed in VibeTTS (Settings &gt; OmniVoice): voices cannot be created.</div>}
+        {status?.ok && !status.supertonicInstalled && (
+          <div className="warn" data-testid="vibetts-no-supertonic">
+            Supertonic is not installed in VibeTTS (Settings &gt; Supertonic, about 400 MB): {needsSupertonic ? 'Croatian and the other languages cannot be spoken until it is.' : 'only English (Kokoro) is available.'}
+          </div>
+        )}
+        <div className="row" style={{ marginTop: 6 }}>
+          <label htmlFor="voice-english-engine">English voices</label>
+          <select
+            id="voice-english-engine"
+            value={englishEngine}
+            disabled={!voice.enabled}
+            onChange={(e) => updateSettings(slug, { voice: { englishEngine: e.target.value as 'kokoro' | 'supertonic' } })}
+            data-testid="voice-english-engine"
+          >
+            <option value="kokoro">Kokoro</option>
+            <option value="supertonic">Supertonic</option>
+          </select>
+          <span className="dim">Other languages always use Supertonic. After a change, plan the voices again.</span>
+        </div>
       </div>
 
       <div className="card" data-testid="voice-langs">
@@ -81,7 +100,7 @@ function VibeVoice({ slug, detail, speakers }: { slug: string; detail: ProjectDe
         <div className="stack">
           {editions.map((lang) => {
             const on = voice.langs.includes(lang)
-            const support = vibettsSupport(lang)
+            const support = vibettsSupport(status, lang, englishEngine)
             return (
               <div key={lang} className="row voice-lang" data-testid={`voice-lang-${lang}`}>
                 <label className="inline" style={{ width: 120 }}>
@@ -94,8 +113,8 @@ function VibeVoice({ slug, detail, speakers }: { slug: string; detail: ProjectDe
                   />
                   {langName(lang)}
                 </label>
-                <Pill tone={support.status === 'ok' ? 'good' : 'warn'} title={support.message} testId={`voice-support-${lang}`}>
-                  {support.status === 'ok' ? 'supported' : 'not supported'}
+                <Pill tone={support.status === 'ok' ? 'good' : support.status === 'unknown' ? 'dim' : 'warn'} title={support.message} testId={`voice-support-${lang}`}>
+                  {support.status === 'ok' ? 'supported' : support.status === 'unknown' ? 'unknown' : 'not supported'}
                 </Pill>
                 <span className="dim">{support.message}</span>
                 <button disabled={!voice.enabled || !on} onClick={() => sendCommand({ type: 'generateVoice', slug, lang })} data-testid={`voice-gen-${lang}`}>
@@ -112,7 +131,7 @@ function VibeVoice({ slug, detail, speakers }: { slug: string; detail: ProjectDe
           <button className="primary" disabled={!voice.enabled} onClick={() => sendCommand({ type: 'generateVoice', slug })} data-testid="voice-generate">
             Generate voice
           </button>
-          <span className="dim">Plan creates a voice per character from the bible. Clips of text that did not change are skipped; a stopped run continues where it was.</span>
+          <span className="dim">Plan assigns a voice per character and language from the bible. Clips of text that did not change are skipped; a stopped run continues where it was.</span>
         </div>
         {run && (
           <div style={{ marginTop: 6 }} data-testid="voice-progress">
@@ -142,79 +161,45 @@ function VibeVoice({ slug, detail, speakers }: { slug: string; detail: ProjectDe
 function SpeakerRow({ slug, speaker, detail }: { slug: string; speaker: Speaker; detail: ProjectDetail }) {
   const voice = detail.settings.voice
   const status = useVn((s) => s.vibetts)
-  const preview = useVn((s) => s.voicePreviews[`${slug}:${speaker.key}`])
-  const errDesign = useRecentError(slug, 'designVoice')
+  const langs: Lang[] = voice.langs.length ? voice.langs : [detail.settings.primaryLang]
+  const errSet = useRecentError(slug, 'setVoice')
   const errPreview = useRecentError(slug, 'previewVoice')
-  const err = errDesign ?? errPreview
-  const current = voice.voices[speaker.key]
-  const options = voiceOptions(status?.voices ?? [], current)
-  const info = status?.voices.find((v) => v.id === current)
-  const [open, setOpen] = useState(false)
-  const [parts, setParts] = useState<Partial<Record<VoiceCategory, string>>>(() => parseDescription(preview?.description || info?.description || ''))
-  const [seed, setSeed] = useState<number>(preview?.seed ?? 1)
-  const lang: Lang = detail.settings.primaryLang
-  const design = (nextSeed: number) => {
-    setSeed(nextSeed)
-    sendCommand({ type: 'designVoice', slug, speakerKey: speaker.key, description: buildDescription(parts), seed: nextSeed, lang })
-  }
+  const err = errSet ?? errPreview
   return (
     <div className="stack voice-speaker" data-testid={`voice-speaker-${speaker.key}`}>
-      <div className="row">
-        <b style={{ width: 150 }}>{speaker.name}</b>
-        <select
-          value={current ?? ''}
-          onChange={(e) => {
-            const next = { ...voice.voices }
-            if (e.target.value) next[speaker.key] = e.target.value
-            else delete next[speaker.key]
-            updateSettings(slug, { voice: { voices: next } })
-          }}
-          data-testid={`voice-select-${speaker.key}`}
-        >
-          <option value="">{speaker.key === 'narrator' ? '(no voice: plan or design one)' : '(narrator’s voice)'}</option>
-          {options.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        <button disabled={!current || !status?.ok} onClick={() => current && sendCommand({ type: 'previewVoice', slug, speakerKey: speaker.key, voice: current, lang })} data-testid={`voice-preview-${speaker.key}`}>
-          Listen
-        </button>
-        <button onClick={() => setOpen(!open)} data-testid={`voice-design-${speaker.key}`}>
-          {open ? 'Close' : 'Design voice...'}
-        </button>
-        {preview && isAudioPath(preview.file) && <audio controls preload="none" src={projectAssetUrl(slug, preview.file, preview.rev)} data-testid={`voice-audio-${speaker.key}`} />}
-      </div>
-      {info?.description && !open && <div className="dim">{info.description}</div>}
-      {open && (
-        <div className="row voice-designer" data-testid={`voice-designer-${speaker.key}`}>
-          {VOICE_CATEGORIES.map((c) => (
-            <label key={c} className="inline">
-              {c}
-              <select value={parts[c] ?? ''} onChange={(e) => setParts({ ...parts, [c]: e.target.value })} data-testid={`voice-word-${speaker.key}-${c}`}>
-                <option value="">(any)</option>
-                {VOICE_VOCAB[c].map((w) => (
-                  <option key={w} value={w}>
-                    {w}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-          <label className="inline">
-            seed
-            <input type="number" min={0} max={2147483647} style={{ width: 100 }} value={seed} onChange={(e) => setSeed(Math.max(0, Math.floor(Number(e.target.value) || 0)))} data-testid={`voice-seed-${speaker.key}`} />
-          </label>
-          <button className="primary" disabled={!status?.ok} onClick={() => design(seed)} data-testid={`voice-create-${speaker.key}`}>
-            Create and listen
-          </button>
-          <button disabled={!status?.ok} onClick={() => design(Math.floor(Math.random() * 1_000_000))} data-testid={`voice-another-${speaker.key}`}>
-            Try another
-          </button>
-        </div>
-      )}
+      {langs.map((lang, i) => (
+        <LangVoice key={lang} slug={slug} speaker={speaker} lang={lang} first={i === 0} detail={detail} status={status} />
+      ))}
       {err && <div className="bad-text">{err}</div>}
+    </div>
+  )
+}
+
+function LangVoice({ slug, speaker, lang, first, detail, status }: { slug: string; speaker: Speaker; lang: Lang; first: boolean; detail: ProjectDetail; status: VoiceStatusView | null }) {
+  const voice = detail.settings.voice
+  const preview = useVn((s) => s.voicePreviews[`${slug}:${speaker.key}:${lang}`])
+  const current = voice.voices[speaker.key]?.[lang]
+  const options = voiceOptions(status, lang, voice.englishEngine ?? 'kokoro', current)
+  return (
+    <div className="row" data-testid={`voice-row-${speaker.key}-${lang}`}>
+      <b style={{ width: 150 }}>{first ? speaker.name : ''}</b>
+      <span className="dim" style={{ width: 28 }}>
+        {lang.toUpperCase()}
+      </span>
+      <select value={current ?? ''} onChange={(e) => e.target.value && sendCommand({ type: 'setVoice', slug, speakerKey: speaker.key, lang, voice: e.target.value })} disabled={!status?.ok && !current} data-testid={`voice-select-${speaker.key}-${lang}`}>
+        <option value="" disabled>
+          {speaker.key === 'narrator' ? '(no voice: plan voices)' : '(narrator’s voice: plan voices)'}
+        </option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <button disabled={!current || !status?.ok} onClick={() => current && sendCommand({ type: 'previewVoice', slug, speakerKey: speaker.key, voice: current, lang })} data-testid={`voice-preview-${speaker.key}-${lang}`}>
+        Listen
+      </button>
+      {preview && isAudioPath(preview.file) && <audio controls preload="none" src={projectAssetUrl(slug, preview.file, preview.rev)} data-testid={`voice-audio-${speaker.key}-${lang}`} />}
     </div>
   )
 }

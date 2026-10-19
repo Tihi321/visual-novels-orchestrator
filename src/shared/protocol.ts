@@ -388,15 +388,17 @@ export type EngineEvent =
   | { type: 'engines.listed'; image: EngineInfo[]; audio: EngineInfo[]; palettes: string[] }
   | { type: 'workflows.listed'; workflows: CustomWorkflowInfo[] }
   /** VibeTTS (MCP): reachable or not, and its voices. The answer to `voiceStatus`. */
-  | { type: 'voice.status'; ok: boolean; url: string; error: string; omniInstalled: boolean; voices: VibeVoiceView[] }
-  /** A preview clip of a voice (`designVoice`, `previewVoice`): `file` is relative to the project folder; `rev` busts the player's cache. */
-  | { type: 'voice.preview'; slug: string; speakerKey: string; voice: string; file: string; rev: number; description: string; seed: number | null; lang: Lang }
+  | { type: 'voice.status'; ok: boolean; url: string; error: string; supertonicInstalled: boolean; languages: string[]; english: VibeDefaultView; other: VibeDefaultView; voices: VibeVoiceView[] }
+  /** A preview clip of a voice (`setVoice`, `previewVoice`): `file` is relative to the project folder; `rev` busts the player's cache. */
+  | { type: 'voice.preview'; slug: string; speakerKey: string; voice: string; file: string; rev: number; lang: Lang }
   /** Pixel Studio and Chiptune Studio (MCP): reachable or not. The answer to `studiosStatus`. */
   | { type: 'studios.status'; studios: StudioStatusView[] }
   /** An asset was opened in a studio (`openInStudio`): `window` when a window was started, `mcp` when a running studio was asked. Saving there makes a new version. */
   | { type: 'studio.opened'; slug: string; id: string; studio: 'pixel' | 'chiptune'; mode: 'window' | 'mcp'; message: string }
   /** The game was started (`runGame`). */
   | { type: 'game.started'; slug: string; pid: number | null }
+  /** The MCP HTTP server (config/mcp.md): listening or not. Sent when it changes and as the answer to `mcpStatus` and `saveMcpConfig`. `error` is empty when there is none; `token` is never sent, only whether one is set. */
+  | { type: 'mcp.status'; enabled: boolean; listening: boolean; url: string | null; error: string; port: number; tokenSet: boolean }
   /** The Ren'Py settings (config/renpy.md): the answer to `getRenpyConfig` and `saveRenpyConfig`. */
   | ({ type: 'renpy.config' } & RenpyConfigView)
 
@@ -416,14 +418,20 @@ export interface StudioStatusView {
   tools: number
 }
 
-/** A VibeTTS voice as `list_voices` gives it (OmniVoice presets have `kind`, `description` and the sample `lang`). */
+/** A VibeTTS voice as `list_voices` gives it: a Kokoro voice reads English only, a Supertonic voice 31 languages. */
 export interface VibeVoiceView {
   id: string
   label: string
   engine: string
-  kind: string
-  description: string
-  lang: string
+  /** The language codes it reads. */
+  languages: string[]
+}
+
+/** The user's default voice in VibeTTS (its `english` or `other` profile): the engine, or the language, and the voice id. Empty when unknown. */
+export interface VibeDefaultView {
+  engine: string
+  language: string
+  voice: string
 }
 
 /** What the Settings page shows of config/renpy.md. */
@@ -515,6 +523,10 @@ export type Command =
   | { type: 'getRenpyConfig' }
   /** Writes the given fields to config/renpy.md (the others keep their value). A missing SDK is a `warning` in the answer, not an error; a bad resolution is a `command.error`. Answers with `renpy.config`. */
   | { type: 'saveRenpyConfig'; sdkPath?: string; resolution?: string; imageFormat?: 'webp' | 'png' }
+  /** Asks for the state of the MCP server. Answers with `mcp.status`. */
+  | { type: 'mcpStatus' }
+  /** Writes config/mcp.md and restarts the server when enabled, port or token changed. `token` left out keeps the old one, `''` clears it. Answers with `mcp.status`. */
+  | { type: 'saveMcpConfig'; enabled: boolean; port: number; token?: string }
   /** The voice reference clip of a character (or `narrator`): becomes the voice_<charKey> asset, custom and locked. */
   | { type: 'setVoiceRef'; slug: string; charKey: string; file: string }
   /** Generates the TTS clips (all languages of the project, or one `lang`, or one `beatId`, or at most `limit` clips per language). Nothing happens when the project's voice is off. */
@@ -527,8 +539,8 @@ export type Command =
   | { type: 'openInStudio'; slug: string; id: string }
   /** Enqueues the voice plan: a VibeTTS voice per character and the narrator (existing ones are kept unless `overwrite`). */
   | { type: 'planVoices'; slug: string; overwrite?: boolean }
-  /** Designs the voice of a speaker (a character key or `narrator`) from a description (the allowed words) and a seed, assigns it and answers with `voice.preview`. */
-  | { type: 'designVoice'; slug: string; speakerKey: string; description: string; seed?: number; lang?: Lang }
+  /** Picks the VibeTTS voice of a speaker (a character key or `narrator`) for one language, forgets that speaker's clips in it and answers with `voice.preview`. */
+  | { type: 'setVoice'; slug: string; speakerKey: string; lang: Lang; voice: string }
   /** Makes a short preview clip of a VibeTTS voice in a language. Answers with `voice.preview`. */
   | { type: 'previewVoice'; slug: string; speakerKey: string; voice: string; lang?: Lang }
 
@@ -587,7 +599,7 @@ export type VnCommand = Extract<
       | 'planVoices'
       | 'studiosStatus'
       | 'openInStudio'
-      | 'designVoice'
+      | 'setVoice'
       | 'previewVoice'
       | 'getRenpyConfig'
       | 'saveRenpyConfig'
@@ -642,10 +654,12 @@ const COMMAND_TYPE_SET: Record<CommandType, true> = {
   planVoices: true,
   studiosStatus: true,
   openInStudio: true,
-  designVoice: true,
+  setVoice: true,
   previewVoice: true,
   getRenpyConfig: true,
   saveRenpyConfig: true,
+  mcpStatus: true,
+  saveMcpConfig: true,
   saveSettings: true,
   setSecret: true,
   detectModels: true,

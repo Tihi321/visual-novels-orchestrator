@@ -2,24 +2,38 @@ import { describe, expect, it } from 'vitest'
 import { reduceVn, initialVn } from '../src/renderer/store/vn'
 import { vibettsSupport, voiceOptions, voiceProgress, voiceSupport } from '../src/renderer/lib/voice'
 
+const status = {
+  ok: true,
+  supertonicInstalled: true,
+  voices: [
+    { id: 'af_heart', label: 'Heart (American English, female)', engine: 'kokoro', languages: ['en'] },
+    { id: 'am_adam', label: 'Adam (American English, male)', engine: 'kokoro', languages: ['en'] },
+    { id: 'supertonic:F1', label: 'F1 (Supertonic, female)', engine: 'supertonic', languages: ['en', 'hr'] },
+    { id: 'supertonic:M1', label: 'M1 (Supertonic, male)', engine: 'supertonic', languages: ['en', 'hr'] }
+  ]
+}
+
 describe('VibeTTS voice tab helpers', () => {
-  it('says Croatian is supported by VibeTTS (and still not by the ComfyUI workflows)', () => {
-    expect(vibettsSupport('hr').status).toBe('ok')
-    expect(vibettsSupport('en').status).toBe('ok')
-    expect(vibettsSupport('hr').message).not.toContain('not supported')
+  it('says per language whether VibeTTS has a voice for it (and still not the ComfyUI workflows for Croatian)', () => {
+    expect(vibettsSupport(status, 'hr').status).toBe('ok')
+    expect(vibettsSupport(status, 'en').status).toBe('ok')
+    expect(vibettsSupport(null, 'hr').status).toBe('unknown')
+    const kokoroOnly = { ok: true, supertonicInstalled: false, voices: status.voices.slice(0, 2) }
+    const hr = vibettsSupport(kokoroOnly, 'hr')
+    expect(hr.status).toBe('unsupported')
+    expect(hr.message).toContain('Download Supertonic')
+    expect(vibettsSupport(kokoroOnly, 'en').status).toBe('ok')
     expect(voiceSupport('custom:chatterbox', 'hr', [{ name: 'chatterbox', kind: 'audio', languages: ['en'] }]).message).toContain('Croatian is not supported yet')
   })
-  it('offers the OmniVoice presets, and keeps a voice VibeTTS no longer lists', () => {
-    const voices = [
-      { id: 'af_heart', kind: '', description: '' },
-      { id: 'omni:default', kind: 'default', description: '' },
-      { id: 'omni:petra', kind: 'description', description: 'female, teenager' }
-    ]
-    expect(voiceOptions(voices, 'omni:petra')).toEqual([
-      { id: 'omni:default', label: 'default' },
-      { id: 'omni:petra', label: 'petra (female, teenager)' }
+  it('offers the voices that read the language, by engine for English, and keeps a voice VibeTTS no longer lists', () => {
+    expect(voiceOptions(status, 'en', 'kokoro', 'af_heart').map((o) => o.id)).toEqual(['af_heart', 'am_adam'])
+    expect(voiceOptions(status, 'en', 'supertonic', undefined).map((o) => o.id)).toEqual(['supertonic:F1', 'supertonic:M1'])
+    expect(voiceOptions(status, 'hr', 'kokoro', 'supertonic:F1')).toEqual([
+      { id: 'supertonic:F1', label: 'F1 (Supertonic, female)' },
+      { id: 'supertonic:M1', label: 'M1 (Supertonic, male)' }
     ])
-    expect(voiceOptions(voices, 'omni:gone').at(-1)).toEqual({ id: 'omni:gone', label: 'omni:gone (not in VibeTTS)' })
+    expect(voiceOptions(status, 'hr', 'kokoro', 'af_heart').at(-1)).toEqual({ id: 'af_heart', label: 'af_heart (not in VibeTTS for hr)' })
+    expect(voiceOptions(null, 'en', 'kokoro', undefined)).toEqual([])
   })
   it('shows progress only while the voice step runs', () => {
     expect(voiceProgress(undefined)).toBeNull()
@@ -27,11 +41,12 @@ describe('VibeTTS voice tab helpers', () => {
     expect(voiceProgress({ status: 'running', message: 'voice en: 5/20 clips', done: 5, total: 20 })).toEqual({ text: 'voice en: 5/20 clips', fraction: 0.25 })
     expect(voiceProgress({ status: 'running', message: 'planning' })?.fraction).toBeNull()
   })
-  it('keeps the VibeTTS status and the last preview per speaker in the store', () => {
+  it('keeps the VibeTTS status and the last preview per speaker and language in the store', () => {
     const s = initialVn()
-    const a = reduceVn(s, { type: 'voice.status', ok: false, url: 'http://x/mcp', error: 'not running', omniInstalled: false, voices: [] })
-    expect(a.vibetts).toEqual({ ok: false, url: 'http://x/mcp', error: 'not running', omniInstalled: false, voices: [] })
-    const b = reduceVn(s, { type: 'voice.preview', slug: 'b', speakerKey: 'petra', voice: 'omni:petra', file: 'preview/voice-petra.mp3', rev: 5, description: 'female', seed: 3, lang: 'en' })
-    expect(b.voicePreviews?.['b:petra']).toMatchObject({ voice: 'omni:petra', file: 'preview/voice-petra.mp3', rev: 5, seed: 3 })
+    const none = { engine: '', language: '', voice: '' }
+    const a = reduceVn(s, { type: 'voice.status', ok: false, url: 'http://x/mcp', error: 'not running', supertonicInstalled: false, languages: [], english: none, other: none, voices: [] })
+    expect(a.vibetts).toEqual({ ok: false, url: 'http://x/mcp', error: 'not running', supertonicInstalled: false, languages: [], english: none, other: none, voices: [] })
+    const b = reduceVn(s, { type: 'voice.preview', slug: 'b', speakerKey: 'petra', voice: 'supertonic:F2', file: 'preview/voice-petra.mp3', rev: 5, lang: 'hr' })
+    expect(b.voicePreviews?.['b:petra:hr']).toMatchObject({ voice: 'supertonic:F2', file: 'preview/voice-petra.mp3', rev: 5, lang: 'hr' })
   })
 })

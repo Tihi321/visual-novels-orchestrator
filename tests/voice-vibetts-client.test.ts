@@ -63,32 +63,41 @@ async function serve(opts: Parameters<typeof fakeServer>[0]) {
 
 describe('VibeTTS MCP client', () => {
   it('initializes once, then calls tools and reads the structured result', async () => {
-    const s = await serve({ tools: { list_voices: () => ({ structured: { voices: [{ id: 'omni:petra', kind: 'description' }], omnivoice_installed: true } }) } })
+    const listed = {
+      voices: [
+        { id: 'af_heart', label: 'Heart (American English, female)', engine: 'kokoro', languages: ['en'] },
+        { id: 'supertonic:F1', label: 'F1 (Supertonic, female)', engine: 'supertonic', languages: ['en', 'hr'] }
+      ],
+      languages: [{ code: 'en', name: 'English' }, { code: 'hr', name: 'Croatian' }],
+      english: { engine: 'kokoro', voice: 'af_heart' },
+      other: { language: 'hr', voice: 'supertonic:F1' },
+      language_mode: 'auto',
+      supertonic_installed: true
+    }
+    const s = await serve({ tools: { list_voices: () => ({ structured: listed }) } })
     const c = createVibeTtsClient({ url: s.url })
     const a = await c.listVoices()
     await c.listVoices()
-    expect(a.voices[0]!.id).toBe('omni:petra')
+    expect(a.voices[1]).toMatchObject({ id: 'supertonic:F1', engine: 'supertonic', languages: ['en', 'hr'] })
+    expect(a).toMatchObject({ supertonic_installed: true, english: { voice: 'af_heart' }, other: { language: 'hr' } })
     const methods = s.seen.map((x) => x.body.method)
     expect(methods).toEqual(['initialize', 'notifications/initialized', 'tools/call', 'tools/call'])
     expect(s.seen[0]!.headers.accept).toContain('text/event-stream')
     expect(s.seen[2]!.headers['mcp-protocol-version']).toBe('2025-06-18')
   })
 
-  it('sends the tool arguments (create_voice, synthesize_batch) and returns the rows', async () => {
+  it('sends the tool arguments (synthesize_batch) and returns the rows', async () => {
     const s = await serve({
       tools: {
-        create_voice: (a) => ({ structured: { voice: `omni:${String(a.name)}`, name: a.name, description: a.description, seed: a.seed, lang: a.lang } }),
         synthesize_batch: (a) => ({ structured: { results: (a.items as { output: string }[]).map((i) => ({ output: i.output, duration_s: 1.5, ok: true, error: null })), ok_count: 2 } })
       }
     })
     const c = createVibeTtsClient({ url: s.url })
-    const v = await c.createVoice({ name: 'petra', description: 'female, teenager', seed: 5, lang: 'en' })
-    expect(v).toMatchObject({ voice: 'omni:petra', seed: 5 })
-    const r = await c.synthesizeBatch([{ text: 'Hi.', output: 'C:/x/a.mp3', voice: 'omni:petra', lang: 'hr' }, { text: 'Yo.', output: 'C:/x/b.mp3' }], { overwrite: true })
+    const r = await c.synthesizeBatch([{ text: 'Hi.', output: 'C:/x/a.mp3', voice: 'supertonic:F2', lang: 'hr' }, { text: 'Yo.', output: 'C:/x/b.mp3' }], { overwrite: true })
     expect(r.results.map((x) => x.ok)).toEqual([true, true])
     const call = s.seen.at(-1)!.body.params!
     expect(call.name).toBe('synthesize_batch')
-    expect(call.arguments).toMatchObject({ overwrite: true, items: [{ lang: 'hr', voice: 'omni:petra' }, {}] })
+    expect(call.arguments).toMatchObject({ overwrite: true, items: [{ lang: 'hr', voice: 'supertonic:F2' }, {}] })
   })
 
   it('reads an SSE answer', async () => {
@@ -105,12 +114,12 @@ describe('VibeTTS MCP client', () => {
   })
 
   it('turns a tool error into a VibeTtsError with its text', async () => {
-    const s = await serve({ tools: { create_voice: () => ({ isError: true, text: "A voice named 'petra' already exists" }) } })
+    const s = await serve({ tools: { synthesize_to_file: () => ({ isError: true, text: 'Supertonic is not installed: download it in Settings > Supertonic' }) } })
     const c = createVibeTtsClient({ url: s.url })
-    const e = await c.createVoice({ name: 'petra' }).catch((x: unknown) => x)
+    const e = await c.synthesizeToFile({ text: 'Hi.', output: 'C:/x/a.mp3', voice: 'supertonic:F1', lang: 'hr' }).catch((x: unknown) => x)
     expect(e).toBeInstanceOf(VibeTtsError)
     expect((e as VibeTtsError).kind).toBe('tool')
-    expect((e as VibeTtsError).message).toContain('already exists')
+    expect((e as VibeTtsError).message).toContain('Supertonic is not installed')
   })
 
   it('says clearly that VibeTTS is not running when nothing answers, and tries again later', async () => {

@@ -52,15 +52,30 @@ export function toggleLang<L extends string>(current: readonly L[], lang: L, on:
   return editions.filter((l) => set.has(l))
 }
 
-/** The languages VibeTTS (OmniVoice) speaks. */
-export const VIBETTS_LANGS = ['en', 'hr'] as const
+/** The part of `voice.status` the Voice tab needs. */
+export interface VibeVoices {
+  ok: boolean
+  supertonicInstalled: boolean
+  voices: readonly { id: string; label: string; engine: string; languages: readonly string[] }[]
+}
 
-/** What the Voice tab says about a language for the VibeTTS provider (Croatian works: only the ComfyUI workflows lack it). */
-export function vibettsSupport(lang: string): VoiceSupport {
-  const ok = (VIBETTS_LANGS as readonly string[]).includes(lang)
-  return ok
-    ? { status: 'ok', supported: [...VIBETTS_LANGS], message: `VibeTTS speaks ${VIBETTS_LANGS.map(langName).join(' and ')}; the same voice is used for every language.` }
-    : { status: 'unsupported', supported: [...VIBETTS_LANGS], message: `VibeTTS does not speak ${langName(lang)}.` }
+export type EnglishEngine = 'kokoro' | 'supertonic'
+
+/** The voices that can read a language: for English the chosen engine's (every English voice when it has none), else the ones whose languages include it. */
+function voicesReading<V extends { engine: string; languages: readonly string[] }>(voices: readonly V[], lang: string, englishEngine: EnglishEngine): V[] {
+  const reads = voices.filter((v) => v.languages.includes(lang))
+  if (lang !== 'en') return reads
+  const own = reads.filter((v) => v.engine === englishEngine)
+  return own.length ? own : reads
+}
+
+/** What the Voice tab says about a language for the VibeTTS provider: whether VibeTTS has a voice that reads it (Supertonic reads Croatian, Kokoro English only). */
+export function vibettsSupport(status: VibeVoices | null, lang: string, englishEngine: EnglishEngine = 'kokoro'): VoiceSupport {
+  if (!status?.ok) return { status: 'unknown', supported: [], message: 'Check VibeTTS to see which voices it has.' }
+  const n = voicesReading(status.voices, lang, englishEngine).length
+  if (n > 0) return { status: 'ok', supported: [lang], message: `${n} voice(s) read ${langName(lang)}.` }
+  const hint = lang !== 'en' && !status.supertonicInstalled ? ' Download Supertonic in VibeTTS Settings > Supertonic.' : ''
+  return { status: 'unsupported', supported: [], message: `VibeTTS has no voice for ${langName(lang)}.${hint}` }
 }
 
 export interface VoiceOption {
@@ -68,12 +83,10 @@ export interface VoiceOption {
   label: string
 }
 
-/** The voices a speaker can be given: the OmniVoice presets of VibeTTS, plus the current one when VibeTTS no longer lists it. */
-export function voiceOptions(voices: readonly { id: string; kind: string; description: string }[], current: string | undefined): VoiceOption[] {
-  const out: VoiceOption[] = voices
-    .filter((v) => v.id.startsWith('omni:'))
-    .map((v) => ({ id: v.id, label: v.description ? `${v.id.slice(5)} (${v.description})` : v.id.slice(5) }))
-  if (current && !out.some((o) => o.id === current)) out.push({ id: current, label: `${current} (not in VibeTTS)` })
+/** The voices a speaker can be given in a language, plus the current one when VibeTTS no longer lists it. */
+export function voiceOptions(status: Pick<VibeVoices, 'voices'> | null, lang: string, englishEngine: EnglishEngine, current: string | undefined): VoiceOption[] {
+  const out: VoiceOption[] = voicesReading(status?.voices ?? [], lang, englishEngine).map((v) => ({ id: v.id, label: v.label || v.id }))
+  if (current && !out.some((o) => o.id === current)) out.push({ id: current, label: `${current} (not in VibeTTS for ${lang})` })
   return out
 }
 

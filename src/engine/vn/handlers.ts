@@ -31,6 +31,7 @@ import { resolveAlignment } from './agents/edition-aligner'
 import { resolveUncertain } from './agents/script-analyst'
 import { mergeChapterCues, stageChapter } from './agents/stage-director'
 import { planVoices, speakerOf } from './agents/voice-director'
+import { describeVoices, voiceLangsOf } from '../voice/catalog'
 import { generateVibeClips, planVibeVoices, readVoiceIndexIn } from '../voice/jobs'
 import type { VoiceIndexEntry } from '../voice/jobs'
 import type { AgentCall } from './agents/common'
@@ -508,10 +509,13 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         const folders = dataFolders(deps.dataDir)
         // uploaded reference clips only matter for the ComfyUI provider
         const library = !vibe && existsSync(folders.voices) ? (await fs.readdir(folders.voices)).filter((f) => /\.(wav|mp3|flac|ogg|opus)$/i.test(f)).sort() : []
-        const r = await tryAgent(ctx, 'voice-director', () => planVoices(call(ctx), book, library))
+        // VibeTTS first: the model is shown the voices that exist, and an unreachable VibeTTS fails before it is asked
+        const listed = vibe ? await (await svc.vibetts()).client.listVoices(ctx.signal) : undefined
+        const voiceList = listed ? describeVoices(listed.voices, voiceLangsOf(settings), settings.voice.englishEngine) : ''
+        const r = await tryAgent(ctx, 'voice-director', () => planVoices(call(ctx), book, library, voiceList))
         let msg: string
         if (vibe) {
-          msg = await planVibeVoices(svc, slug, r.ok ? r.value : null, { overwrite: body.overwrite, log: (m) => ctx.log(m), signal: ctx.signal })
+          msg = await planVibeVoices(svc, slug, r.ok ? r.value : null, { overwrite: body.overwrite, listed, log: (m) => ctx.log(m), signal: ctx.signal })
         } else {
           const manifest = await store.loadAssets(slug)
           let planned = 0

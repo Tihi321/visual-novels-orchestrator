@@ -1,8 +1,10 @@
 import { writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { PassThrough } from 'node:stream'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { McpServer, serveMcp } from '../src/engine/mcp/server'
+import { createMcpServer } from '../src/engine/mcp/server'
+import { buildTools } from '../src/engine/mcp/tools'
 import { COMMAND_TYPES, isCommand } from '../src/shared/protocol'
 import type { EngineEvent } from '../src/shared/protocol'
 import { parseCliArgs, runCliWith } from '../src/engine/vncli'
@@ -145,56 +147,75 @@ describe('protocol commands', () => {
 })
 
 describe('MCP server', () => {
-  /** Sends the requests through in-process streams and returns the parsed responses. */
-  async function talk(server: McpServer, requests: object[]): Promise<Record<string, unknown>[]> {
-    const input = new PassThrough()
-    const output = new PassThrough()
-    const chunks: string[] = []
-    output.on('data', (d: Buffer) => chunks.push(d.toString('utf8')))
-    const done = serveMcp(server, input, output)
-    for (const r of requests) input.write(JSON.stringify(r) + '\n')
-    input.end()
-    await done
-    return chunks.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l) as Record<string, unknown>)
+  /** An SDK client connected to the MCP server of the engine's service through in-memory streams (the transport the stdio mode uses). */
+  async function connect(opts: Parameters<typeof buildTools>[1] = {}): Promise<Client> {
+    const server = createMcpServer({ tools: buildTools(env!.engine.vn, opts) })
+    const [a, b] = InMemoryTransport.createLinkedPair()
+    await server.connect(a)
+    const client = new Client({ name: 't', version: '1' })
+    await client.connect(b)
+    return client
   }
+  const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]!.text
 
   it('initialises, lists the tools and calls one', async () => {
     env = await makeVnEnv({ sdk: false })
-    const server = new McpServer(env.engine.vn)
-    const res = await talk(server, [
-      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } } },
-      { jsonrpc: '2.0', method: 'notifications/initialized' },
-      { jsonrpc: '2.0', id: 2, method: 'tools/list' },
-      { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'vno_import', arguments: { source: book('linear-en') } } },
-      { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'vno_list_projects', arguments: {} } },
-      { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'vno_status', arguments: { slug: 'nope' } } },
-      { jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'vno_run_pipeline', arguments: { slug: 'lighthouse-letters', from: 'bogus' } } },
-      { jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'vno_asset_list', arguments: {} } },
-      { jsonrpc: '2.0', id: 8, method: 'nope/nothing' }
-    ])
-    const byId = (id: number) => res.find((r) => r.id === id) as { result?: { tools?: { name: string; inputSchema: { properties?: Record<string, unknown> } }[]; content?: { text: string }[]; isError?: boolean; serverInfo?: { name: string }; protocolVersion?: string }; error?: { code: number } }
-    expect(res.find((r) => r.method)).toBeUndefined() // the notification got no answer
-    expect(byId(1).result).toMatchObject({ protocolVersion: '2025-06-18', serverInfo: { name: 'vn-studio' } })
-    const names = byId(2).result!.tools!.map((t) => t.name)
-    expect(names).toEqual(['vno_list_books', 'vno_import', 'vno_list_projects', 'vno_run_pipeline', 'vno_status', 'vno_asset_list', 'vno_asset_replace', 'vno_asset_regen', 'vno_build', 'vno_lint', 'vno_add_edition'])
-    expect(byId(2).result!.tools!.find((t) => t.name === 'vno_import')!.inputSchema.properties).toHaveProperty('source')
-    const imported = JSON.parse(byId(3).result!.content![0]!.text) as { slug: string; preview: { chapters: number } }
-    expect(imported).toMatchObject({ slug: 'lighthouse-letters', preview: { chapters: 3 } })
-    expect((JSON.parse(byId(4).result!.content![0]!.text) as { projects: { slug: string }[] }).projects.map((p) => p.slug)).toEqual(['lighthouse-letters'])
-    expect(byId(5).result).toMatchObject({ isError: true })
-    expect(byId(6).result?.content?.[0]?.text).toMatch(/from must be one of/)
-    expect(byId(7).result).toMatchObject({ isError: true })
-    expect(byId(8).error?.code).toBe(-32601)
+    const client = await connect()
+    expect(client.getServerVersion()).toMatchObject({ name: 'vn-studio' })
+    expect(client.getInstructions()).toMatch(/Kokoro voices read English only/)
+    const { tools } = await client.listTools()
+    const names = tools.map((t) => t.name)
+    expect(names.slice(0, 11)).toEqual(['vno_list_books', 'vno_import', 'vno_list_projects', 'vno_run_pipeline', 'vno_status', 'vno_asset_list', 'vno_asset_replace', 'vno_asset_regen', 'vno_build', 'vno_lint', 'vno_add_edition'])
+    for (const n of ['vno_get_project', 'vno_update_settings', 'vno_wait', 'vno_asset_generate', 'vno_renpy_config_set', 'vno_stop_now']) expect(names).toContain(n)
+    expect(new Set(names).size).toBe(names.length)
+    expect(tools.find((t) => t.name === 'vno_import')!.inputSchema.properties).toHaveProperty('source')
+
+    const imported = await client.callTool({ name: 'vno_import', arguments: { source: book('linear-en') } })
+    expect(JSON.parse(text(imported))).toMatchObject({ slug: 'lighthouse-letters', preview: { chapters: 3 } })
+    expect(imported.structuredContent).toMatchObject({ slug: 'lighthouse-letters' })
+    const listed = await client.callTool({ name: 'vno_list_projects', arguments: {} })
+    expect((listed.structuredContent as { projects: { slug: string }[] }).projects.map((p) => p.slug)).toEqual(['lighthouse-letters'])
+    expect(await client.callTool({ name: 'vno_status', arguments: { slug: 'nope' } })).toMatchObject({ isError: true })
+    expect(text(await client.callTool({ name: 'vno_run_pipeline', arguments: { slug: 'lighthouse-letters', from: 'bogus' } }))).toMatch(/from must be one of/)
+    expect(await client.callTool({ name: 'vno_asset_list', arguments: {} })).toMatchObject({ isError: true })
+    expect(await client.callTool({ name: 'vno_nothing', arguments: {} })).toMatchObject({ isError: true })
+    expect(await client.callTool({ name: 'vno_delete_project', arguments: { slug: 'lighthouse-letters' } })).toMatchObject({ isError: true }) // needs confirm: true
+    expect(await client.callTool({ name: 'vno_pause_all', arguments: {} })).toMatchObject({ isError: true }) // no queue switches given
+
+    const guide = await client.readResource({ uri: 'vn-studio://guide' })
+    expect(guide.contents[0]).toMatchObject({ mimeType: 'text/markdown' })
+    expect((guide.contents[0] as { text: string }).text).toMatch(/supertonic:F1/)
+    await client.close()
+  })
+
+  it('reads and changes a project through the new tools', async () => {
+    env = await makeVnEnv({ sdk: false })
+    const client = await connect({ control: env.engine.mcpControl() })
+    await env.engine.vn.importProject(book('linear-en'))
+    const slug = 'lighthouse-letters'
+    const got = await client.callTool({ name: 'vno_get_project', arguments: { slug } })
+    expect(got.structuredContent).toHaveProperty('project')
+    const upd = await client.callTool({ name: 'vno_update_settings', arguments: { slug, theme: 'noir' } })
+    expect((upd.structuredContent as { settings: { theme: string } }).settings.theme).toBe('noir')
+    const themes = (await client.callTool({ name: 'vno_themes', arguments: {} })).structuredContent as { themes: { name: string }[] }
+    expect(themes.themes.map((t) => t.name)).toContain('noir')
+    expect(((await client.callTool({ name: 'vno_get_edition', arguments: { slug, lang: 'en' } })).structuredContent as { edition: unknown }).edition).toBeTruthy()
+    expect((await client.callTool({ name: 'vno_pause_all', arguments: {} })).structuredContent).toEqual({ paused: true })
+    expect(env.engine.factory.paused).toBe(true)
+    expect((await client.callTool({ name: 'vno_resume_all', arguments: {} })).structuredContent).toEqual({ paused: false })
+    expect(env.engine.factory.paused).toBe(false)
+    await client.close()
   })
 
   it('builds a project through the tools', async () => {
     env = await makeVnEnv({ sdk: false })
-    const server = new McpServer(env.engine.vn, { waitTimeoutMs: 30_000 })
+    const client = await connect({ waitTimeoutMs: 30_000 })
     await env.engine.vn.importProject(book('linear-en'))
-    const res = await talk(server, [{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'vno_build', arguments: { slug: 'lighthouse-letters' } } }])
-    const out = JSON.parse((res[0] as { result: { content: { text: string }[] } }).result.content[0]!.text) as { waited: boolean; build: { ok: boolean; theme: string; placeholders: string[] } }
+    const res = await client.callTool({ name: 'vno_build', arguments: { slug: 'lighthouse-letters' } })
+    const out = JSON.parse(text(res)) as { waited: boolean; build: { ok: boolean; theme: string; placeholders: string[] } }
     expect(out.waited).toBe(true)
     expect(out.build).toMatchObject({ ok: true, theme: 'noir' })
     expect(out.build.placeholders.length).toBeGreaterThan(3)
+    await client.close()
   }, 60_000)
 })

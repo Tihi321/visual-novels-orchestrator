@@ -27,6 +27,8 @@ import type { ChiptuneClient } from './studios/chiptune'
 import { readSeedNotes } from './store/seedRefresh'
 import type { AppDirs } from './vn/appdirs'
 import type { WatchEvent } from './store/watcher'
+import type { EngineLock } from './store/lock'
+import { McpController } from './mcp/controller'
 
 export interface EngineOptions {
   dataDir: string
@@ -46,6 +48,8 @@ export interface EngineOptions {
   chiptune?: ChiptuneClient
   /** The folders that ship with the app (themes, the Ren'Py template, the seed). Default: found relative to the engine code. */
   dirs?: Partial<AppDirs>
+  /** The data-folder lock this engine holds (`store/lock.ts`): released by `stop()`. Tests leave it out. */
+  lock?: EngineLock
 }
 
 /** How often `concurrency: auto` providers are asked for their slot count. */
@@ -65,6 +69,8 @@ export class Engine {
   readonly scheduler: Scheduler
   /** VN projects: the pipeline, assets, editions, build. The UI commands, the CLI and the MCP server all go through it. */
   readonly vn: VnService
+  /** The MCP HTTP server (`config/mcp.md`), once `startMcp` ran. */
+  mcp: McpController | null = null
   factory: FactoryConfig = factorySchema.parse({ kind: 'factory' })
   /** `start()` finished: snapshots from now on are complete. */
   private started = false
@@ -198,12 +204,43 @@ export class Engine {
     }
   }
 
+  /** The queue switches the MCP tools `vno_pause_all`, `vno_resume_all` and `vno_stop_now` use. */
+  mcpControl(): { setPaused(paused: boolean): Promise<void>; stopNow(): Promise<void> } {
+    return {
+      setPaused: async (paused) => {
+        await this.setPaused(paused)
+        if (!paused) this.scheduler.kick()
+      },
+      stopNow: async () => {
+        await this.setPaused(true)
+        this.scheduler.stopAll('stopNow')
+      }
+    }
+  }
+
+  /** Starts the MCP HTTP server when `config/mcp.md` enables it. A bind failure is in the returned status, it does not throw. */
+  async startMcp(o: { port?: number; force?: boolean } = {}): Promise<Extract<EngineEvent, { type: 'mcp.status' }>> {
+    this.mcp ??= new McpController({
+      dataDir: this.dataDir,
+      svc: this.vn,
+      control: this.mcpControl(),
+      emit: this.emit,
+      log: this.log,
+      lock: this.opts.lock,
+      port: o.port,
+      force: o.force
+    })
+    return this.mcp.start()
+  }
+
   async stop(): Promise<void> {
+    await this.mcp?.stop()
     if (this.slotTimer) clearInterval(this.slotTimer)
     this.vn.dispose()
     await this.scheduler.stop()
     await this.logs.flush()
     await this.budget.flush().catch(() => undefined)
+    await this.opts.lock?.release().catch(() => undefined)
   }
 
   // ---- config ----
@@ -415,7 +452,8 @@ export class Engine {
           if (name !== 'providers') this.scheduler.changeModel() // running jobs follow a changed role list
           this.emit(await this.snapshot()) // the pickers show the models and role defaults
           if (name === 'providers') void this.discoverModels()
-        } else if (name === 'budget') await this.budget.loadCaps()
+        } else if (name === 'mcp') await this.mcp?.reload()
+        else if (name === 'budget') await this.budget.loadCaps()
         else if (name === 'factory') {
           const before = this.factory.paused
           await this.loadFactory()
@@ -638,6 +676,13 @@ export class Engine {
         void this.discoverModels() // and with it the models that provider lists
         return
       }
+      case 'mcpStatus':
+        this.emit(this.mcp?.status() ?? { type: 'mcp.status', enabled: false, listening: false, url: null, error: '', port: 0, tokenSet: false })
+        return
+      case 'saveMcpConfig':
+        if (!this.mcp) return this.log('saveMcpConfig: the MCP server is not part of this engine')
+        await this.mcp.save({ enabled: cmd.enabled, port: cmd.port, token: cmd.token })
+        return
       case 'listSourceBooks':
       case 'previewImport':
       case 'importProject':
@@ -670,8 +715,10 @@ export class Engine {
       case 'generateVoice':
       case 'voiceStatus':
       case 'planVoices':
-      case 'designVoice':
+      case 'setVoice':
       case 'previewVoice':
+      case 'studiosStatus':
+      case 'openInStudio':
       case 'getRenpyConfig':
       case 'saveRenpyConfig':
         await this.vn.handle(cmd)

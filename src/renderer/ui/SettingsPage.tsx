@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getStartWithWindows, pickFolder, sendCommand, setStartWithWindows } from '../api'
 import { useVn } from '../store/hooks'
+import { McpSettings } from './McpSettings'
 import { RenpySettings } from './RenpySettings'
 
 /** Provider key variables the engine usually knows. The engine refuses names that are not in providers.md. */
@@ -59,6 +60,8 @@ export function SettingsPage() {
         <span className="dim">Where the Library looks for books (its books/ folder).</span>
       </div>
       <RenpySettings />
+      <hr />
+      <McpSettings />
       <hr />
       <div className="dim">Provider API key (stored in the Windows credential store, never in a file)</div>
       <select value={keyName} onChange={(e) => setKeyName(e.target.value)} data-testid="set-key-name">

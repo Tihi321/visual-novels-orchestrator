@@ -20,20 +20,25 @@ export class VibeTtsError extends Error {
   }
 }
 
+/** A fixed VibeTTS voice: a Kokoro voice (`af_heart`, English only) or a Supertonic one (`supertonic:F1` .. `M5`, 31 languages). */
 export interface VibeVoice {
   id: string
-  label?: string
-  engine?: string
-  kind?: string
-  description?: string
-  lang?: string
+  label: string
+  /** `kokoro` or `supertonic`. */
+  engine: string
+  /** The language codes it reads. */
+  languages: string[]
 }
 
+/** `list_voices`. Supertonic voices are only listed once it is downloaded (`supertonic_installed`). */
 export interface VibeVoiceList {
   voices: VibeVoice[]
-  engine?: string
-  default_voice?: string
-  omnivoice_installed?: boolean
+  languages?: { code: string; name: string }[]
+  /** The user's own default voices in VibeTTS. */
+  english?: { engine?: string; voice?: string }
+  other?: { language?: string; voice?: string }
+  language_mode?: string
+  supertonic_installed?: boolean
 }
 
 export interface BatchItem {
@@ -59,14 +64,6 @@ export interface BatchResult {
   total_duration_s?: number
 }
 
-export interface CreatedVoice {
-  voice: string
-  name: string
-  description: string
-  seed: number
-  lang: string
-}
-
 export interface FileResult {
   path: string
   format?: string
@@ -79,8 +76,6 @@ export interface FileResult {
 export interface VibeTtsClient {
   readonly url: string
   listVoices(signal?: AbortSignal): Promise<VibeVoiceList>
-  createVoice(args: { name: string; description?: string; seed?: number; lang?: string; overwrite?: boolean }, signal?: AbortSignal): Promise<CreatedVoice>
-  deleteVoice(name: string, signal?: AbortSignal): Promise<{ deleted: string }>
   synthesizeToFile(args: { text: string; output: string; voice?: string; lang?: string; speed?: number; overwrite?: boolean }, signal?: AbortSignal): Promise<FileResult>
   synthesizeBatch(items: BatchItem[], opts?: { overwrite?: boolean; signal?: AbortSignal }): Promise<BatchResult>
   /** Cancels a running export (best effort). */
@@ -89,9 +84,9 @@ export interface VibeTtsClient {
 
 export interface VibeTtsOptions {
   url?: string
-  /** Timeout of the short calls (initialize, list_voices, delete_voice). */
+  /** Timeout of the short calls (initialize, list_voices). */
   timeoutMs?: number
-  /** Timeout of create_voice and synthesize_to_file (the model loads on the first call). */
+  /** Timeout of synthesize_to_file, the voice preview (the model loads on the first call). */
   voiceTimeoutMs?: number
   /** Timeout of one synthesize_batch call. */
   batchTimeoutMs?: number
@@ -121,8 +116,6 @@ export function createVibeTtsClient(opts: VibeTtsOptions = {}): VibeTtsClient {
   return {
     url,
     listVoices: (signal) => call<VibeVoiceList>('list_voices', {}, timeoutMs, signal),
-    createVoice: (args, signal) => call<CreatedVoice>('create_voice', args, voiceTimeoutMs, signal),
-    deleteVoice: (name, signal) => call<{ deleted: string }>('delete_voice', { name }, timeoutMs, signal),
     synthesizeToFile: (args, signal) => call<FileResult>('synthesize_to_file', args, voiceTimeoutMs, signal),
     synthesizeBatch: (items, o = {}) => call<BatchResult>('synthesize_batch', { items, overwrite: o.overwrite ?? false }, batchTimeoutMs, o.signal),
     stop: async (cancelExport = true) => {

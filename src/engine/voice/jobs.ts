@@ -4,10 +4,14 @@ import type { Lang } from '../../shared/vn'
 import type { PlanVoices } from '../vn/agents/voice-director'
 import { speakerOf, voiceSubjects } from '../vn/agents/voice-director'
 import type { VnService } from '../vn/service'
+import { NARRATOR, SUPERTONIC_HINT, guessGender, parseGender, pickVoices, readsLang, voiceLangsOf, voicesFor } from './catalog'
+import type { VoiceWish } from './catalog'
 import type { VoiceConfig } from './config'
 import { VibeTtsError } from './vibetts'
-import type { BatchItem, VibeTtsClient } from './vibetts'
-import { completeSpec, fallbackSpec, sanitizeDescription, sanitizeSeed, sha1, slugVoiceName, uniqueName, voiceNameFor } from './vocab'
+import type { BatchItem, VibeTtsClient, VibeVoiceList } from './vibetts'
+import { sha1, slugVoiceName } from './vocab'
+
+const PLAN_HINT = 'run Plan voices: it assigns a VibeTTS voice per character and language'
 
 /** One clip in `voice/<lang>/index.json`: the hash of what it was made from, and the file. `speaker` is the voice slot it used. */
 export interface VoiceIndexEntry {
@@ -33,12 +37,13 @@ interface RunOpts {
   signal?: AbortSignal
 }
 
-/** Forgets the clips of one voice slot (they are made again by the next generate). The files stay until they are replaced. */
-export async function invalidateSpeaker(svc: VnService, slug: string, speaker: string): Promise<number> {
+/** Forgets the clips of one voice slot, in one language or in all (they are made again by the next generate). The files stay until they are replaced. */
+export async function invalidateSpeaker(svc: VnService, slug: string, speaker: string, only?: Lang): Promise<number> {
   let n = 0
   const root = path.join(svc.store.dir(slug), 'voice')
   if (!existsSync(root)) return 0
   for (const lang of await fs.readdir(root)) {
+    if (only && lang !== only) continue
     const dir = path.join(root, lang)
     const index = await readVoiceIndexIn(dir)
     let changed = false
@@ -54,46 +59,57 @@ export async function invalidateSpeaker(svc: VnService, slug: string, speaker: s
 }
 
 /**
- * vn.voice.plan with the VibeTTS provider: a voice for every speaking character and the narrator. `plan` is the voice-director's
- * answer (null when it did not answer: the deterministic voices from the bible are used). A voice that is already mapped and
- * still exists in VibeTTS is kept unless `overwrite`. The mapping goes to the project's `voice.voices`.
+ * vn.voice.plan with the VibeTTS provider: a voice for every speaking character and the narrator, in every language of the project.
+ * `plan` is the voice-director's answer (null when it did not answer: gender and voices come from the bible). A voice that is already
+ * mapped and still reads its language is kept unless `overwrite`. The mapping goes to the project's `voice.voices`.
  */
-export async function planVibeVoices(svc: VnService, slug: string, plan: PlanVoices | null, opts: RunOpts & { overwrite?: boolean }): Promise<string> {
+export async function planVibeVoices(svc: VnService, slug: string, plan: PlanVoices | null, opts: RunOpts & { overwrite?: boolean; listed?: VibeVoiceList }): Promise<string> {
   const { settings } = await svc.store.loadSettings(slug)
   const book = await svc.store.loadBook(slug)
-  const { client } = await svc.vibetts()
-  const listed = await client.listVoices(opts.signal)
-  const known = new Set(listed.voices.map((v) => v.id))
-  const taken = new Set(listed.voices.map((v) => v.id.replace(/^omni:/, '')))
-  const voices = { ...settings.voice.voices }
+  const langs = voiceLangsOf(settings)
+  const listed = opts.listed ?? (await (await svc.vibetts()).client.listVoices(opts.signal))
+  if (langs.some((l) => l !== 'en') && listed.supertonic_installed === false) throw new Error(SUPERTONIC_HINT)
+  const engine = settings.voice.englishEngine ?? 'kokoro'
+  const subjects = voiceSubjects(book)
+  const voices = Object.fromEntries(Object.entries(settings.voice.voices).map(([k, v]) => [k, { ...v }]))
+  const changed: { key: string; lang: Lang }[] = []
   let made = 0
   let kept = 0
   try {
-    for (const s of voiceSubjects(book)) {
+    for (const lang of langs) {
       opts.signal?.throwIfAborted()
-      const cur = voices[s.speakerKey]
-      if (cur && known.has(cur) && !opts.overwrite) {
-        kept++
-        continue
+      const candidates = voicesFor(listed.voices, lang, engine)
+      if (!candidates.length) throw new Error(lang === 'en' ? 'VibeTTS lists no voice that reads English' : `${SUPERTONIC_HINT} (no listed voice reads ${lang})`)
+      const wishes: VoiceWish[] = []
+      const given: string[] = []
+      for (const s of subjects) {
+        const cur = voices[s.speakerKey]?.[lang]
+        if (cur && readsLang(listed.voices, cur, lang) && !opts.overwrite) {
+          kept++
+          given.push(cur)
+          continue
+        }
+        const proposed = plan?.voices.find((v) => speakerOf(v) === s.speakerKey)
+        const asked = proposed?.voices?.[lang]
+        const preferred = asked && candidates.some((v) => v.id === asked) ? asked : undefined
+        wishes.push({ key: s.speakerKey, gender: parseGender(proposed?.gender) ?? guessGender({ key: s.speakerKey, name: s.name, looks: s.looks, voiceHint: s.voiceHint }), preferred })
       }
-      const proposed = plan?.voices.find((v) => speakerOf(v) === s.speakerKey)
-      const hints = { key: s.speakerKey, name: s.name, looks: s.looks, voiceHint: s.voiceHint }
-      const spec = proposed ? completeSpec(proposed, hints) : fallbackSpec(hints)
-      const own = cur?.startsWith('omni:') && cur !== 'omni:default' ? cur.slice(5) : ''
-      const reuse = own !== '' && (opts.overwrite || !known.has(cur!))
-      const name = reuse ? own : uniqueName(voiceNameFor(slug, s.speakerKey, proposed?.voiceName), taken)
-      const r = await client.createVoice({ name, description: spec.description, seed: spec.seed, lang: book.primaryLang, overwrite: reuse && known.has(cur!) }, opts.signal)
-      voices[s.speakerKey] = r.voice
-      taken.add(name)
-      known.add(r.voice)
-      if (opts.overwrite) await invalidateSpeaker(svc, slug, s.speakerKey)
-      opts.log(`voice ${r.voice} for ${s.speakerKey}: ${r.description || '(random)'} (seed ${r.seed})${proposed ? '' : ' [from the bible]'}`)
-      made++
+      const picked = pickVoices(wishes, candidates, given)
+      for (const [key, id] of Object.entries(picked)) {
+        const old = voices[key]?.[lang]
+        voices[key] = { ...voices[key], [lang]: id }
+        if (old !== id) changed.push({ key, lang })
+        opts.log(`voice ${id} for ${key} (${lang})${plan ? '' : ' [from the bible]'}`)
+        made++
+      }
     }
   } finally {
-    if (made) await svc.updateSettings(slug, { voice: { voices } })
+    if (changed.length) {
+      await svc.updateSettings(slug, { voice: { voices } })
+      for (const c of changed) await invalidateSpeaker(svc, slug, c.key, c.lang)
+    }
   }
-  return `${made} voice(s) created in VibeTTS, ${kept} kept${plan ? '' : ' (descriptions from the bible: the voice-director did not answer)'}`
+  return `${made} voice(s) assigned, ${kept} kept${plan ? '' : ' (from the bible: the voice-director did not answer)'}`
 }
 
 export interface GenerateOpts extends RunOpts {
@@ -124,9 +140,9 @@ export async function generateVibeClips(svc: VnService, slug: string, lang: Lang
   const book = await svc.store.loadBook(slug)
   const edition = await svc.store.loadEdition(slug, lang).catch(() => null)
   if (!edition) return { made: 0, kept: 0, failed: 0, skipped: 0, status: 'skipped', message: `voice for ${lang} skipped: the project has no ${lang} edition` }
-  const voices = settings.voice.voices
-  if (!Object.keys(voices).length) {
-    return { made: 0, kept: 0, failed: 0, skipped: 0, status: 'skipped', message: `voice for ${lang} skipped: no voices are planned yet (run Plan voices: it creates a VibeTTS voice per character)` }
+  const voiceOf = (speaker: string): string | undefined => settings.voice.voices[speaker]?.[lang]
+  if (!Object.keys(settings.voice.voices).some((k) => voiceOf(k))) {
+    return { made: 0, kept: 0, failed: 0, skipped: 0, status: 'skipped', message: `voice for ${lang} skipped: no ${lang} voices are planned yet (${PLAN_HINT})` }
   }
   const { speed, format } = o.config
   const dir = voiceDirOf(svc, slug, lang)
@@ -134,6 +150,7 @@ export async function generateVibeClips(svc: VnService, slug: string, lang: Lang
   const index = await readVoiceIndexIn(dir)
   let kept = 0
   let skipped = 0
+  const missing = new Set<string>()
   const todo: { beatId: string; slot: string; voice: string; text: string; hash: string; file: string }[] = []
   for (const chapter of book.chapters)
     for (const scene of chapter.scenes)
@@ -141,10 +158,11 @@ export async function generateVibeClips(svc: VnService, slug: string, lang: Lang
         if (beat.type === 'cast' || (o.beatId && beat.id !== o.beatId)) continue
         const text = edition.beats[beat.id]?.trim()
         if (!text) continue
-        const own = beat.type === 'line' && beat.speakerKey && voices[beat.speakerKey] ? beat.speakerKey : 'narrator'
-        const voice = voices[own]
+        const own = beat.type === 'line' && beat.speakerKey && voiceOf(beat.speakerKey) ? beat.speakerKey : NARRATOR
+        const voice = voiceOf(own)
         if (!voice) {
           skipped++
+          missing.add(own)
           continue
         }
         const hash = sha1(['vibetts', voice, lang, speed, format, text].join('\u0000'))
@@ -192,11 +210,11 @@ export async function generateVibeClips(svc: VnService, slug: string, lang: Lang
   const parts = [`${made} clip(s) made, ${kept} unchanged`]
   if (todo.length > work.length) parts.push(`${todo.length - work.length} left (limit ${o.limit})`)
   if (failed) parts.push(`${failed} failed (${errors.join('; ')})`)
-  if (skipped) parts.push(`${skipped} skipped: no narrator voice`)
+  if (skipped) parts.push(`${skipped} skipped: no ${lang} voice for ${[...missing].join(', ')} (${PLAN_HINT})`)
   return { made, kept, failed, skipped, status: 'done', message: `voice ${lang}: ${parts.join('; ')}` }
 }
 
-// ---- the Voice tab: design a voice, preview a voice ----
+// ---- the Voice tab: set a voice, preview a voice ----
 
 const SAMPLE: Record<Lang, string> = {
   en: 'Good evening. I hope you are ready for what comes next.',
@@ -210,8 +228,6 @@ export interface VoicePreview {
   /** Relative to the project folder (`preview/voice-<key>.mp3`). */
   file: string
   rev: number
-  description: string
-  seed: number | null
   lang: Lang
 }
 
@@ -234,36 +250,33 @@ async function sampleText(svc: VnService, slug: string, speakerKey: string, lang
 }
 
 /** Makes the preview clip of a voice (`preview/voice-<key>.mp3`, replaced each time). */
-export async function previewVoice(svc: VnService, slug: string, speakerKey: string, voice: string, lang: Lang, extra: { description?: string; seed?: number | null } = {}): Promise<VoicePreview> {
+export async function previewVoice(svc: VnService, slug: string, speakerKey: string, voice: string, lang: Lang): Promise<VoicePreview> {
   const { client, config } = await svc.vibetts()
   const rel = `preview/voice-${slugVoiceName(speakerKey) || 'speaker'}.mp3`
   const out = path.join(svc.store.dir(slug), ...rel.split('/'))
   await fs.mkdir(path.dirname(out), { recursive: true })
   await client.synthesizeToFile({ text: await sampleText(svc, slug, speakerKey, lang), output: out, voice, lang, speed: config.speed, overwrite: true })
-  return { slug, speakerKey, voice, file: rel, rev: Date.now(), description: extra.description ?? '', seed: extra.seed ?? null, lang }
+  return { slug, speakerKey, voice, file: rel, rev: Date.now(), lang }
 }
 
 /**
- * Creates (or, for "Try another", replaces) the voice of a speaker from a description and a seed, assigns it to the speaker,
- * forgets that speaker's clips and returns a preview clip.
+ * Gives a speaker the VibeTTS voice `voice` for one language, forgets that speaker's clips in it and returns a preview clip.
+ * The voice must be listed by VibeTTS and read the language (a Kokoro voice cannot read Croatian).
  */
-export async function designVoice(svc: VnService, slug: string, a: { speakerKey: string; description: string; seed?: number; lang?: Lang }): Promise<VoicePreview> {
+export async function setVoice(svc: VnService, slug: string, speakerKey: string, lang: Lang, voice: string): Promise<VoicePreview> {
   const { settings } = await svc.store.loadSettings(slug)
   const book = await svc.store.loadBook(slug)
-  if (a.speakerKey !== 'narrator' && !book.characters.some((c) => c.key === a.speakerKey)) throw new Error(`no character "${a.speakerKey}" in ${slug}`)
+  if (speakerKey !== NARRATOR && !book.characters.some((c) => c.key === speakerKey)) throw new Error(`no character "${speakerKey}" in ${slug}`)
   const { client } = await svc.vibetts()
   const listed = await client.listVoices()
-  const known = new Set(listed.voices.map((v) => v.id))
-  const taken = new Set(listed.voices.map((v) => v.id.replace(/^omni:/, '')))
-  const cur = settings.voice.voices[a.speakerKey]
-  const own = cur?.startsWith('omni:') && cur !== 'omni:default' ? cur.slice(5) : ''
-  const name = own || uniqueName(voiceNameFor(slug, a.speakerKey), taken)
-  const seed = sanitizeSeed(a.seed, Math.floor(Math.random() * 1_000_000))
-  const description = sanitizeDescription(a.description)
-  const r = await client.createVoice({ name, description, seed, lang: settings.primaryLang, overwrite: own !== '' && known.has(cur!) })
-  await svc.updateSettings(slug, { voice: { voices: { ...settings.voice.voices, [a.speakerKey]: r.voice } } })
-  await invalidateSpeaker(svc, slug, a.speakerKey)
-  return previewVoice(svc, slug, a.speakerKey, r.voice, a.lang ?? settings.primaryLang, { description: r.description, seed: r.seed })
+  if (!readsLang(listed.voices, voice, lang)) {
+    const hint = voice.startsWith('supertonic:') && listed.supertonic_installed === false ? `: ${SUPERTONIC_HINT}` : ''
+    throw new Error(`VibeTTS has no voice "${voice}" that reads ${lang}${hint}`)
+  }
+  const cur = settings.voice.voices
+  await svc.updateSettings(slug, { voice: { voices: { ...cur, [speakerKey]: { ...cur[speakerKey], [lang]: voice } } } })
+  await invalidateSpeaker(svc, slug, speakerKey, lang)
+  return previewVoice(svc, slug, speakerKey, voice, lang)
 }
 
 /** True for the error that means VibeTTS is not reachable (the Voice tab shows its message). */

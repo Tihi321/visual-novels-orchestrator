@@ -1,10 +1,11 @@
 import path from 'node:path'
 import type { EngineEvent, PipelineStep, ProjectSettingsPatch } from '../shared/protocol'
-import { ART_PROVIDERS, CHIPS, DITHERS, MUSIC_PROVIDERS, PIXEL_PROVIDERS, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../shared/vn'
+import { ART_PROVIDERS, CHIPS, DITHERS, LANGS, MUSIC_PROVIDERS, PIXEL_PROVIDERS, langSchema, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../shared/vn'
 import type { Lang } from '../shared/vn'
 import { Engine } from './engine'
 import type { EngineOptions } from './engine'
 import { initDataFolder, resolveDataDir } from './store/dataFolder'
+import { acquireEngineLock, EngineLockHeldError } from './store/lock'
 import { isStep, STEPS, TASKS } from './vn/pipeline'
 import type { VnService } from './vn/service'
 
@@ -35,8 +36,9 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   play <slug>                            start the built game
   android <slug> [--preflight] [--bundle]   check the setup / build the Android package
   voice <slug> [--lang hr] [--only <beatId>] [--limit n]   generate the voice clips (only when the project's voice is on)
-  voice plan <slug> [--overwrite]        create the VibeTTS voices (one per character and the narrator)
-  voice status                           is VibeTTS reachable, and its voices
+  voice plan <slug> [--overwrite]        assign a VibeTTS voice per character, the narrator and edition language
+  voice set <slug> <speaker> <lang> <voice>   pick one voice (a character key or narrator; en, hr; an id from voice status)
+  voice status                           is VibeTTS reachable, and its fixed voices (Kokoro: English, Supertonic: 31 languages)
   comfy status|free                      ComfyUI lanes and engines / free its VRAM
   settings <slug> [--style pixel|illustrated] [--palette name|none] [--music-provider chiptune|comfy|auto] [--chip nes|gb|genesis|snes|pce|auto]
            [--pixel-provider pixel-studio|vno] [--art-provider pixel-studio-draw|comfy] [--pixel-size 320x180] [--dither none|ordered|floyd] [--outline[=false]] [--tracks n]
@@ -44,7 +46,7 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   studios status                         are Pixel Studio and Chiptune Studio reachable (how to start them if not)
   studio open <slug> <assetId> [--wait] [--via launch|mcp] [--timeout seconds]   open an asset in Pixel Studio / Chiptune Studio; a save there makes a new custom, locked version (--wait: until the first save)
   themes                                 list the game themes
-  mcp                                    run the MCP server on stdio
+  mcp                                    run the MCP server on stdio (relays to the running app or headless engine when there is one)
 `
 
 /** The commands the VN CLI handles (the rest of index.ts handles `probe`, `key-set` and the plain engine). */
@@ -149,14 +151,18 @@ export function settingsPatchFromFlags(p: ParsedCli): ProjectSettingsPatch {
   return { ...(Object.keys(art).length ? { art } : {}), ...(Object.keys(music).length ? { music } : {}) }
 }
 
-/** A headless engine for a CLI run: the data folder is created from the seed, events are printed. */
+/**
+ * A headless engine for a CLI run: the data folder is created from the seed, events are printed. It takes the data-folder lock
+ * (released by `engine.stop()`): with the app or another engine running on the folder it throws `EngineLockHeldError`.
+ */
 export async function startHeadless(argv: readonly string[], o: Partial<EngineOptions> & { print?: boolean } = {}): Promise<Engine> {
   const dataDir = resolveDataDir({ argv })
+  const lock = await acquireEngineLock(dataDir)
   const seedIdx = argv.indexOf('--seed')
-  await initDataFolder(dataDir, seedIdx >= 0 && argv[seedIdx + 1] ? path.resolve(argv[seedIdx + 1]!) : undefined)
   const verbose = argv.includes('--verbose')
   const engine = new Engine({
     dataDir,
+    lock,
     emit: (e) => {
       if (o.print !== false) printEvent(e)
       o.emit?.(e)
@@ -166,7 +172,13 @@ export async function startHeadless(argv: readonly string[], o: Partial<EngineOp
     },
     ...o
   })
-  await engine.start()
+  try {
+    await initDataFolder(dataDir, seedIdx >= 0 && argv[seedIdx + 1] ? path.resolve(argv[seedIdx + 1]!) : undefined)
+    await engine.start()
+  } catch (e) {
+    await lock.release()
+    throw e
+  }
   return engine
 }
 
@@ -380,8 +392,16 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
           out(`VibeTTS (${st.url}) is not reachable: ${st.error}`)
           return 1
         }
-        out(`VibeTTS (${st.url}) is reachable, ${st.voices.length} voice(s):`)
-        for (const v of st.voices) out(`  ${v.id.padEnd(28)} ${v.kind.padEnd(12)} ${v.lang.padEnd(3)} ${v.description}`)
+        out(`VibeTTS (${st.url}) is reachable, ${st.voices.length} voice(s); Supertonic is ${st.supertonicInstalled ? 'installed' : 'NOT installed (download it in VibeTTS Settings > Supertonic: it reads Croatian and the other languages)'}:`)
+        for (const v of st.voices) out(`  ${v.id.padEnd(16)} ${v.engine.padEnd(11)} ${(v.languages.length > 4 ? `${v.languages.length} languages` : v.languages.join(',')).padEnd(14)} ${v.label}`)
+        return 0
+      }
+      if (p.args[0] === 'set') {
+        const [, setSlug, speaker, setLang, voice] = need(p, 5, 'voice set <slug> <speaker> <lang> <voice>')
+        const parsed = langSchema.safeParse(setLang)
+        if (!parsed.success) throw new Error(`lang must be one of ${LANGS.join(', ')}, not "${setLang}"`)
+        const r = await svc.setVoice(setSlug!, speaker!, parsed.data, voice!)
+        out(`${speaker} (${parsed.data}): ${r.voice}, preview ${r.file}`)
         return 0
       }
       if (p.args[0] === 'plan') {
@@ -480,7 +500,14 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     out(USAGE)
     return 0
   }
-  const engine = await startHeadless(argv)
+  let engine: Engine
+  try {
+    engine = await startHeadless(argv)
+  } catch (e) {
+    if (!(e instanceof EngineLockHeldError)) throw e
+    out(e.message)
+    return 1
+  }
   try {
     return await runCliWith(engine, p)
   } catch (e) {

@@ -1,13 +1,12 @@
 import { z } from 'zod'
 import type { VnBook } from '../../../shared/vn'
-import { vocabularyText } from '../../voice/vocab'
 import { asJson, askJson, clip } from './common'
 import type { AgentCall } from './common'
 
 /**
  * voice-director / plan_voices (only when the book has voice on): one voice per speaking character and for the narrator.
- * For VibeTTS the voice is a short description made of the allowed words (`voice/vocab.ts`), a name and a seed; for a ComfyUI
- * TTS workflow it may also name an uploaded reference clip. The answer is validated and sanitized by the caller.
+ * For VibeTTS it gives a gender and, per language, a voice from the list it is shown; for a ComfyUI TTS workflow it gives a free-text
+ * description of the voice (the prompt of the reference clip) and may name an uploaded reference clip. The caller validates the answer.
  */
 export const planVoicesSchema = z.object({
   voices: z.array(
@@ -15,9 +14,12 @@ export const planVoicesSchema = z.object({
       speakerKey: z.string().optional(),
       /** The old prompt (a data folder seeded before VibeTTS) answers with `voice_<key>`. */
       voiceRefId: z.string().optional(),
-      voiceName: z.string().optional().default(''),
+      /** `female` or `male` (checked by the caller). */
+      gender: z.string().optional(),
+      /** Language -> a voice id from the list in the prompt (VibeTTS only; checked by the caller). */
+      voices: z.record(z.string(), z.string()).optional(),
+      /** Free text; the ComfyUI path uses it as the prompt of the voice reference. */
       description: z.string().default(''),
-      seed: z.number().optional(),
       suggestedRef: z.string().nullable().optional()
     })
   )
@@ -63,12 +65,13 @@ export function voiceSubjects(book: VnBook): VoiceSubject[] {
   return out
 }
 
-export async function planVoices(call: AgentCall, book: VnBook, clips: string[] = []): Promise<PlanVoices> {
+/** `voiceList` is the VibeTTS voices per language (`describeVoices`), empty for a ComfyUI TTS workflow. */
+export async function planVoices(call: AgentCall, book: VnBook, clips: string[] = [], voiceList = ''): Promise<PlanVoices> {
   return askJson(
     call,
     'voice-director',
     'plan_voices',
-    { title: book.title, lang: book.primaryLang, genre: book.genre ?? '', subjects: asJson(voiceSubjects(book)), clips: asJson(clips), vocabulary: vocabularyText() },
+    { title: book.title, lang: book.primaryLang, genre: book.genre ?? '', subjects: asJson(voiceSubjects(book)), clips: asJson(clips), voiceList: voiceList || '(none: a ComfyUI TTS workflow makes the voices from reference clips)' },
     planVoicesSchema,
     { maxTokens: 2500 }
   )

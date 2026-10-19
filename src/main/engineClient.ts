@@ -27,11 +27,14 @@ export class UtilityProcessTransport implements Transport<Command, EngineEvent> 
 }
 
 /** Starts the engine (out/engine/index.js) as an Electron utilityProcess. */
-export function startEngine(enginePath: string, args: string[]): UtilityProcessTransport {
+export function startEngine(enginePath: string, args: string[], onExit?: (code: number | null) => void): UtilityProcessTransport {
   const child = utilityProcess.fork(enginePath, args, { serviceName: 'vn-studio-engine', stdio: 'pipe' })
   child.stdout?.on('data', (d: Buffer) => process.stdout.write(d))
   child.stderr?.on('data', (d: Buffer) => process.stderr.write(d))
   child.on('spawn', () => console.log(`[main] engine started (pid ${child.pid}): ${enginePath}`))
-  child.on('exit', (code) => console.log(`[main] engine exited with code ${code}`))
+  child.on('exit', (code) => {
+    console.log(`[main] engine exited with code ${code}`)
+    onExit?.(code)
+  })
   return new UtilityProcessTransport(child)
 }

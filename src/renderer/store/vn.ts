@@ -14,6 +14,7 @@ import type {
   StepStatus,
   StudioStatusView,
   ThemeInfo,
+  VibeDefaultView,
   VibeVoiceView
 } from '../../shared/protocol'
 import type { Edition, Lang } from '../../shared/vn'
@@ -31,17 +32,20 @@ export interface VoiceStatusView {
   ok: boolean
   url: string
   error: string
-  omniInstalled: boolean
+  supertonicInstalled: boolean
+  /** The language codes VibeTTS can read. */
+  languages: string[]
+  /** The user's own default voices in VibeTTS. */
+  english: VibeDefaultView
+  other: VibeDefaultView
   voices: VibeVoiceView[]
 }
 
-/** The last preview clip of a voice slot (`voice.preview`), `file` relative to the project folder. */
+/** The last preview clip of a voice slot (speaker and language, `voice.preview`), `file` relative to the project folder. */
 export interface VoicePreviewView {
   voice: string
   file: string
   rev: number
-  description: string
-  seed: number | null
   lang: Lang
 }
 
@@ -214,7 +218,7 @@ export function reduceVn(s: VnData, e: EngineEvent, now = Date.now()): Partial<V
     case 'studio.opened':
       return { studioOpened: { ...s.studioOpened, [`${e.slug}:${e.id}`]: e.message } }
     case 'voice.preview':
-      return { voicePreviews: { ...s.voicePreviews, [`${e.slug}:${e.speakerKey}`]: { voice: e.voice, file: e.file, rev: e.rev, description: e.description, seed: e.seed, lang: e.lang } } }
+      return { voicePreviews: { ...s.voicePreviews, [`${e.slug}:${e.speakerKey}:${e.lang}`]: { voice: e.voice, file: e.file, rev: e.rev, lang: e.lang } } }
     case 'comfy.freed':
       return { freed: e.results }
     case 'engines.listed':

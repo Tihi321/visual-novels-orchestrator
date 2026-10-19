@@ -1,5 +1,6 @@
 import { createStore } from 'zustand/vanilla'
 import { applySettingsPatch } from '../lib/settings'
+import { initialMcp, reduceMcp, type McpData } from './mcp'
 import { initialVn, reduceVn, type VnData } from './vn'
 import type { ProjectSettingsPatch } from '../../shared/protocol'
 import type { AgentProblem, AgentState, AgentSummary, CatalogModel, EngineEvent, ModelSummary, ProviderSummary, ServerStatus, SettingsSummary } from '../../shared/protocol'
@@ -31,7 +32,7 @@ export interface AgentView {
   problem?: AgentProblem
 }
 
-export interface VnState extends VnData {
+export interface VnState extends VnData, McpData {
   connected: boolean
   dataDir: string
   paused: boolean
@@ -84,7 +85,8 @@ function initial(): VnState {
     settings: null,
     secretsSet: [],
     page: 'library',
-    ...initialVn()
+    ...initialVn(),
+    ...initialMcp()
   }
 }
 
@@ -156,6 +158,8 @@ export function reduceEvent(s: VnState, e: EngineEvent): Partial<VnState> {
       return { secretsSet: e.secretsSet }
     case 'models.catalog':
       return { catalogs: { ...s.catalogs, [e.provider]: { models: e.models, error: e.error, at: e.at } } }
+    case 'mcp.status':
+      return reduceMcp(s, e)
     default:
       return reduceVn(s, e)
   }

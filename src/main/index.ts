@@ -5,6 +5,8 @@ import path from 'node:path'
 import { isCommand } from '../shared/protocol'
 import type { EngineEvent } from '../shared/protocol'
 import { FILE_SCHEME } from '../renderer/hostApi'
+import { argValue, resolveDataDir } from '../engine/store/dataFolder'
+import { readEngineLock } from '../engine/store/lock'
 import { startEngine } from './engineClient'
 import { fileUrlToPath, parseRange, readFileInside, resolveInside, tailFileInside } from './files'
 
@@ -17,11 +19,15 @@ let quitting = false
 let dataDir: string | null = null
 let allPaused = false
 let loginItemInMemory = false
+// set when the engine ended because another engine holds the data folder: the window shows it (persistently) once it has loaded
+let engineBlocked: EngineEvent | null = null
 const runningJobs = new Set<string>()
 let blockerId: number | null = null
 
+// --mcp-only: headless MCP, no window and no tray (the engine runs with --mcp-only and serves MCP over HTTP).
+const mcpOnly = process.argv.includes('--mcp-only')
 // VNO_NO_WINDOW=1 runs the engine without the main window (for scripted checks).
-const noWindow = process.env.VNO_NO_WINDOW === '1'
+const noWindow = process.env.VNO_NO_WINDOW === '1' || mcpOnly
 const startHidden = process.argv.includes('--hidden')
 
 // Project images (assets, previews) are served by this scheme, from the data folder only (see files.ts).
@@ -31,6 +37,11 @@ function forwardedEngineArgs(): string[] {
   const i = process.argv.findIndex((a) => a === '--data')
   const value = i >= 0 ? process.argv[i + 1] : undefined
   const args = value ? ['--data', value] : []
+  if (mcpOnly) {
+    args.push('--mcp-only')
+    const port = argValue(process.argv, 'port')
+    if (port) args.push('--port', port)
+  }
   // The engine cannot find `seed/` from inside the archive, so a packaged app hands it the copy in resources.
   if (app.isPackaged) args.push('--seed', path.join(process.resourcesPath, 'seed'))
   return args
@@ -136,12 +147,27 @@ function setLoginItem(on: boolean): boolean {
 }
 
 if (!app.requestSingleInstanceLock()) {
-  app.quit()
+  if (mcpOnly) {
+    // headless MCP next to a running app: say where its MCP is, then leave
+    void readEngineLock(resolveDataDir({ argv: process.argv.slice(1) })).then((live) => {
+      console.error(`VN Studio is already running${live ? ` (pid ${live.pid})` : ''}${live?.mcpUrl ? ` with MCP at ${live.mcpUrl}` : ''}. Use it, or close it first.`)
+      app.exit(1)
+    })
+  } else app.quit()
 } else {
   app.on('second-instance', () => showWindow())
 
   void app.whenReady().then(() => {
-    const engine = startEngine(path.join(__dirname, '../engine/index.js'), forwardedEngineArgs())
+    // headless: the engine ending (the port or the data folder is taken) ends the process with its exit code
+    const engine = startEngine(path.join(__dirname, '../engine/index.js'), forwardedEngineArgs(), (code) => {
+      if (quitting || code === 0) return
+      if (mcpOnly) return app.exit(code ?? 1)
+      void readEngineLock(dataDir ?? resolveDataDir({ argv: process.argv.slice(1) })).then((live) => {
+        if (!live) return
+        engineBlocked = { type: 'engine.warning', message: `VN Studio is already running headless (pid ${live.pid}${live.mcpUrl ? `, MCP ${live.mcpUrl}` : ''}). Stop it (Ctrl+C in its terminal) and restart the app.` }
+        if (win && !win.isDestroyed()) win.webContents.send(EVENT_CHANNEL, engineBlocked)
+      })
+    })
     const sendCommand = (c: Parameters<typeof engine.send>[0]) => engine.send(c)
 
     protocol.handle(FILE_SCHEME, async (request) => {
@@ -247,6 +273,7 @@ if (!app.requestSingleInstanceLock()) {
       win.webContents.on('did-finish-load', () => {
         engine.send({ type: 'ping', id: 'startup' })
         engine.send({ type: 'snapshot' })
+        if (engineBlocked) win?.webContents.send(EVENT_CHANNEL, engineBlocked)
       })
       if (process.env.VNO_NO_TRAY !== '1') {
         tray = new Tray(trayImage())
