@@ -38,6 +38,9 @@ Studio never generates an image for that project.
 7. **Pixel resize** (user request): `buildImages` (`src/engine/renpy/images.ts`) resizes backgrounds and the cover (`gui/main_menu.png`)
    with `kernel: 'nearest'` when `art.style` is `pixel` (flag `pixel` in `BuildImagesInput`, set in `build.ts`), so pixel art is
    never blurred. Other projects keep the default kernel.
+8. **Lossless WebP** (user request): for a pixel project (`pixel` flag) `encode()` in `images.ts` writes WebP with `lossless: true`
+   for backgrounds, sprites and their placeholders (new optional `lossless` parameter on `placeholderBackground` and
+   `placeholderSprite`); other projects keep quality 88; PNG unchanged.
 
 ## Tests
 
@@ -48,6 +51,7 @@ Studio never generates an image for that project.
 - Build with missing hand-made sheets does not count them as placeholders.
 - Settings round trip: `provider: 'hand'` saved in `project.md`, cleared with `null`.
 - Pixel project: `main_menu.png` and a background built from a small 2-colour image contain only those colours (non-pixel blends).
+- Pixel project, format webp: the built sprite (with alpha) and background decode to exactly the source colours.
 - Run the whole suite (`yarn test`) and the type check (`yarn typecheck` or the repo's equivalent) and lint, all green.
 
 ## Out of scope
@@ -74,3 +78,4 @@ the repo's commit style (`VNO-07: ...`). Do not push or merge.
 - Review fix: the waiting-image count leaves out sheets (they are only a reference), matching `summary()`.
 - Deviation: the empty-todo generate message in hand mode is `hand-made art: nothing to generate; N image(s) wait ...` instead of "every asset already has a file".
 - Not done: engine not rebuilt or restarted (forbidden); Look tab not exercised in a browser.
+- [x] 8. Lossless WebP for pixel projects (`images.ts`); test in `tests/renpy-images-pixel.test.ts` (compares the visible RGBA values; fully transparent pixels carry no colour). The non-pixel inexactness is not asserted (not deterministic enough).

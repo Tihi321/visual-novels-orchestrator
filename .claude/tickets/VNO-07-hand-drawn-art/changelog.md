@@ -1,5 +1,13 @@
 # VNO-07 changelog
 
+## 2026-10-20 - VNO-07 item 8: lossless WebP for pixel builds
+
+- `src/engine/renpy/images.ts`: `encode()` takes `lossless`; pixel projects write `webp({ lossless: true })` for backgrounds, sprites and their placeholders (optional trailing `lossless` argument on `placeholderBackground` / `placeholderSprite`). Other projects keep quality 88; PNG and the cover unchanged.
+- `tests/renpy-images-pixel.test.ts`: a pixel project's WebP sprite (with alpha) and background decode to exactly the source colours.
+- Why: lossy WebP chroma subsampling smeared pixel-art edges in the soother production (worked around by switching `config/renpy.md` imageFormat to png).
+- Verification: `yarn test` 48 files / 568 tests passed; `yarn typecheck` and `yarn lint` exit 0. Not run: a live build on the running engine (not rebuilt).
+- Commit status: committed on `VNO-07_hand-drawn-art`, not pushed.
+
 ## 2026-10-20 - VNO-07: hand-made art mode (no ComfyUI) and nearest-neighbour resize for pixel builds
 
 Repo `visual-novels-orchestrator`, branch `VNO-07_hand-drawn-art` (from `origin/master` 034de2c).
