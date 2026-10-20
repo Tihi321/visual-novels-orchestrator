@@ -5,6 +5,8 @@ import { langSchema } from '../../shared/vn'
 import { jsonSchemaOf } from '../pipeline/llm'
 import { isStep, STEPS, TASKS } from '../vn/pipeline'
 import type { VnService } from '../vn/service'
+import type { ClientTaskQueue } from '../models/client'
+import { clientTools } from './tools-client'
 import { planTools } from './tools-plan'
 import { storyTools } from './tools-story'
 
@@ -25,6 +27,8 @@ export interface McpOptions {
   waitTimeoutMs?: number
   /** The queue switches of the engine (`vno_pause_all`, `vno_resume_all`, `vno_stop_now`). Without it those tools say they are unavailable. */
   control?: { setPaused(paused: boolean): Promise<void>; stopNow(): Promise<void> }
+  /** The engine's client task queue (model calls of `client/...` models). Default: the one of the service's registry. */
+  clientQueue?: ClientTaskQueue
   /** Sets the Scriptorium library folder (`scriptoriumData` in config/settings.md) and returns it resolved. Without it `vno_set_library` says it is unavailable. */
   setScriptoriumData?: (folder: string) => Promise<string>
 }
@@ -33,10 +37,19 @@ export interface McpOptions {
 export type ToolDef = <S extends z.ZodType>(name: string, description: string, schema: S, run: (args: z.output<S>) => Promise<unknown>) => Tool
 export const def: ToolDef = (name, description, schema, run) => ({ name, description, schema, run: run as Tool['run'] })
 
+/** A tool result with extra content blocks (images) besides its data. */
+export class ToolOutput {
+  constructor(
+    readonly data: unknown,
+    readonly extra: { type: 'image'; data: string; mimeType: string }[]
+  ) {}
+}
+
 /** The result of a `tools/call`: a readable text item plus the same data as `structuredContent`. */
 export interface ToolResult {
   [key: string]: unknown
-  content: { type: 'text'; text: string }[]
+  /** The first block is the text; image blocks may follow. */
+  content: [{ type: 'text'; text: string }, ...{ type: 'image'; data: string; mimeType: string }[]]
   structuredContent?: Record<string, unknown>
   isError?: boolean
 }
@@ -46,13 +59,19 @@ const lang = langSchema.describe('A language code such as en, hr, de or ja (vno_
 const wait = z.boolean().optional().describe('Wait until the jobs finish before answering')
 const assetKind = z.enum(['background', 'sheet', 'sprite', 'cover', 'music', 'voiceRef'])
 
+/** What `wait` says when jobs wait for the client: how many tasks, and what to do. */
+export function clientHint(n: number): { clientTasks?: number; hint?: string } {
+  return n > 0 ? { clientTasks: n, hint: 'Model calls are waiting for you: call vno_get_task, answer with vno_submit_task, repeat until none, then vno_wait again.' } : {}
+}
+
 /** The tool list, bound to a service. */
 export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
   const timeoutMs = opts.waitTimeoutMs ?? 10 * 60_000
+  const queue = () => opts.clientQueue ?? svc.deps.registry.clientQueue
   const settle = async (s: string, doWait: boolean | undefined) => {
     if (!doWait) return { waited: false }
     const r = await svc.waitIdle(s, { timeoutMs })
-    return { waited: true, timedOut: r.timedOut, failedJobs: r.failed }
+    return { waited: true, timedOut: r.timedOut, failedJobs: r.failed, ...clientHint(r.clientTasks) }
   }
   const control = () => {
     if (!opts.control) throw new Error('the queue switches are not available here')
@@ -82,7 +101,12 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
         return { ...r, ...(await settle(a.slug, a.wait)), status: await svc.status(a.slug) }
       }
     ),
-    def('vno_status', 'The pipeline state of a project: each step, the jobs queued, running, done and failed, and the failures.', z.object({ slug }), async (a) => svc.status(a.slug)),
+    def(
+      'vno_status',
+      'The pipeline state of a project: each step, the jobs queued, running, done and failed, and the failures. clientTasks: the model calls waiting for you or leased (see vno_get_task).',
+      z.object({ slug }),
+      async (a) => ({ ...(await svc.status(a.slug)), clientTasks: queue().counts() })
+    ),
     def(
       'vno_asset_list',
       'List the assets of a project (backgrounds, character sheets, sprites, cover, music, voice references) with their prompt, versions, lock and file.',
@@ -145,16 +169,17 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     def('vno_get_project', 'One project in full: its settings (theme, art, music, voice), editions, assets, pipeline state, build and lint results.', z.object({ slug }), async (a) => ({ project: await svc.detail(a.slug) })),
     def(
       'vno_update_settings',
-      'Change the settings of a project: each part is merged into the current one, and the asset list follows. theme: a theme name (vno_themes) or null. art: style (pixel or illustrated), palette, stylePrompt, provider, pixelProvider, pixel {width,height,dither,outline}. music: provider, chip, tracks. voice: provider, englishEngine and the other voice settings (vno_get_project shows them). null clears an optional field.',
+      'Change the settings of a project: each part is merged into the current one, and the asset list follows. theme: a theme name (vno_themes) or null. art: style (pixel or illustrated), palette, stylePrompt, provider, pixelProvider, pixel {width,height,dither,outline}. music: provider, chip, tracks. voice: provider, englishEngine and the other voice settings (vno_get_project shows them). models: {role: provider/model, ...} the models this project uses for those roles, before the agent and role lists of config/roles.md (the way to have an MCP client do one project: {"art-director": "client/claude-code"}); null for a role clears it. null clears an optional field.',
       z.object({
         slug,
         theme: z.string().nullable().optional(),
         art: z.record(z.string(), z.unknown()).optional(),
         music: z.record(z.string(), z.unknown()).optional(),
-        voice: z.record(z.string(), z.unknown()).optional()
+        voice: z.record(z.string(), z.unknown()).optional(),
+        models: z.record(z.string(), z.string().nullable()).optional().describe('role -> provider/model, for example {"art-director": "client/claude-code"}; null clears a role')
       }),
       async (a) => {
-        const patch = { ...(a.theme !== undefined ? { theme: a.theme } : {}), ...(a.art ? { art: a.art } : {}), ...(a.music ? { music: a.music } : {}), ...(a.voice ? { voice: a.voice } : {}) } as ProjectSettingsPatch
+        const patch = { ...(a.theme !== undefined ? { theme: a.theme } : {}), ...(a.art ? { art: a.art } : {}), ...(a.music ? { music: a.music } : {}), ...(a.voice ? { voice: a.voice } : {}), ...(a.models ? { models: a.models } : {}) } as ProjectSettingsPatch
         return { settings: await svc.updateSettings(a.slug, patch) }
       }
     ),
@@ -296,7 +321,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
       z.object({ slug, timeoutSeconds: z.number().positive().optional().describe('Default: 600') }),
       async (a) => {
         const r = await svc.waitIdle(a.slug, { timeoutMs: (a.timeoutSeconds ?? 600) * 1000 })
-        return { timedOut: r.timedOut, failedJobs: r.failed, status: await svc.status(a.slug) }
+        return { timedOut: r.timedOut, failedJobs: r.failed, ...clientHint(r.clientTasks), status: await svc.status(a.slug) }
       }
     ),
     // ---- story: make and edit a visual novel without a book folder ----
@@ -304,6 +329,9 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
 
     // ---- plans, music, cues, library ----
     ...planTools(svc, def, opts),
+
+    // ---- model work done by the MCP client (client/... models) ----
+    ...clientTools(svc, def, opts),
 
     def('vno_pause_all', 'Pause the whole queue: running jobs finish, no new job starts (it stays paused after a restart).', z.object({}), async () => {
       await control().setPaused(true)
@@ -328,9 +356,11 @@ export async function callTool(tools: readonly Tool[], name: string, args: unkno
   const parsed = tool.schema.safeParse(args ?? {})
   if (!parsed.success) return fail(`invalid arguments: ${parsed.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`).join('; ')}`)
   try {
-    const result = await tool.run(parsed.data as never)
+    const out = await tool.run(parsed.data as never)
+    const result = out instanceof ToolOutput ? out.data : out
+    const extra = out instanceof ToolOutput ? out.extra : []
     const structured = (result !== null && typeof result === 'object' && !Array.isArray(result) ? result : { result }) as Record<string, unknown>
-    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }], structuredContent: JSON.parse(JSON.stringify(structured)) as Record<string, unknown> }
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }, ...extra], structuredContent: JSON.parse(JSON.stringify(structured)) as Record<string, unknown> }
   } catch (e) {
     return fail((e as Error).message)
   }

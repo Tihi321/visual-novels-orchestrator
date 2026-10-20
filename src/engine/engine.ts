@@ -8,6 +8,7 @@ import type { FactoryConfig, SettingsConfig } from '../shared/schemas'
 import { AgentStore } from './agents/agents'
 import { Budget } from './budget/spend'
 import { LogWriter } from './logs/logs'
+import { ClientTaskQueue } from './models/client'
 import { resolveKey, setStoredKey } from './models/keys'
 import { ModelRegistry, guessFamily, modelDefaultsOf } from './models/registry'
 import type { ListedModel } from './models/openaiCompat'
@@ -77,6 +78,8 @@ export class Engine {
   readonly scheduler: Scheduler
   /** VN projects: the pipeline, assets, editions, build. The UI commands, the CLI and the MCP server all go through it. */
   readonly vn: VnService
+  /** The model calls of `client` providers waiting for an MCP client. The engine owns the one queue; the registry and the MCP tools share it. */
+  readonly clientQueue: ClientTaskQueue
   /** The MCP HTTP server (`config/mcp.md`), once `startMcp` ran. */
   mcp: McpController | null = null
   factory: FactoryConfig = factorySchema.parse({ kind: 'factory' })
@@ -95,7 +98,8 @@ export class Engine {
     this.emit = (e) => opts.emit(e)
     this.log = opts.log ?? (() => undefined)
     const dir = opts.dataDir
-    this.registry = new ModelRegistry(dir, opts.registry)
+    this.clientQueue = opts.registry?.clientQueue ?? new ClientTaskQueue()
+    this.registry = new ModelRegistry(dir, { ...opts.registry, clientQueue: this.clientQueue })
     this.budget = new Budget(dir, {
       onWarn: (message) => {
         this.log(`budget warning: ${message}`)
@@ -129,7 +133,8 @@ export class Engine {
       getFactory: () => this.factory,
       emit: this.emit,
       pollMs: opts.pollMs,
-      onAgentsChanged: () => this.syncAgents()
+      onAgentsChanged: () => this.syncAgents(),
+      projectModel: (book, role) => this.vn.store.projectModel(book, role)
     })
     this.vn = registerVnHandlers(this.scheduler, {
       dataDir: dir,
@@ -173,6 +178,7 @@ export class Engine {
     }
     await this.agents.loadAll((file, err) => this.log(`invalid agent file ${file}: ${err.message}`))
     this.knownAgents = new Set(this.agents.list().map((a) => a.id))
+    await this.vn.store.warmModels()
     this.scheduler.start()
     await this.budget.writeSummary().catch(() => undefined)
     // seeded prompts and config that have a newer version but were edited by you are kept: say so
@@ -233,6 +239,7 @@ export class Engine {
       dataDir: this.dataDir,
       svc: this.vn,
       control: this.mcpControl(),
+      clientQueue: this.clientQueue,
       setScriptoriumData: (folder) => this.setScriptoriumData(folder),
       emit: this.emit,
       log: this.log,

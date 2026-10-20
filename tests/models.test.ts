@@ -4,10 +4,13 @@ import type { AddressInfo } from 'node:net'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Budget } from '../src/engine/budget/spend'
 import { AnthropicClient } from '../src/engine/models/anthropic'
 import { GeminiClient } from '../src/engine/models/gemini'
+import { z } from 'zod'
+import { jsonSchemaOf } from '../src/engine/pipeline/llm'
+import { ClientProvider, ClientTaskQueue, checkAgainstSchema } from '../src/engine/models/client'
 import { deleteStoredKey, getStoredKey, setStoredKey } from '../src/engine/models/keys'
 import { MockProvider } from '../src/engine/models/mock'
 import { OpenAiCompatClient } from '../src/engine/models/openaiCompat'
@@ -15,6 +18,7 @@ import { ProviderLimiter } from '../src/engine/models/limiter'
 import { ModelRegistry, computeCost, isPaidModel } from '../src/engine/models/registry'
 import type { ProviderInfo } from '../src/engine/models/registry'
 import { ModelRouter, isDailyLimitError, problemKind } from '../src/engine/models/router'
+import type { RoutedEvent } from '../src/engine/models/router'
 import { BudgetError, collect, ProviderError } from '../src/engine/models/types'
 import type { ChatEvent } from '../src/engine/models/types'
 import { initDataFolder } from '../src/engine/store/dataFolder'
@@ -811,5 +815,186 @@ describe('daily request limits', () => {
     const again = new ModelRegistry(dir, { keys })
     await again.load()
     expect(again.providers.get('openrouter')).toMatchObject({ concurrency: 2, rpd: 1000 })
+  })
+})
+
+describe('client provider', () => {
+  const user = (content: string) => [{ role: 'user' as const, content }]
+
+  async function clientRegistry(queue?: ClientTaskQueue): Promise<ModelRegistry> {
+    const { writeFile } = await import('node:fs/promises')
+    await writeFile(path.join(dir, 'config', 'providers.md'), `---
+kind: providers
+providers:
+  - id: client
+    kind: client
+    local: true
+    concurrency: 8
+    models:
+      - id: claude-code
+        vision: true
+---
+x
+`)
+    await writeFile(path.join(dir, 'config', 'roles.md'), `---
+kind: roles
+roles:
+  writer:
+    models: [client/claude-code]
+---
+x
+`)
+    const registry = new ModelRegistry(dir, { keys: () => undefined, clientQueue: queue })
+    await registry.load()
+    return registry
+  }
+
+  it('resolves from providers.md as a local, free, available provider with no key, and its model can be a role default', async () => {
+    const registry = await clientRegistry()
+    expect(registry.providers.get('client')).toMatchObject({ kind: 'client', local: true, available: true, concurrency: 8 })
+    const m = registry.getModel('client/claude-code')!
+    expect(m).toMatchObject({ vision: true, priceIn: 0, priceOut: 0 })
+    expect(isPaidModel(m)).toBe(false)
+    expect(registry.providers.get('client')!.client).toBeInstanceOf(ClientProvider)
+    expect(new ModelRouter(registry, undefined).candidates('writer')[0]?.ref).toBe('client/claude-code')
+  })
+
+  it('a request waits in the engine queue, is answered, and costs nothing', async () => {
+    const queue = new ClientTaskQueue()
+    const registry = await clientRegistry(queue)
+    const router = new ModelRouter(registry, undefined)
+    const ref = registry.getModel('client/claude-code')!
+    const events: RoutedEvent[] = []
+    const run = (async () => {
+      for await (const ev of router.chat([ref], { messages: user('Write a haiku'), meta: { job: 'b--write--u1--r0', role: 'writer', task: 'write', book: 'b', agent: 'w', unit: 'u1' } })) events.push(ev)
+    })()
+    await vi.waitFor(() => expect(queue.counts()).toEqual({ waiting: 1, leased: 0 }))
+    const [t] = queue.list()
+    expect(t).toMatchObject({ id: 'b--write--u1--r0#1', job: 'b--write--u1--r0', call: 1, role: 'writer', task: 'write', book: 'b', agent: 'w', unit: 'u1', state: 'waiting' })
+    const leased = queue.lease({ role: 'writer' })!
+    expect(leased.messages).toEqual(user('Write a haiku'))
+    expect(queue.submit(leased.id, 'Old pond / a frog jumps in / sound of water')).toEqual({ accepted: true })
+    await run
+    const delta = events.filter((e) => e.type === 'delta').map((e) => (e as { text: string }).text).join('')
+    expect(delta).toBe('Old pond / a frog jumps in / sound of water')
+    const done = events.find((e) => e.type === 'done') as Extract<RoutedEvent, { type: 'done' }>
+    expect(done.costUsd).toBe(0)
+    expect(done.usage).toMatchObject({ inputTokens: Math.ceil('Write a haiku'.length / 4), cachedInputTokens: 0, outputTokens: Math.ceil(delta.length / 4) })
+    expect(queue.counts()).toEqual({ waiting: 0, leased: 0 })
+  })
+
+  it('aborting the request drops the task: the client gets "task not found", and the caller sees an AbortError', async () => {
+    const queue = new ClientTaskQueue()
+    const provider = new ClientProvider('client', queue)
+    const ctl = new AbortController()
+    const run = collect(provider.chat({ model: 'claude-code', messages: user('x'), signal: ctl.signal, meta: { job: 'j1' } }))
+    const failed = run.then(() => null, (e: Error) => e)
+    await vi.waitFor(() => expect(queue.counts().waiting).toBe(1))
+    const t = queue.lease()!
+    ctl.abort()
+    const err = await failed
+    expect(err?.name).toBe('AbortError')
+    expect(queue.counts()).toEqual({ waiting: 0, leased: 0 })
+    expect(queue.submit(t.id, 'late')).toEqual({ accepted: false, problems: ['task not found (it was aborted, answered, or the engine restarted)'] })
+    expect(queue.release(t.id)).toBe(false)
+    // already aborted: nothing is queued
+    await expect(collect(provider.chat({ model: 'claude-code', messages: user('x'), signal: ctl.signal }))).rejects.toMatchObject({ name: 'AbortError' })
+    expect(queue.counts().waiting).toBe(0)
+    // a new request of the same job gets a new task id, so the old one stays gone
+    const again = collect(provider.chat({ model: 'claude-code', messages: user('x'), meta: { job: 'j1' } }))
+    await vi.waitFor(() => expect(queue.list().map((x) => x.id)).toEqual(['j1#2']))
+    queue.submit('j1#2', 'ok')
+    expect((await again).text).toBe('ok')
+  })
+
+  it('ids count calls per job, jobs without an id are adhoc, and a lease takes the oldest matching waiting task', () => {
+    let now = 1000
+    const q = new ClientTaskQueue({ now: () => now })
+    const a = q.add({ messages: user('a') }, { job: 'j1', role: 'writer', book: 'b1', task: 'write' })
+    now += 10
+    const b = q.add({ messages: user('b') }, { job: 'j1', role: 'writer', book: 'b1', task: 'write' })
+    now += 10
+    const c = q.add({ messages: user('c') }, { role: 'reviewer', book: 'b2', task: 'review' })
+    const d = q.add({ messages: user('d') })
+    expect([a.task.id, b.task.id]).toEqual(['j1#1', 'j1#2'])
+    expect(c.task.id).toBe('adhoc-1#1')
+    expect(d.task.id).toBe('adhoc-2#1')
+    expect(q.lease({ book: 'b2' })!.id).toBe('adhoc-1#1')
+    expect(q.lease({ role: 'writer' })!.id).toBe('j1#1') // the oldest
+    expect(q.lease({ role: 'writer' })!.id).toBe('j1#2')
+    expect(q.lease({ role: 'writer' })).toBeNull() // both are leased
+    expect(q.lease({ task: 'nope' })).toBeNull()
+    expect(q.counts()).toEqual({ waiting: 1, leased: 3 })
+    expect(q.list().find((x) => x.id === 'j1#1')).toMatchObject({ state: 'leased', ageMs: 20, leaseMsLeft: 30 * 60 * 1000 })
+  })
+
+  it('a lease that runs out puts the task back to waiting; release does it at once', () => {
+    let now = 0
+    const q = new ClientTaskQueue({ now: () => now })
+    q.add({ messages: user('a') }, { job: 'j' })
+    expect(q.lease({}, 1000)!.id).toBe('j#1')
+    expect(q.counts()).toEqual({ waiting: 0, leased: 1 })
+    now = 999
+    expect(q.lease()).toBeNull()
+    now = 1000
+    expect(q.counts()).toEqual({ waiting: 1, leased: 0 })
+    expect(q.list()[0]).toMatchObject({ state: 'waiting' })
+    expect(q.lease({}, 5000)!.id).toBe('j#1')
+    expect(q.release('j#1')).toBe(true)
+    expect(q.counts()).toEqual({ waiting: 1, leased: 0 })
+    expect(q.release('nope#1')).toBe(false)
+  })
+
+  it('a schema is checked on submit: a bad answer is refused with problems and the task stays leased; a good one resolves it', async () => {
+    const q = new ClientTaskQueue()
+    const schema = { type: 'object', properties: { n: { type: 'integer' }, kind: { type: 'string', enum: ['a', 'b'] }, tags: { type: 'array' } }, required: ['n', 'kind'] }
+    const { done } = q.add({ messages: user('x'), schema }, { job: 'j' })
+    q.lease()
+    const r = q.submit('j#1', '{"n": "1", "tags": {}}')
+    expect(r).toMatchObject({ accepted: false })
+    expect((r as { problems: string[] }).problems).toEqual(expect.arrayContaining(['kind: missing (required)', 'n: expected integer, got string', 'tags: expected array, got object']))
+    expect(q.submit('j#1', '   ')).toEqual({ accepted: false, problems: ['the text is empty'] })
+    expect((q.submit('j#1', 'sorry') as { problems: string[] }).problems[0]).toMatch(/^not a JSON object: /)
+    expect(q.counts()).toEqual({ waiting: 0, leased: 1 })
+    // fences and chatter around the object are fine: the same extractJson the callers use
+    expect(q.submit('j#1', 'Here you go:\n```json\n{"n": 2, "kind": "a"}\n```')).toEqual({ accepted: true })
+    expect(await done).toContain('"n": 2')
+    expect(q.counts()).toEqual({ waiting: 0, leased: 0 })
+    // no schema: any text goes
+    const t = q.add({ messages: user('x') }, { job: 'k' })
+    expect(q.submit('k#1', 'plain prose')).toEqual({ accepted: true })
+    expect(await t.done).toBe('plain prose')
+  })
+
+  it('a project model goes first, before the agent and the role list; a client model stays first under model_order; kind client is always local', async () => {
+    const { registry } = await registryWith({
+      providers: [{ id: 'loc', local: true, models: ['m1', 'm2'] }, { id: 'paid', price: 1, models: ['p1'] }, { id: 'client', kind: 'client', local: false, models: ['claude-code'] }],
+      roles: { writer: ['paid/p1', 'loc/m1'] }
+    })
+    expect(registry.providers.get('client')).toMatchObject({ local: true, available: true })
+    const router = new ModelRouter(registry, undefined)
+    expect(router.candidates('writer').map((m) => m.ref)).toEqual(['paid/p1', 'loc/m1'])
+    expect(router.candidates('writer', { projectModel: 'client/claude-code' }).map((m) => m.ref)).toEqual(['client/claude-code', 'paid/p1', 'loc/m1'])
+    expect(router.candidates('writer', { projectModel: 'client/claude-code', agentModel: 'loc/m2' }).map((m) => m.ref)).toEqual(['client/claude-code', 'loc/m2', 'paid/p1', 'loc/m1'])
+    expect(router.candidates('writer', { projectModel: 'client/nope' }).map((m) => m.ref)).toEqual(['paid/p1', 'loc/m1'])
+    // the client model first even with avoidFamily
+    expect(router.candidates('writer', { projectModel: 'client/claude-code', avoidFamily: 'client' })[0]?.ref).toBe('client/claude-code')
+    // model_order sorts the groups, but a client ref stays where the role put it (first)
+    registry.setDefaults({ aliases: { paid: 'paid/p1', strata: 'strata/x', lmstudio: 'lmstudio/y' }, order: ['paid', 'strata', 'lmstudio'], lmLoad: { parallel: 1, context: 8192, ttlMinutes: 1 } })
+    registry.roles = { kind: 'roles', roles: { writer: { models: ['paid/p1', 'client/claude-code', 'loc/m1'] } } } as typeof registry.roles
+    expect(registry.roleEntries('writer')[0]).toBe('client/claude-code')
+  })
+
+  it('leaves out fields with a default: zod lists them as required, with a default', async () => {
+    const schema = jsonSchemaOf(z.object({ id: z.string(), negative: z.string().default(''), tags: z.array(z.string()).default([]) }))
+    expect(schema.required).toEqual(expect.arrayContaining(['id', 'negative']))
+    expect(checkAgainstSchema('{"id": "a"}', schema)).toEqual([])
+    expect(checkAgainstSchema('{"negative": "x"}', schema)).toEqual(['id: missing (required)'])
+  })
+
+  it('keeps the images of a task in order', () => {
+    const q = new ClientTaskQueue()
+    const { task } = q.add({ messages: [{ role: 'user', content: [{ type: 'text', text: 'look' }, { type: 'image', mime: 'image/png', data: 'AAA' }, { type: 'image', mime: 'image/jpeg', data: 'BBB' }] }] }, { job: 'j' })
+    expect(task.images).toEqual([{ type: 'image', mime: 'image/png', data: 'AAA' }, { type: 'image', mime: 'image/jpeg', data: 'BBB' }])
   })
 })

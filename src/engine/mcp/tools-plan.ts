@@ -3,6 +3,7 @@ import type { MusicPlan } from '../vn/agents/composer'
 import { TASKS } from '../vn/pipeline'
 import type { StageCues } from '../renpy/stage'
 import type { VnService } from '../vn/service'
+import { clientHint } from './tools'
 import type { McpOptions, Tool, ToolDef } from './tools'
 
 const slug = z.string().describe('The project slug (see vno_list_projects)')
@@ -16,7 +17,7 @@ export function planTools(svc: VnService, def: ToolDef, opts: McpOptions): Tool[
   const settle = async (s: string, doWait: boolean | undefined) => {
     if (!doWait) return { waited: false }
     const r = await svc.waitIdle(s, { timeoutMs: opts.waitTimeoutMs ?? 10 * 60_000 })
-    return { waited: true, timedOut: r.timedOut, failedJobs: r.failed }
+    return { waited: true, timedOut: r.timedOut, failedJobs: r.failed, ...clientHint(r.clientTasks) }
   }
   const musicTracks = async (s: string): Promise<string[]> => (await svc.listAssets(s)).filter((a) => a.kind === 'music' && !a.orphaned).map((a) => a.id).sort()
 

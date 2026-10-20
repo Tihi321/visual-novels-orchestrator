@@ -57,7 +57,8 @@ function formatContext(n?: number): string {
   return n >= 1_000_000 ? `${+(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1000)}k`
 }
 
-function formatPrice(r: Row, local: boolean): string {
+function formatPrice(r: Row, local: boolean, kind?: string): string {
+  if (kind === 'client') return 'local, free (answered over MCP)'
   if (local) return 'local'
   if (r.priceIn === undefined || r.priceOut === undefined) return 'no price'
   if (r.priceIn === 0 && r.priceOut === 0) return 'free'
@@ -263,6 +264,11 @@ export function ModelsPage() {
           </div>
           {current ? (
             <div className="models-pane">
+              {current.kind === 'client' && (
+                <div className="dim" data-testid="client-note">
+                  Local and free. These models do nothing by themselves: a job on one waits until an MCP client (Claude Code) takes it with vno_get_task and answers with vno_submit_task. Do not leave a role on it when no client is working.
+                </div>
+              )}
               {!local && (
                 <>
                   <div className="row" style={{ gap: 8 }} data-testid="provider-limits">
@@ -332,7 +338,7 @@ export function ModelsPage() {
                     <span className="model-id">{r.id}</span>
                     <span className="dim">{formatContext(r.context)}</span>
                     <span className={r.vision ? 'free' : 'dim'} title="Accepts images (vision: true in providers.md or models.md)">{r.vision ? 'vision' : ''}</span>
-                    <span className={r.priceIn === 0 && r.priceOut === 0 && !local ? 'free' : 'dim'}>{formatPrice(r, local)}</span>
+                    <span className={r.priceIn === 0 && r.priceOut === 0 && !local ? 'free' : 'dim'}>{formatPrice(r, local, current?.kind)}</span>
                     <span className="dim">{r.source ? SOURCE_LABEL[r.source] : ''}</span>
                   </label>
                 ))}

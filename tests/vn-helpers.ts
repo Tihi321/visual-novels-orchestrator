@@ -3,6 +3,8 @@ import path from 'node:path'
 import sharp from 'sharp'
 import type { ComfyClient, ComfyRequest, ComfyResult } from '../src/engine/comfy/client'
 import type { EngineOptions } from '../src/engine/engine'
+import type { MockProvider } from '../src/engine/models/mock'
+import { collect } from '../src/engine/models/types'
 import type { ChatRequest } from '../src/engine/models/types'
 import { ROLES } from '../src/shared/schemas'
 import { makeEnv, waitFor } from './helpers'
@@ -43,10 +45,15 @@ export interface VnEnv extends TestEnv {
 }
 
 /** A mock-model engine with all eight agents, a fake ComfyUI, and no Ren'Py SDK (build and lint run without it). */
-export async function makeVnEnv(o: { sdk?: string | false; engine?: Partial<EngineOptions> } = {}): Promise<VnEnv> {
+export async function makeVnEnv(o: { sdk?: string | false; engine?: Partial<EngineOptions>; client?: boolean; mixed?: boolean } = {}): Promise<VnEnv> {
   const comfy = new FakeComfy()
   const env = await makeEnv(
-    { roles: Object.fromEntries(ROLES.map((r) => [r, ['loc/m1']])), agents: ROLES.map((r) => ({ role: r, name: 'Test' })) },
+    {
+      ...(o.mixed ? { providers: [{ id: 'loc', local: true, concurrency: 4, models: ['m1'] }, { id: 'client', kind: 'client' as const, local: true, concurrency: 8, models: ['claude-code'], vision: true }] } : {}),
+      ...(o.client ? { providers: [{ id: 'client', kind: 'client' as const, local: true, concurrency: 8, models: ['claude-code'], vision: true }] } : {}),
+      roles: Object.fromEntries(ROLES.map((r) => [r, [o.client ? 'client/claude-code' : 'loc/m1']])),
+      agents: ROLES.map((r) => ({ role: r, name: 'Test', ...(o.mixed ? { maxParallel: 4 } : {}) }))
+    },
     { comfy, ...(o.engine ?? {}) }
   )
   if (o.sdk !== undefined) {
@@ -69,7 +76,7 @@ export function jsonAfter(req: ChatRequest, label: RegExp): unknown {
 export async function waitIdle(env: VnEnv, slug: string, ms = 60_000): Promise<{ failed: string[] }> {
   const r = await waitFor(async () => {
     const x = await env.engine.vn.waitIdle(slug, { timeoutMs: 1 })
-    return x.timedOut ? null : x
+    return x.timedOut || x.clientTasks > 0 ? null : x
   }, ms, `project ${slug} to be idle`)
   return { failed: r.failed }
 }
@@ -78,4 +85,32 @@ export async function waitIdle(env: VnEnv, slug: string, ms = 60_000): Promise<{
 export async function failures(env: VnEnv): Promise<string[]> {
   const jobs = await env.engine.jobs.list('failed')
   return jobs.map((j) => `${j.id}: ${String((j.data as Record<string, unknown>).failure ?? '')}`)
+}
+
+/**
+ * Plays the MCP client: takes every task from the engine's client queue and answers it with `answerer` (a scripted mock), until the
+ * project is idle. Uses `waitIdle`, which must return while jobs are parked in the queue. Returns the failed job ids and the tasks seen.
+ */
+export async function answerClientTasks(
+  env: VnEnv,
+  slug: string,
+  answerer: MockProvider,
+  ms = 120_000
+): Promise<{ failed: string[]; answered: { id: string; role: string; task: string }[]; waitCalls: number }> {
+  const end = Date.now() + ms
+  const answered: { id: string; role: string; task: string }[] = []
+  let waitCalls = 0
+  for (;;) {
+    const r = await env.engine.vn.waitIdle(slug, { timeoutMs: Math.max(1, end - Date.now()) })
+    waitCalls++
+    if (r.timedOut) throw new Error(`timed out; ${env.engine.clientQueue.list().length} task(s) left`)
+    if (r.clientTasks === 0) return { failed: r.failed, answered, waitCalls }
+    for (let t = env.engine.clientQueue.lease(); t; t = env.engine.clientQueue.lease()) {
+      const meta = { job: t.job, role: t.role, task: t.task, book: t.book, agent: t.agent, unit: t.unit }
+      const { text } = await collect(answerer.chat({ model: 'claude-code', messages: t.messages, schema: t.schema, meta }))
+      const res = env.engine.clientQueue.submit(t.id, text)
+      if (!res.accepted) throw new Error(`task ${t.id} refused: ${res.problems.join('; ')}`)
+      answered.push({ id: t.id, role: t.role, task: t.task })
+    }
+  }
 }

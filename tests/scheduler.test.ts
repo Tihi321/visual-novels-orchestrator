@@ -474,3 +474,70 @@ describe('agent controls and hot reload', () => {
     expect(env.events.some((e) => e.type === 'pong' && e.id === 'p1')).toBe(true)
   })
 })
+
+describe('scheduler with a client provider', () => {
+  const clientEnv = () =>
+    makeEnv({
+      providers: [{ id: 'client', kind: 'client', local: true, concurrency: 8, models: ['claude-code'] }],
+      roles: { writer: ['client/claude-code'] },
+      agents: [{ role: 'writer', name: 'A' }]
+    })
+
+  it('a job on client waits in the queue, is answered over it and completes, at no cost', async () => {
+    env = await clientEnv()
+    registerChat(env)
+    await env.engine.jobs.enqueue({ id: 'b1--t--u1--r0', task: 't', role: 'writer', book: 'b1', unit: 'u1' }, 'Write it.')
+    const q = env.engine.clientQueue
+    await waitFor(() => q.counts().waiting === 1, 5000, 'a task waits')
+    expect(await jobsIn(env, 'running')).toEqual(['b1--t--u1--r0.md']) // parked, still running
+    expect(q.list()[0]).toMatchObject({ id: 'b1--t--u1--r0#1', job: 'b1--t--u1--r0', call: 1, role: 'writer', task: 't', book: 'b1', agent: 'writer-a', unit: 'u1' })
+    const t = q.lease({ book: 'b1' })!
+    expect(t.messages.at(-1)?.content).toBe('do b1--t--u1--r0')
+    expect(q.submit(t.id, 'The answer from the client.')).toEqual({ accepted: true })
+    await waitFor(async () => (await jobsIn(env!, 'done')).length === 1, 5000, 'job done')
+    const done = parseMd(await readFile(path.join(env.dir, 'jobs', 'done', 'b1--t--u1--r0.md'), 'utf8'))
+    expect(done.data).toMatchObject({ model: 'client/claude-code', paid: false, attempts: 0 })
+    expect(done.body).toContain('The answer from the client.')
+    const spend = env.events.filter((e) => e.type === 'spend') as { costUsd: number; provider: string }[]
+    expect(spend).toHaveLength(1)
+    expect(spend[0]).toMatchObject({ provider: 'client', costUsd: 0 })
+    expect(q.counts()).toEqual({ waiting: 0, leased: 0 })
+  })
+
+  it('a schema that fails on submit leaves the task leased, and the fixed answer goes through', async () => {
+    env = await clientEnv()
+    let got = ''
+    env.engine.scheduler.register('t', async (ctx) => {
+      const r = await ctx.chat({ messages: [{ role: 'user', content: 'json please' }], schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] } })
+      got = r.text
+      return { result: 'x' }
+    })
+    await env.engine.jobs.enqueue({ id: 'j1', task: 't', role: 'writer' })
+    const q = env.engine.clientQueue
+    await waitFor(() => q.counts().waiting === 1, 5000, 'a task waits')
+    const t = q.lease()!
+    expect(t.schema).toBeTruthy()
+    expect(q.submit(t.id, 'I would rather talk.')).toMatchObject({ accepted: false })
+    expect(q.submit(t.id, '{"ok": "yes"}')).toMatchObject({ accepted: false, problems: ['ok: expected boolean, got string'] })
+    expect(q.counts()).toEqual({ waiting: 0, leased: 1 })
+    expect(await jobsIn(env, 'done')).toEqual([])
+    expect(q.submit(t.id, '{"ok": true}')).toEqual({ accepted: true })
+    await waitFor(async () => (await jobsIn(env!, 'done')).length === 1, 5000, 'job done')
+    expect(got).toBe('{"ok": true}')
+  })
+
+  it('stopping the agent drops the task and requeues the job without an attempt; the new request is a new task', async () => {
+    env = await clientEnv()
+    registerChat(env)
+    await env.engine.jobs.enqueue({ id: 'j1', task: 't', role: 'writer' })
+    const q = env.engine.clientQueue
+    await waitFor(() => q.counts().waiting === 1, 5000, 'a task waits')
+    const first = q.lease()!
+    await env.engine.handleCommand({ type: 'stop', agent: 'writer-a' })
+    await waitFor(() => q.list().map((x) => x.id).join() === 'j1#2', 8000, 'the job asks again')
+    expect(q.submit(first.id, 'late')).toMatchObject({ accepted: false, problems: [expect.stringContaining('task not found')] })
+    expect(q.submit('j1#2', 'second try')).toEqual({ accepted: true })
+    await waitFor(async () => (await jobsIn(env!, 'done')).length === 1, 8000, 'done')
+    expect(parseMd(await readFile(path.join(env.dir, 'jobs', 'done', 'j1.md'), 'utf8')).data.attempts).toBe(0)
+  })
+})

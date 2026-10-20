@@ -14,6 +14,8 @@ export interface CandidateOptions {
   avoidFamily?: string | null
   /** Only models that accept images (`vision: true`), for the art-critic. */
   visionOnly?: boolean
+  /** The model the job's project chose for this role (`models` in project.md). It goes before the agent's model and the role's list, which stay as the fallback. */
+  projectModel?: string | null
 }
 
 export interface RoutedRequest {
@@ -88,7 +90,8 @@ export class ModelRouter {
    */
   candidates(role: string, o: CandidateOptions = {}): ModelInfo[] {
     const own = o.agentModel ? this.registry.resolve(o.agentModel) : undefined
-    const refs = [...(own ? [own] : []), ...this.registry.roleModelRefs(role)]
+    const project = o.projectModel ? this.registry.resolve(o.projectModel) : undefined
+    const refs = [...(project ? [project] : []), ...(own ? [own] : []), ...this.registry.roleModelRefs(role)]
     const seen = new Set<string>()
     let list: ModelInfo[] = []
     for (const ref of refs) {
@@ -101,8 +104,10 @@ export class ModelRouter {
     if (up.length > 0) list = up
     if (o.avoidFamily) {
       // the agent's own model was picked on purpose: it stays first even in the writer's family
-      const first = list[0]?.ref === own ? list.slice(0, 1) : []
-      const rest = list.slice(first.length)
+      let n = 0
+      while (n < list.length && (list[n]!.ref === own || list[n]!.ref === project)) n++
+      const first = list.slice(0, n)
+      const rest = list.slice(n)
       const keep = rest.filter((m) => m.family !== o.avoidFamily)
       const avoid = rest.filter((m) => m.family === o.avoidFamily)
       return [...first, ...keep, ...avoid]

@@ -44,7 +44,7 @@ export const providerModelSchema = z.looseObject({
 
 export const providerEntrySchema = z.looseObject({
   id: z.string().min(1),
-  kind: z.enum(['openai-compat', 'anthropic', 'gemini', 'mock', 'search']),
+  kind: z.enum(['openai-compat', 'anthropic', 'gemini', 'mock', 'search', 'client']),
   enabled: z.boolean().default(true),
   local: z.boolean().default(false),
   base_url: z.string().optional(),

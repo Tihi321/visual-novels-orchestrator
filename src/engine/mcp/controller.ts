@@ -15,6 +15,8 @@ export interface McpControllerOptions {
   svc: VnService
   /** The queue switches for `vno_pause_all` and friends. */
   control: McpOptions['control']
+  /** The engine's client task queue, for `vno_get_task` and friends. */
+  clientQueue?: McpOptions['clientQueue']
   /** Sets the Scriptorium library folder for `vno_set_library`. */
   setScriptoriumData?: McpOptions['setScriptoriumData']
   emit: (e: EngineEvent) => void
@@ -102,7 +104,7 @@ export class McpController {
     await this.stopServer()
     if (next.enabled) {
       const server = new McpHttpServer({
-        host: { tools: buildTools(this.opts.svc, { control: this.opts.control, setScriptoriumData: this.opts.setScriptoriumData, waitTimeoutMs: this.opts.waitTimeoutMs }) },
+        host: { tools: buildTools(this.opts.svc, { control: this.opts.control, clientQueue: this.opts.clientQueue, setScriptoriumData: this.opts.setScriptoriumData, waitTimeoutMs: this.opts.waitTimeoutMs }) },
         port: next.port,
         token: next.token,
         log: this.opts.log,

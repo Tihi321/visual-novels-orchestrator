@@ -126,6 +126,15 @@ providers:
     concurrency: 1
     discover: true
     models: []
+  # Model work done by an MCP client (Claude Code). Remove the # signs to switch it on, then set a role or an agent to
+  # client/claude-code (config/roles.md, or `model:` in agents/<agent>.md). See the "Client" section below.
+  # - id: client
+  #   kind: client
+  #   local: true
+  #   concurrency: 8
+  #   models:
+  #     - id: claude-code
+  #       vision: true            # the art-critic sends images
 ---
 # Providers
 
@@ -136,7 +145,7 @@ Prices were checked 2026-10-08 from third-party listings; the DeepSeek ones were
 ## Fields of a provider
 
 - `id`: the name used in model references. A model is written `provider/model`, for example `lmstudio/nail-qwen3.6-35b-a3b-mtp`.
-- `kind`: `openai-compat` (any OpenAI-style API), `anthropic`, `gemini`, or `mock` (scripted answers, only for the tests: the app's own config has none, so the model pickers never offer one).
+- `kind`: `openai-compat` (any OpenAI-style API), `anthropic`, `gemini`, `client` (an MCP client answers, see below), or `mock` (scripted answers, only for the tests: the app's own config has none, so the model pickers never offer one).
 - `enabled`: `false` switches the provider off. A provider whose key can't be found is skipped automatically.
 - `local`: `true` for models on this machine. Local models cost nothing and never count against the caps. Their tokens and time are still recorded.
 - `base_url`, `api_key_env`: where to call and which variable holds the key.
@@ -146,6 +155,14 @@ Prices were checked 2026-10-08 from third-party listings; the DeepSeek ones were
 - The app's **Models** panel sets requests at once, per minute and per day for each API provider. It saves them in `limits` of `config/models.md`, which win over the values here.
 - `discover`: ask the provider for its models (`GET /v1/models`) and add the ones not listed here. `discover_skip` leaves out models whose id contains one of its words (any case): LM Studio skips `dflash`, which it lists but can't load here. `discover: free` adds only the models the provider lists at price 0. A model of a paid provider is only added with the price the provider lists, so the budget always counts its cost: one listed without a price is left out (add it below with its price). Models that answer with something besides text (music, images) are left out. Discovery runs at start, when a key is stored and when this file changes.
 - `json_schema`: `true` (the default) sends the JSON schema of a structured answer as `response_format`. Set `false` for a server that answers a bad JSON reply with an error instead of constraining it. The prompt then asks for the JSON shape and the engine checks it and repairs it.
+
+## Client (Claude Code does the model work)
+
+`kind: client` has no server and no key: a request waits in the engine's in-memory client task queue until an MCP client takes it (`vno_get_task`) and answers (`vno_submit_task`). It is `local: true`, so it is free, never paid and never budget-checked, and it has no timeout and is never marked down. Give it `concurrency` (8 is enough for the scheduler not to stall on `waiting-provider`) and a model such as `claude-code` (`vision: true` if the client can look at images; the art-critic needs that).
+
+- Switch it on by uncommenting the entry at the top of this file. Then use it for one project: `vno_update_settings {slug, models: {"art-director": "client/claude-code"}}` (saved as `models` in the project's `project.md`, first in that project's model lists). Or for every project: put `client/claude-code` first in a role's list in `config/roles.md`, or set one agent's `model:` in `agents/<agent>.md` (reloaded at once; a running request is asked again on the new model).
+- A role left on `client` with nobody answering stalls every job of that role. Put the models back when the run is done.
+- The queue is lost when the engine restarts: the running job is asked again (a new task). See the guide (`vn-studio://guide`, "Do the model work yourself").
 
 ## Strata
 
