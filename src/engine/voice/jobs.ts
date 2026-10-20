@@ -216,7 +216,7 @@ export async function generateVibeClips(svc: VnService, slug: string, lang: Lang
 
 // ---- the Voice tab: set a voice, preview a voice ----
 
-const SAMPLE: Record<Lang, string> = {
+const SAMPLE: Record<string, string> = {
   en: 'Good evening. I hope you are ready for what comes next.',
   hr: 'Dobra večer. Nadam se da ste spremni za ono što slijedi.'
 }
@@ -231,22 +231,31 @@ export interface VoicePreview {
   lang: Lang
 }
 
-/** A sample sentence for a speaker: one of their lines in this language, else a fixed sentence. */
+/**
+ * A sample sentence for a speaker: one of their lines in this language, else a fixed sentence (English and Croatian have one),
+ * else any line of the edition, else its title.
+ */
 async function sampleText(svc: VnService, slug: string, speakerKey: string, lang: Lang): Promise<string> {
+  const clip = (text: string): string => (text.length > 180 ? text.slice(0, 180).replace(/\s+\S*$/, '') + '...' : text)
+  let any = ''
+  let title = ''
   try {
     const book = await svc.store.loadBook(slug)
     const edition = await svc.store.loadEdition(slug, lang)
+    title = edition.title?.trim() ?? ''
     for (const c of book.chapters)
       for (const s of c.scenes)
         for (const b of s.beats) {
+          const text = edition.beats[b.id]?.trim()
+          if (!text) continue
           const mine = speakerKey === 'narrator' ? b.type === 'narration' : b.type === 'line' && b.speakerKey === speakerKey
-          const text = mine ? edition.beats[b.id]?.trim() : ''
-          if (text && text.length >= 20) return text.length > 180 ? text.slice(0, 180).replace(/\s+\S*$/, '') + '...' : text
+          if (mine && text.length >= 20) return clip(text)
+          if (!any) any = text
         }
   } catch {
     /* the fixed sentence */
   }
-  return SAMPLE[lang]
+  return SAMPLE[lang] ?? (any ? clip(any) : title || 'Hello.')
 }
 
 /** Makes the preview clip of a voice (`preview/voice-<key>.mp3`, replaced each time). */

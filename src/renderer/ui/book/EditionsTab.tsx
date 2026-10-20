@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ProjectDetail } from '../../../shared/protocol'
-import { LANGS, type Lang } from '../../../shared/vn'
+import { languages } from '../../../shared/languages'
+import type { Lang } from '../../../shared/vn'
 import { sendCommand } from '../../api'
 import { beatIndex, textBeats } from '../../lib/book'
 import { langName } from '../../lib/voice'
@@ -41,9 +42,9 @@ export function EditionsTab({ slug, detail }: { slug: string; detail: ProjectDet
 }
 
 function AddEdition({ slug, primary, editions }: { slug: string; primary: Lang; editions: Lang[] }) {
-  const choices = LANGS.filter((l) => l !== primary)
+  const choices = languages().filter((l) => l.code !== primary)
   const [folder, setFolder] = useState('')
-  const [lang, setLang] = useState<Lang>(choices[0] ?? 'hr')
+  const [lang, setLang] = useState<Lang>(choices[0]?.code ?? 'hr')
   const error = useRecentError(slug, 'addEdition')
   const [sent, setSent] = useState(false)
   return (
@@ -54,9 +55,9 @@ function AddEdition({ slug, primary, editions }: { slug: string; primary: Lang; 
         <div className="row">
           <select value={lang} onChange={(e) => setLang(e.target.value as Lang)} data-testid="edition-lang">
             {choices.map((l) => (
-              <option key={l} value={l}>
-                {langName(l)}
-                {editions.includes(l) ? ' (replace)' : ''}
+              <option key={l.code} value={l.code}>
+                {l.native} ({l.code})
+                {editions.includes(l.code) ? ' (replace)' : ''}
               </option>
             ))}
           </select>

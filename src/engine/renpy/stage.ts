@@ -24,6 +24,31 @@ export interface StageCues {
   scenes: Record<string, SceneCue>
   /** Cast beat id -> char key -> slot. Characters left out of the map are not shown. */
   casts: Record<string, Record<string, Slot>>
+  /** Set with `vno_set_cues`: the stage step keeps these cues and does not ask the stage-director. */
+  byHand?: boolean
+}
+
+/** Adds the default cues for the chapters, scenes and casts `cues` lacks (new ones after a story edit); what it has is kept. */
+export function fillCues(cues: StageCues, book: VnBook, opts: DefaultCueOptions = {}): { cues: StageCues; added: number } {
+  const base = defaultCues(book, opts)
+  let added = 0
+  const out: StageCues = { ...cues, chapters: { ...cues.chapters }, scenes: { ...cues.scenes }, casts: { ...cues.casts } }
+  for (const [n, c] of Object.entries(base.chapters)) {
+    if (n in out.chapters) continue
+    out.chapters[Number(n)] = c
+    added++
+  }
+  for (const [id, c] of Object.entries(base.scenes)) {
+    if (id in out.scenes) continue
+    out.scenes[id] = c
+    added++
+  }
+  for (const [id, c] of Object.entries(base.casts)) {
+    if (id in out.casts) continue
+    out.casts[id] = c
+    added++
+  }
+  return { cues: out, added }
 }
 
 export const SLOTS_BY_SIZE: Record<number, Slot[]> = {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Lang } from '../../shared/vn'
-import { LANGS } from '../../shared/vn'
+import { languages } from '../../shared/languages'
 import { sendCommand } from '../api'
 import { langName } from '../lib/voice'
 import { useVn } from '../store/hooks'
@@ -58,12 +58,13 @@ export function ImportDialog({ source, onClose }: { source: string; onClose(): v
               Detected: {langName(preview.detected.lang)} ({confidence}% sure){lowConfidence ? '. Not sure: please check it.' : ''}
             </div>
             <div className="row" style={{ marginTop: 6, gap: 16 }}>
-              {LANGS.map((l) => (
-                <label key={l} className="inline">
-                  <input type="radio" name="import-lang" checked={lang === l} onChange={() => setLang(l)} data-testid={`import-lang-${l}`} />
-                  {langName(l)}
-                </label>
-              ))}
+              <select value={lang ?? preview.detected.lang} onChange={(e) => setLang(e.target.value)} data-testid="import-lang-select">
+                {languages().map((l) => (
+                  <option key={l.code} value={l.code}>
+                    {l.native} ({l.code})
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           {preview.uncertain > 0 && <div className="dim">{preview.uncertain} uncertain items will be settled by the script-analyst.</div>}

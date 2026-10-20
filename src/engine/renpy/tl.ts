@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { languageInfo } from '../../shared/languages'
 import type { Edition, Lang, VnBook } from '../../shared/vn'
 import { translatableStrings, voicePath, type LineMapEntry, type VoiceSource } from './emit'
 import { renpyString, renpyText } from './escape'
@@ -13,73 +14,20 @@ import { runRenpy } from './run'
  *    recorded at emit time (file:line -> beat id; the original statement text is the fallback) and get the edition's
  *    text (escaped the same way as the source);
  *  - `translate <language> strings:` blocks (chapter titles, menu choices, endings, character names, the book title and
- *    the UI strings of the template) get `new` from the edition or from the built-in UI table.
+ *    the UI strings of the template) get `new` from the edition or from the language's UI table.
  *
  * Text the edition does not have stays in the source language and is reported in `missing`. Nothing is machine translated.
  */
 
-export const RENPY_LANG: Record<Lang, string> = { en: 'english', hr: 'croatian' }
-/** The names shown in the language picker (always in their own language). */
-export const LANG_NAMES: Record<Lang, string> = { en: 'English', hr: 'Hrvatski' }
-
+/** The Ren'Py language identifier of a language code (`hr` -> `croatian`). */
+export const renpyLanguage = (code: string): string => languageInfo(code)?.renpy ?? code.replace(/[^a-z0-9]+/g, '_')
+/** The name shown in the language picker (always in its own language). */
+export const nativeName = (code: string): string => languageInfo(code)?.native ?? code
 /**
- * The template's UI strings (the source is English). Keys are the strings as they appear in the Ren'Py source
- * (the `old` of a stub). Only Croatian is needed today: English is the template's own language.
+ * The template's UI strings in a language (the source is English), if the language has them (`ui` in `shared/languages.ts` or
+ * `config/languages.md`). Keys are the strings as they appear in the Ren'Py source (the `old` of a stub).
  */
-export const UI_STRINGS: Partial<Record<Lang, Record<string, string>>> = {
-  hr: {
-    Language: 'Jezik',
-    'The End': 'Kraj',
-    'Start again': 'Počni ispočetka',
-    'Back to main menu': 'Natrag na glavni izbornik',
-    Start: 'Započni',
-    Load: 'Učitaj',
-    Save: 'Spremi',
-    Preferences: 'Postavke',
-    Prefs: 'Postavke',
-    About: 'O igri',
-    Help: 'Pomoć',
-    Quit: 'Izlaz',
-    History: 'Povijest',
-    Skip: 'Preskoči',
-    Skipping: 'Preskakanje',
-    Auto: 'Automatski',
-    'Q.Save': 'Br.spremi',
-    'Q.Load': 'Br.učitaj',
-    Return: 'Povratak',
-    Back: 'Natrag',
-    Menu: 'Izbornik',
-    'Main Menu': 'Glavni izbornik',
-    Window: 'Prozor',
-    Fullscreen: 'Cijeli zaslon',
-    Display: 'Prikaz',
-    'Unseen Text': 'Neviđeni tekst',
-    'After Choices': 'Nakon izbora',
-    Transitions: 'Prijelazi',
-    'Text Speed': 'Brzina teksta',
-    'Auto-Forward Time': 'Vrijeme automatskog prelaska',
-    'Music Volume': 'Glasnoća glazbe',
-    'Sound Volume': 'Glasnoća zvukova',
-    'Voice Volume': 'Glasnoća glasa',
-    'Mute All': 'Utišaj sve',
-    Yes: 'Da',
-    No: 'Ne',
-    'empty slot': 'prazno mjesto',
-    'Automatic saves': 'Automatska spremanja',
-    'Quick saves': 'Brza spremanja',
-    'Page {}': 'Stranica {}',
-    'The dialogue history is empty.': 'Povijest dijaloga je prazna.',
-    'Are you sure?': 'Jeste li sigurni?',
-    'Are you sure you want to quit?': 'Jeste li sigurni da želite izaći?',
-    'Are you sure you want to delete this save?': 'Jeste li sigurni da želite izbrisati ovo spremanje?',
-    'Are you sure you want to overwrite your save?': 'Jeste li sigurni da želite prepisati svoje spremanje?',
-    'Loading will lose unsaved progress.\\nAre you sure you want to do this?': 'Učitavanje će izgubiti nespremljeni napredak.\\nJeste li sigurni da to želite?',
-    'Are you sure you want to return to the main menu?\\nThis will lose unsaved progress.':
-      'Jeste li sigurni da se želite vratiti u glavni izbornik?\\nNespremljeni napredak će se izgubiti.',
-    'Are you sure you want to begin skipping?': 'Jeste li sigurni da želite početi preskakati?',
-    'Are you sure you want to skip to the next choice?': 'Jeste li sigurni da želite preskočiti do sljedećeg izbora?'
-  }
-}
+export const uiStrings = (code: string): Record<string, string> | undefined => languageInfo(code)?.ui
 
 // ---------------------------------------------------------------------------------------------------------------
 // Pure filling logic (tested on synthetic stubs).
@@ -210,7 +158,7 @@ export function fillStub(text: string, ctx: FillContext, report: FillReport): st
 /** The `old` -> `new` table for the strings blocks: the edition's titles, choices, endings, names, plus the UI table. */
 export function buildStringTable(book: VnBook, primaryNames: Record<string, string>, edition: Edition, missing: string[] = []): Map<string, string> {
   const map = new Map<string, string>()
-  for (const [src, dst] of Object.entries(UI_STRINGS[edition.lang] ?? {})) map.set(src, dst)
+  for (const [src, dst] of Object.entries(uiStrings(edition.lang) ?? {})) map.set(src, dst)
   for (const s of translatableStrings(book, primaryNames)) {
     const v = s.pick(edition)
     if (v === undefined || v.trim() === '') {
@@ -248,7 +196,7 @@ export interface GenerateTranslationsResult {
 }
 
 export async function generateTranslations(inp: GenerateTranslationsInput): Promise<GenerateTranslationsResult> {
-  const language = RENPY_LANG[inp.edition.lang]
+  const language = renpyLanguage(inp.edition.lang)
   const tlDir = path.join(inp.gameDir, 'game', 'tl', language)
   fs.rmSync(tlDir, { recursive: true, force: true })
 
@@ -303,18 +251,20 @@ function uniqueStatements(lineMap: LineMapEntry[]): Map<string, string> {
 }
 
 /**
- * For a book whose primary language has no English UI (Croatian): the template's UI strings in
- * `tl/<language>/ui.rpy`, so the menus of the primary language are not English. The default language is set to it.
+ * For a book whose primary language is not English: `tl/<language>/ui.rpy` with the template's UI strings, so the menus of the
+ * primary language are not English (the default language is set to it). Returns false when the language has no UI table: the
+ * file then only holds one identity entry, which makes Ren'Py know the language (else its `Language()` button is insensitive),
+ * and the menus stay in English.
  */
-export function writeUiStrings(gameSubdir: string, language: string): void {
-  const lang = (Object.keys(RENPY_LANG) as Lang[]).find((l) => RENPY_LANG[l] === language)
-  const table = lang ? UI_STRINGS[lang] : undefined
-  if (!table) return
+export function writeUiStrings(gameSubdir: string, code: string): boolean {
+  const language = renpyLanguage(code)
+  const table = uiStrings(code)
   const dir = path.join(gameSubdir, 'tl', language)
   fs.mkdirSync(dir, { recursive: true })
   const out = ['# Generated by VN Studio: the template UI in this language.', '', `translate ${language} strings:`, '']
-  for (const [src, dst] of Object.entries(table)) {
+  for (const [src, dst] of Object.entries(table ?? { Language: 'Language' })) {
     out.push(`    old "${src}"`, `    new "${dst}"`, '')
   }
   fs.writeFileSync(path.join(dir, 'ui.rpy'), out.join('\n'), 'utf8')
+  return table !== undefined
 }

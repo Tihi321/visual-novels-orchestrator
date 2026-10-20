@@ -1,9 +1,9 @@
+import { languageInfo } from '../../shared/languages'
 import type { CustomWorkflowInfo } from '../../shared/protocol'
 
-export const LANG_NAMES: Record<string, string> = { en: 'English', hr: 'Croatian' }
-
+/** The English name of a language code (the built-in table; a code it does not know is shown as is). */
 export function langName(code: string): string {
-  return LANG_NAMES[code] ?? code
+  return languageInfo(code)?.name ?? code
 }
 
 /** The workflow name of an engine id like `custom:chatterbox-multilingual`, else null (a built-in engine). */

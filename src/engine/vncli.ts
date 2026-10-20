@@ -1,6 +1,7 @@
 import path from 'node:path'
 import type { EngineEvent, PipelineStep, ProjectSettingsPatch } from '../shared/protocol'
-import { ART_PROVIDERS, CHIPS, DITHERS, LANGS, MUSIC_PROVIDERS, PIXEL_PROVIDERS, langSchema, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../shared/vn'
+import { ART_PROVIDERS, CHIPS, DITHERS, MUSIC_PROVIDERS, PIXEL_PROVIDERS, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../shared/vn'
+import { assertKnownLang } from '../shared/languages'
 import type { Lang } from '../shared/vn'
 import { Engine } from './engine'
 import type { EngineOptions } from './engine'
@@ -95,7 +96,6 @@ function flag(p: ParsedCli, name: string): string | undefined {
 function lang(p: ParsedCli): Lang | undefined {
   const l = flag(p, 'lang')
   if (l === undefined) return undefined
-  if (l !== 'en' && l !== 'hr') throw new Error(`--lang must be en or hr, not "${l}"`)
   return l
 }
 
@@ -398,10 +398,9 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
       }
       if (p.args[0] === 'set') {
         const [, setSlug, speaker, setLang, voice] = need(p, 5, 'voice set <slug> <speaker> <lang> <voice>')
-        const parsed = langSchema.safeParse(setLang)
-        if (!parsed.success) throw new Error(`lang must be one of ${LANGS.join(', ')}, not "${setLang}"`)
-        const r = await svc.setVoice(setSlug!, speaker!, parsed.data, voice!)
-        out(`${speaker} (${parsed.data}): ${r.voice}, preview ${r.file}`)
+        const setCode = assertKnownLang(setLang!)
+        const r = await svc.setVoice(setSlug!, speaker!, setCode, voice!)
+        out(`${speaker} (${setCode}): ${r.voice}, preview ${r.file}`)
         return 0
       }
       if (p.args[0] === 'plan') {

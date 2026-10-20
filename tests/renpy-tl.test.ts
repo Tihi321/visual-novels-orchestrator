@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { emitScripts } from '../src/engine/renpy/emit'
 import { defaultCues } from '../src/engine/renpy/stage'
-import { buildStringTable, fillStub, newReport, stubLineMap, UI_STRINGS, type FillContext } from '../src/engine/renpy/tl'
+import { buildStringTable, fillStub, newReport, stubLineMap, uiStrings, type FillContext } from '../src/engine/renpy/tl'
 import { loadBook, loadEdition } from './fixtures/vn/load'
 
 // What `renpy translate croatian` writes for ch01.rpy of the linear fixture (real output, shortened).
@@ -194,7 +194,7 @@ describe('buildStringTable', () => {
   })
 
   it('the UI table covers the strings the template adds', () => {
-    const hr = UI_STRINGS.hr!
+    const hr = uiStrings('hr')!
     for (const k of ['Language', 'The End', 'Start again', 'Back to main menu']) expect(hr[k]).toBeTruthy()
   })
 })

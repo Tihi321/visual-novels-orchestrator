@@ -41,7 +41,7 @@ export async function runStdioMcp(argv: readonly string[]): Promise<number> {
     err(e.message)
     return 1
   }
-  const server = createMcpServer({ tools: buildTools(engine.vn, { control: engine.mcpControl() }) })
+  const server = createMcpServer({ tools: buildTools(engine.vn, { control: engine.mcpControl(), setScriptoriumData: (folder) => engine.setScriptoriumData(folder) }) })
   await server.connect(new StdioServerTransport())
   await new Promise<void>((resolve) => {
     const stop = (): void => resolve()

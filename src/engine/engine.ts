@@ -25,6 +25,7 @@ import type { VibeTtsClient } from './voice/vibetts'
 import type { PixelClient } from './studios/pixel'
 import type { ChiptuneClient } from './studios/chiptune'
 import { readSeedNotes } from './store/seedRefresh'
+import { loadLanguageConfig } from './vn/languages-config'
 import type { AppDirs } from './vn/appdirs'
 import type { WatchEvent } from './store/watcher'
 import type { EngineLock } from './store/lock'
@@ -54,6 +55,13 @@ export interface EngineOptions {
 
 /** How often `concurrency: auto` providers are asked for their slot count. */
 const SLOT_SYNC_MS = 10_000
+
+/** A folder setting with a leading `~` resolved to the home folder, else made absolute. */
+function resolveHome(v: string): string {
+  if (v === '~') return os.homedir()
+  if (v.startsWith('~/') || v.startsWith('~\\')) return path.join(os.homedir(), v.slice(2))
+  return path.resolve(v)
+}
 
 /** The text below the frontmatter of a config/models.md the engine creates (as in seed/config/models.md). */
 const MODELS_MD_BODY = "# Models in the pickers\n\nWhich models the model pickers offer (the agent panel, Role defaults and the default models). The app writes this file from its **Models** panel (the Models button in the top bar): pick a provider, press **Detect models** to list everything it has, and tick the models you want, or add one by its id (with its price for a paid provider). You can also edit it by hand.\n\n- `picked`: models that are not in `providers.md`, ticked from a provider's list or added by id, each with its `provider`, `id`, `context` and the price the provider listed when you picked it (or the one you typed) (`price_in`, `price_out`, `price_cached_in`, USD per 1M tokens). The budget counts them at that price. A paid model is only ticked with a listed price; for one whose price the provider doesn't list (DeepSeek's), add it by id with its price.\n- `hidden`: `provider/model` refs the pickers leave out: models from `providers.md` or found by `discover` that you unticked. A role list in `roles.md` can still name a hidden model.\n- `limits`: per provider, the limits set in the Models panel, over the ones in `providers.md`: `concurrency` (requests at once), `rpm` (per minute) and `rpd` (per day, from midnight UTC). 0 means no limit.\n"
@@ -148,6 +156,7 @@ export class Engine {
   async start(): Promise<void> {
     await this.loadFactory()
     await this.loadSettings()
+    await loadLanguageConfig(this.opts.dataDir, (m) => this.log(`languages: ${m}`))
     await this.registry.load()
     void this.discoverModels()
     // providers with `concurrency: auto` (Strata) follow the slot count their server reports: asked now and every few seconds,
@@ -224,6 +233,7 @@ export class Engine {
       dataDir: this.dataDir,
       svc: this.vn,
       control: this.mcpControl(),
+      setScriptoriumData: (folder) => this.setScriptoriumData(folder),
       emit: this.emit,
       log: this.log,
       lock: this.opts.lock,
@@ -502,10 +512,37 @@ export class Engine {
 
   /** The Scriptorium data folder with `~` resolved. */
   scriptoriumDataPath(): string {
-    const v = this.settings.scriptoriumData
-    if (v === '~') return os.homedir()
-    if (v.startsWith('~/') || v.startsWith('~\\')) return path.join(os.homedir(), v.slice(2))
-    return path.resolve(v)
+    return resolveHome(this.settings.scriptoriumData)
+  }
+
+  /**
+   * Writes the given fields to config/settings.md (the other fields and the notes below the frontmatter stay), loads the file again
+   * and tells the UI. The settings command and `setScriptoriumData` both write through it.
+   */
+  private async writeSettings(fields: Record<string, unknown>): Promise<void> {
+    const file = this.settingsFile()
+    let doc
+    try {
+      doc = await readMd(file)
+    } catch {
+      doc = { data: { kind: 'settings' } as Record<string, unknown>, body: '' }
+    }
+    await writeMd(file, { ...doc.data, kind: 'settings', ...fields }, doc.body)
+    await this.loadSettings()
+    await this.registry.load()
+    this.scheduler.changeModel() // running jobs follow changed default models or their order
+    this.scheduler.kick()
+    this.emit(await this.snapshot()) // the role defaults shown in the pickers follow the new aliases
+  }
+
+  /** Sets the Scriptorium library folder (`scriptoriumData` in config/settings.md) and returns it resolved. A folder that does not exist is an error. */
+  async setScriptoriumData(folder: string): Promise<string> {
+    const typed = folder.trim()
+    if (!typed) throw new Error('the library folder is empty')
+    const resolved = resolveHome(typed)
+    if (!(await fs.stat(resolved).then((s) => s.isDirectory(), () => false))) throw new Error(`no such folder: ${resolved}`)
+    await this.writeSettings({ scriptoriumData: typed.startsWith('~') ? typed : resolved })
+    return this.scriptoriumDataPath()
   }
 
   /** The only secrets the UI may set: the key variables named in providers.md. */
@@ -615,35 +652,17 @@ export class Engine {
         return
       }
       case 'saveSettings': {
-        const file = this.settingsFile()
-        let doc
-        try {
-          doc = await readMd(file)
-        } catch {
-          doc = { data: { kind: 'settings' } as Record<string, unknown>, body: '' }
-        }
         const s = this.settings
-        await writeMd(
-          file,
-          {
-            ...doc.data,
-            kind: 'settings',
-            default_paid_model: cmd.defaultPaidModel?.trim() || s.default_paid_model,
-            default_strata_model: cmd.defaultStrataModel?.trim() || s.default_strata_model,
-            default_lmstudio_model: cmd.defaultLmstudioModel?.trim() || s.default_lmstudio_model,
-            model_order: cmd.modelOrder ? [...new Set(cmd.modelOrder.filter((g) => g === 'paid' || g === 'strata' || g === 'lmstudio'))] : s.model_order,
-            lmstudio_parallel: Math.min(16, Math.max(1, Math.round(cmd.lmstudioParallel ?? s.lmstudio_parallel) || 1)),
-            lmstudio_context: Math.max(2048, Math.round(cmd.lmstudioContext ?? s.lmstudio_context) || 32768),
-            lmstudio_ttl_minutes: Math.max(1, Math.round(cmd.lmstudioTtlMinutes ?? s.lmstudio_ttl_minutes) || 60),
-            scriptoriumData: cmd.scriptoriumData?.trim() || s.scriptoriumData
-          },
-          doc.body
-        )
-        await this.loadSettings()
-        await this.registry.load()
-        this.scheduler.changeModel() // running jobs follow changed default models or their order
-        this.scheduler.kick()
-        this.emit(await this.snapshot()) // the role defaults shown in the pickers follow the new aliases
+        await this.writeSettings({
+          default_paid_model: cmd.defaultPaidModel?.trim() || s.default_paid_model,
+          default_strata_model: cmd.defaultStrataModel?.trim() || s.default_strata_model,
+          default_lmstudio_model: cmd.defaultLmstudioModel?.trim() || s.default_lmstudio_model,
+          model_order: cmd.modelOrder ? [...new Set(cmd.modelOrder.filter((g) => g === 'paid' || g === 'strata' || g === 'lmstudio'))] : s.model_order,
+          lmstudio_parallel: Math.min(16, Math.max(1, Math.round(cmd.lmstudioParallel ?? s.lmstudio_parallel) || 1)),
+          lmstudio_context: Math.max(2048, Math.round(cmd.lmstudioContext ?? s.lmstudio_context) || 32768),
+          lmstudio_ttl_minutes: Math.max(1, Math.round(cmd.lmstudioTtlMinutes ?? s.lmstudio_ttl_minutes) || 60),
+          scriptoriumData: cmd.scriptoriumData?.trim() || s.scriptoriumData
+        })
         return
       }
       case 'detectModels':

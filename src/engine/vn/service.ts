@@ -20,7 +20,8 @@ import type {
   ThemeInfo,
   VnCommand
 } from '../../shared/protocol'
-import { CHIPTUNE_ENGINE, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
+import { assertKnownLang } from '../../shared/languages'
+import { CANONICAL_EXPRESSIONS, CHIPTUNE_ENGINE, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
 import type { AssetEntry, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets } from '../assets/derive'
 import { lock, mergeDerived, pickVersion, resolveFile, setCustom, unlock } from '../assets/manifest'
@@ -43,14 +44,22 @@ import type { SettingsConfig } from '../../shared/schemas'
 import { findAppDirs } from './appdirs'
 import type { AppDirs } from './appdirs'
 import type { AlignReport } from './align'
-import { importBook } from './import'
+import { defaultCues } from '../renpy/stage'
+import type { SceneTransition, Slot, StageCues } from '../renpy/stage'
+import { MAX_SECONDS, MIN_SECONDS } from './agents/composer'
+import type { MusicPlan } from './agents/composer'
+import { buildEdition, importBook, textSample } from './import'
+import { detectLanguage } from './lang'
+import { loadLanguageConfig } from './languages-config'
+import { applyStoryOps, buildBook, storySummary, syncEdition, validateBook } from './story'
+import type { StoryInput, StoryOp } from './story'
 import { listBooks } from './reader'
 import type { BookSummary } from './reader'
 import { ProjectStore, assertSlug, dataFolders, loadComfyConfigFor, loadRenpyConfig, projectSlug, renpyConfigSchema } from './project'
 import { readMd, writeMd } from '../store/atomic'
 import { jobId, ROLE_OF, runOf, STEP_OF_TASK, stepIndex, TASKS } from './pipeline'
 import type { VnTask } from './pipeline'
-import { voiceRefId } from './ids'
+import { coverId, sheetId, spriteId, voiceRefId } from './ids'
 import { clientFor, loadVoiceConfig } from '../voice/config'
 import type { VoiceConfig } from '../voice/config'
 import { previewVoice, setVoice } from '../voice/jobs'
@@ -90,6 +99,8 @@ export interface VnDeps {
 }
 
 const nowIso = () => new Date().toISOString()
+const SCENE_TRANSITIONS: SceneTransition[] = ['dissolve', 'fade', 'none']
+const SLOTS: Slot[] = ['left', 'center', 'right']
 
 /** The engine id a kind of asset is generated with, from the project settings. */
 export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings): string | null {
@@ -214,6 +225,8 @@ export class VnService {
    * `lang` is the language you confirmed; without it the detected one is used.
    */
   async importProject(source: string, opts: { lang?: Lang } = {}): Promise<{ slug: string; preview: ImportPreview }> {
+    if (opts.lang !== undefined) await this.knownLang(opts.lang)
+    else await loadLanguageConfig(this.dataDir, (m) => this.log(m))
     const folder = await this.resolveSource(source)
     const r = await importBook(folder, { lang: opts.lang })
     let slug = projectSlug(r.book.slug)
@@ -262,6 +275,133 @@ export class VnService {
     this.emit({ type: 'import.done', slug, preview })
     await this.emitProject(slug)
     return { slug, preview }
+  }
+
+  // ---- story: make and edit a book without a book folder ----
+
+  /**
+   * Makes a project from a story written as JSON (no book folder: `source` is empty). The language is `opts.lang`, else the story's
+   * `lang`, else detected from the text. The asset list is derived at once; the art step plans the prompts later.
+   */
+  async createProject(input: StoryInput, opts: { lang?: Lang; settings?: ProjectSettingsPatch } = {}): Promise<{ slug: string; lang: Lang; warnings: string[]; assets: { added: string[]; orphaned: string[] } }> {
+    const base = projectSlug(input.slug ?? input.title)
+    let slug = base
+    for (let i = 2; await this.store.exists(slug); i++) slug = `${base}-${i}`
+    const draft = buildBook(input, { slug, lang: 'en' }).book
+    const detected = opts.lang || input.lang ? null : detectLanguage(textSample(draft.chapters))
+    const lang = await this.knownLang(opts.lang ?? input.lang ?? detected!.lang)
+    const book: VnBook = { ...draft, primaryLang: lang }
+    const settings: ProjectSettings = projectSettingsSchema.parse({ slug, source: '', primaryLang: lang, editions: [lang] })
+    await this.store.withLock(slug, async () => {
+      await this.store.saveSettings(settings)
+      await this.store.saveBook(slug, book)
+      await this.store.saveEdition(slug, buildEdition(lang, book.title, book.chapters, book.characters))
+      await this.store.saveUncertain(slug, [])
+      await this.store.writeJson(slug, 'import.json', { at: nowIso(), source: 'mcp', created: true, ...(detected ? { detected } : {}) })
+    })
+    const assets = await this.reconcileAssets(slug)
+    if (opts.settings) await this.updateSettings(slug, opts.settings)
+    this.log(`created ${slug} over MCP: ${lang}${detected ? ` (detected, confidence ${detected.confidence})` : ''}, ${book.chapters.length} chapter(s), ${book.characters.length} character(s)`)
+    this.emit({
+      type: 'import.done',
+      slug,
+      preview: {
+        source: '',
+        path: '',
+        slug,
+        title: book.title,
+        format: book.format,
+        kind: book.kind,
+        detected: { lang, confidence: detected?.confidence ?? 1 },
+        chapters: book.chapters.length,
+        characters: book.characters.length,
+        places: book.places.length,
+        uncertain: 0,
+        warnings: book.warnings
+      }
+    })
+    await this.emitProject(slug)
+    return { slug, lang, warnings: book.warnings, assets }
+  }
+
+  /** The book of a project, or one chapter of it (by number) with the numbers of the book. */
+  async getStory(slug: string, chapter?: number): Promise<{ book: VnBook } | { summary: ReturnType<typeof storySummary>; chapter: VnBook['chapters'][number] }> {
+    const book = await this.store.loadBook(slug)
+    if (chapter === undefined) return { book }
+    const ch = book.chapters.find((c) => c.n === chapter)
+    if (!ch) throw new Error(`${slug} has no chapter ${chapter} (chapters: ${book.chapters.map((c) => c.n).join(', ')})`)
+    return { summary: storySummary(book), chapter: ch }
+  }
+
+  /**
+   * Edits the story with a list of operations, all or nothing: the book is checked after them and an error saves nothing. The primary
+   * edition is rebuilt from the book, the other editions lose the text of what was removed, and the asset list follows. Unlocked
+   * assets whose subject changed lose their prompt when they have no image yet (`cleared`) or are listed as `stale` when they have
+   * one; locked and custom ones are left alone (`keptLocked`). The game needs a new build to show the change.
+   */
+  async editStory(
+    slug: string,
+    ops: StoryOp[]
+  ): Promise<{ book: ReturnType<typeof storySummary>; warnings: string[]; created: string[]; assets: { added: string[]; orphaned: string[]; cleared: string[]; stale: string[]; keptLocked: string[]; keptByHand: string[] } }> {
+    if (!ops.length) throw new Error('give at least one operation')
+    const r = await this.store.withLock(slug, async () => {
+      const { settings } = await this.store.loadSettings(slug)
+      const result = applyStoryOps(await this.store.loadBook(slug), ops)
+      const v = validateBook(result.book)
+      if (v.errors.length) throw new Error(`the edit leaves the story with problems, so nothing was saved:\n${v.errors.map((e) => `- ${e}`).join('\n')}`)
+      result.book.warnings = v.warnings
+      await this.store.saveBook(slug, result.book)
+      await this.store.saveEdition(slug, buildEdition(settings.primaryLang, result.book.title, result.book.chapters, result.book.characters))
+      for (const lang of await this.store.editionLangs(slug)) {
+        if (lang !== settings.primaryLang) await this.store.saveEdition(slug, syncEdition(await this.store.loadEdition(slug, lang), result.book))
+      }
+      // cues.json and music.json: drop what points at a scene, beat or chapter that is gone (the stage and music steps add defaults for new ones)
+      const book = result.book
+      const sceneIds = new Set(book.chapters.flatMap((c) => c.scenes.map((s) => s.id)))
+      const castIds = new Set(book.chapters.flatMap((c) => c.scenes.flatMap((s) => s.beats.filter((b) => b.type === 'cast').map((b) => b.id))))
+      const chapterNs = new Set(book.chapters.map((c) => c.n))
+      const keep = <T>(rec: Record<string, T>, ok: (k: string) => boolean): Record<string, T> => Object.fromEntries(Object.entries(rec).filter(([k]) => ok(k)))
+      const cues = await this.store.readJson<StageCues>(slug, 'cues.json')
+      if (cues) {
+        await this.store.writeJson(slug, 'cues.json', {
+          ...cues,
+          chapters: keep(cues.chapters ?? {}, (k) => chapterNs.has(Number(k))),
+          scenes: keep(cues.scenes ?? {}, (k) => sceneIds.has(k)),
+          casts: keep(cues.casts ?? {}, (k) => castIds.has(k))
+        })
+      }
+      const music = await this.store.readJson<MusicPlan>(slug, 'music.json')
+      if (music) await this.store.writeJson(slug, 'music.json', { ...music, chapters: keep(music.chapters ?? {}, (k) => chapterNs.has(Number(k))) })
+      return result
+    })
+    const { added, orphaned } = await this.reconcileAssets(slug)
+    const subject = new Set([
+      ...r.affected.chars.flatMap((k) => [sheetId(k), ...CANONICAL_EXPRESSIONS.map((e) => spriteId(k, e))]),
+      ...r.affected.backgrounds,
+      ...(r.affected.cover ? [coverId] : [])
+    ])
+    const cleared: string[] = []
+    const stale: string[] = []
+    const keptLocked: string[] = []
+    const keptByHand: string[] = []
+    await this.store.withLock(slug, async () => {
+      const manifest = await this.store.loadAssets(slug)
+      const assets = manifest.assets.map((a) => {
+        if (!subject.has(a.id)) return a
+        if (a.locked || a.source === 'custom') keptLocked.push(a.id)
+        else if (a.versions.length) stale.push(a.id)
+        else if (a.promptByHand) keptByHand.push(a.id)
+        else if (a.prompt) {
+          cleared.push(a.id)
+          return { ...a, prompt: '' }
+        }
+        return a
+      })
+      if (cleared.length) await this.store.saveAssets(slug, { assets })
+    })
+    this.log(`edited the story of ${slug}: ${ops.length} operation(s), ${cleared.length} prompt(s) cleared, ${stale.length} asset(s) stale`)
+    await this.emitProject(slug)
+    return { book: storySummary(r.book), warnings: r.book.warnings, created: r.created, assets: { added, orphaned, cleared, stale, keptLocked, keptByHand } }
   }
 
   // ---- projects ----
@@ -453,7 +593,9 @@ export class VnService {
     assertSlug(slug)
     if (!(await this.store.exists(slug))) throw new Error(`no project "${slug}"`)
     const hasBook = existsSync(this.store.file(slug, 'vn.json'))
-    const start: PipelineStep = from ?? (hasBook ? 'analyse' : 'import')
+    // a project made over MCP (source '') has nothing to import: it starts at analyse
+    const madeOverMcp = (await this.store.loadSettings(slug)).settings.source === ''
+    const start: PipelineStep = from ?? (hasBook || madeOverMcp ? 'analyse' : 'import')
     if (!hasBook && start !== 'import') throw new Error(`project "${slug}" has no vn.json: start from the import step`)
     const run = await this.nextRun(slug)
     const job = await this.enqueue(slug, TASKS.pipeline, 'all', run, { body: { from: start, force: !!opts.force }, label: `pipeline from ${start}` })
@@ -550,16 +692,93 @@ export class VnService {
 
   // ---- editions ----
 
-  async addEdition(slug: string, source: string, lang: Lang): Promise<string> {
+  /** Reads `config/languages.md`, then checks that the language is known (see `shared/languages.ts`). */
+  async knownLang(code: string): Promise<Lang> {
+    await loadLanguageConfig(this.dataDir, (m) => this.log(m))
+    return assertKnownLang(code)
+  }
+
+  /**
+   * Adds an edition from a translated book folder. Without `lang` the language of that folder is detected (`detected` says
+   * how sure); with it nothing is detected.
+   */
+  async addEdition(slug: string, source: string, lang?: Lang): Promise<{ job: string; lang: Lang; detected: { lang: Lang; confidence: number } | null }> {
     const { settings } = await this.store.loadSettings(slug)
-    if (lang === settings.primaryLang) throw new Error(`${lang} is the primary language of ${slug}: an edition is another language`)
+    if (lang !== undefined) await this.knownLang(lang)
+    else await loadLanguageConfig(this.dataDir, (m) => this.log(m))
     const folder = await this.resolveSource(source)
+    let detected: { lang: Lang; confidence: number } | null = null
+    if (lang === undefined) {
+      const d = (await importBook(folder)).detected
+      detected = { lang: d.lang, confidence: d.confidence }
+      lang = d.lang
+    }
+    if (lang === settings.primaryLang) {
+      throw new Error(`${lang} is the primary language of ${slug}: an edition is another language${detected ? ` (the folder looks like ${lang}; give lang if it is another language)` : ''}`)
+    }
     const run = await this.nextRun(slug)
-    return this.enqueue(slug, TASKS.editionAdd, lang, run, { body: { source: folder, lang }, label: `add ${lang} edition` })
+    const job = await this.enqueue(slug, TASKS.editionAdd, lang, run, { body: { source: folder, lang }, label: `add ${lang} edition` })
+    return { job, lang, detected }
   }
 
   async getEdition(slug: string, lang: Lang): Promise<Edition> {
     return this.store.loadEdition(slug, lang)
+  }
+
+  /**
+   * Writes the text of another language as JSON (no book folder): a new edition, or entries merged into the existing one
+   * (`replace` starts from an empty one). Every key must name a part of the book; text it leaves out stays in the primary language.
+   * Returns the edition and how much of the book it covers.
+   */
+  async setEdition(
+    slug: string,
+    lang: Lang,
+    patch: Partial<Pick<Edition, 'title' | 'chapterTitles' | 'choiceTexts' | 'endings' | 'characterNames' | 'beats'>> & { replace?: boolean }
+  ): Promise<{ edition: Edition; missing: { beats: string[]; other: string[] } }> {
+    await this.knownLang(lang)
+    const r = await this.store.withLock(slug, async () => {
+      const { settings } = await this.store.loadSettings(slug)
+      if (lang === settings.primaryLang) throw new Error(`${lang} is the primary language of ${slug}: edit its text with the story tools (vno_beat_update ...)`)
+      const book = await this.store.loadBook(slug)
+      const textBeats = new Set<string>()
+      for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.type !== 'cast') textBeats.add(b.id)
+      const chapters = new Set(book.chapters.map((c) => String(c.n)))
+      const choices = new Set(book.chapters.flatMap((c) => c.choices.map((_, i) => `${c.n}:${i}`)))
+      const endings = new Set(book.chapters.filter((c) => c.ending).map((c) => String(c.n)))
+      const chars = new Set(book.characters.map((c) => c.key))
+      const errors: string[] = []
+      const check = (what: string, keys: string[] | undefined, known: Set<string>) => {
+        const bad = (keys ?? []).filter((k) => !known.has(k))
+        if (bad.length) errors.push(`no ${what} ${bad.join(', ')} in ${slug}`)
+      }
+      check('text beat', patch.beats && Object.keys(patch.beats), textBeats)
+      check('chapter', patch.chapterTitles && Object.keys(patch.chapterTitles), chapters)
+      check('choice', patch.choiceTexts && Object.keys(patch.choiceTexts), choices)
+      check('ending of chapter', patch.endings && Object.keys(patch.endings), endings)
+      check('character', patch.characterNames && Object.keys(patch.characterNames), chars)
+      if (errors.length) throw new Error(errors.join('; '))
+      const cur: Edition = (!patch.replace && (await this.store.loadEdition(slug, lang).catch(() => null))) || { lang, title: book.title, chapterTitles: {}, choiceTexts: {}, endings: {}, characterNames: {}, beats: {} }
+      const edition: Edition = {
+        lang,
+        title: patch.title ?? cur.title,
+        chapterTitles: { ...cur.chapterTitles, ...(patch.chapterTitles ?? {}) },
+        choiceTexts: { ...cur.choiceTexts, ...(patch.choiceTexts ?? {}) },
+        endings: { ...cur.endings, ...(patch.endings ?? {}) },
+        characterNames: { ...cur.characterNames, ...(patch.characterNames ?? {}) },
+        beats: { ...cur.beats, ...(patch.beats ?? {}) }
+      }
+      await this.store.saveEdition(slug, edition)
+      if (!settings.editions.includes(lang)) await this.store.saveSettings({ ...settings, editions: [...settings.editions, lang].sort() })
+      const other = [
+        ...[...chapters].filter((n) => !edition.chapterTitles[Number(n)]).map((n) => `chapter ${n} title`),
+        ...[...choices].filter((k) => !edition.choiceTexts[k]).map((k) => `choice ${k}`),
+        ...[...endings].filter((n) => !edition.endings[Number(n)]).map((n) => `ending ${n}`),
+        ...[...chars].filter((k) => !edition.characterNames[k]).map((k) => `name of ${k}`)
+      ]
+      return { edition, missing: { beats: [...textBeats].filter((id) => !edition.beats[id]?.trim()), other } }
+    })
+    await this.emitProject(slug)
+    return r
   }
 
   /** Changes the text of one beat (or a title, choice or ending by its key) of an edition, for the beat editor. */
@@ -662,6 +881,138 @@ export class VnService {
     const queued = await this.deps.jobs.list('queued')
     if (queued.some((j) => j.data.book === slug && j.data.task === TASKS.build)) return null
     return this.enqueue(slug, TASKS.build, 'edit', await this.nextRun(slug), { label: 'rebuild after an asset edit' })
+  }
+
+  // ---- prompts, music plan and cues by hand ----
+
+  /**
+   * Sets the prompt, negative prompt, size, engine or seed of an asset without generating it. A prompt marks the asset
+   * `promptByHand`, so the art-director and the composer keep it (an empty prompt clears it and the mark). A locked asset is refused.
+   */
+  async setAssetPlan(slug: string, id: string, edits: { prompt?: string; negative?: string; size?: { w: number; h: number } | null; engine?: string; seed?: number | null }): Promise<AssetEntry> {
+    const next = (await this.store.updateAsset(slug, id, (e) => {
+      if (e.locked) throw new Error(`asset ${id} is locked: unlock it (vno_asset_unlock) before changing its prompt`)
+      if (e.kind === 'voiceRef') throw new Error('voice references are uploaded (setVoiceRef), they have no prompt to plan')
+      const out: AssetEntry = { ...e }
+      if (edits.prompt !== undefined) {
+        const prompt = edits.prompt.trim()
+        out.prompt = prompt
+        if (prompt) out.promptByHand = true
+        else delete out.promptByHand
+      }
+      if (edits.negative !== undefined) out.negative = edits.negative.trim()
+      if (edits.size !== undefined) out.size = edits.size
+      if (edits.engine !== undefined) out.engine = edits.engine
+      if (edits.seed !== undefined) out.seed = edits.seed
+      return out
+    }))!
+    await this.emitAsset(slug, next)
+    return next
+  }
+
+  /**
+   * Merges a music plan into music.json and marks it `byHand` (the music step then keeps the menu, chapters and lengths). `chapters`
+   * maps a chapter number to a track id, or null to drop the entry. `replace` starts from an empty plan instead of the current one.
+   * Track ids are the project's music assets (`music_01` ...), chapter numbers the book's, lengths are clamped.
+   */
+  async setMusicPlan(slug: string, patch: { menu?: string | null; chapters?: Record<string, string | null>; seconds?: Record<string, number>; replace?: boolean }): Promise<MusicPlan> {
+    const out = await this.store.withLock(slug, async () => {
+      const book = await this.store.loadBook(slug)
+      const tracks = new Set((await this.store.loadAssets(slug)).assets.filter((a) => a.kind === 'music').map((a) => a.id))
+      const known = () => (tracks.size ? `the tracks are ${[...tracks].sort().join(', ')}` : 'the project has no music tracks (see music.tracks in vno_update_settings)')
+      const track = (id: string, what: string) => {
+        if (!tracks.has(id)) throw new Error(`${what}: "${id}" is not a music track of ${slug}; ${known()}`)
+      }
+      const cur = await this.store.readJson<MusicPlan>(slug, 'music.json')
+      // a plan made here has no menu entry until one is given (the music step then picks it)
+      const plan = (patch.replace || !cur ? { chapters: {}, seconds: {} } : { ...cur, chapters: { ...cur.chapters }, seconds: { ...cur.seconds } }) as MusicPlan
+      if (patch.menu !== undefined) {
+        if (patch.menu !== null) track(patch.menu, 'menu')
+        plan.menu = patch.menu
+      }
+      for (const [key, id] of Object.entries(patch.chapters ?? {})) {
+        const n = Number(key)
+        if (!Number.isInteger(n) || !book.chapters.some((c) => c.n === n)) throw new Error(`chapters: ${slug} has no chapter ${key} (chapters: ${book.chapters.map((c) => c.n).join(', ')})`)
+        if (id === null) delete plan.chapters[n]
+        else {
+          track(id, `chapter ${n}`)
+          plan.chapters[n] = id
+        }
+      }
+      for (const [id, s] of Object.entries(patch.seconds ?? {})) {
+        track(id, 'seconds')
+        plan.seconds[id] = Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, Math.round(s)))
+      }
+      plan.byHand = true
+      await this.store.writeJson(slug, 'music.json', plan)
+      return plan
+    })
+    await this.emitProject(slug)
+    return out
+  }
+
+  /**
+   * Merges stage cues into cues.json (or into the default cues when there is none) and marks them `byHand` (the stage step then does
+   * not ask the stage-director). `replace` drops the cues so far and starts from the defaults. Everything is checked against the
+   * book and the music assets; one bad entry changes nothing.
+   */
+  async setCues(
+    slug: string,
+    patch: {
+      menuMusic?: string | null
+      chapters?: Record<string, string | null>
+      scenes?: Record<string, { transition?: SceneTransition; pause?: number }>
+      casts?: Record<string, Record<string, Slot>>
+      replace?: boolean
+    }
+  ): Promise<StageCues> {
+    const out = await this.store.withLock(slug, async () => {
+      const book = await this.store.loadBook(slug)
+      const music = (await this.store.loadAssets(slug)).assets.filter((a) => a.kind === 'music').map((a) => a.id).sort()
+      const track = (id: string, what: string) => {
+        if (!music.includes(id)) throw new Error(`${what}: "${id}" is not a music track of ${slug}${music.length ? ` (${music.join(', ')})` : ' (the project has no music tracks)'}`)
+      }
+      const cur = await this.store.readJson<StageCues>(slug, 'cues.json')
+      const base = patch.replace || !cur ? defaultCues(book, { musicIds: music }) : cur
+      const cues: StageCues = { ...base, chapters: { ...base.chapters }, scenes: { ...base.scenes }, casts: { ...base.casts } }
+      if (patch.menuMusic !== undefined) {
+        if (patch.menuMusic !== null) track(patch.menuMusic, 'menuMusic')
+        cues.menuMusic = patch.menuMusic
+      }
+      for (const [key, id] of Object.entries(patch.chapters ?? {})) {
+        const n = Number(key)
+        if (!Number.isInteger(n) || !book.chapters.some((c) => c.n === n)) throw new Error(`chapters: ${slug} has no chapter ${key} (chapters: ${book.chapters.map((c) => c.n).join(', ')})`)
+        if (id !== null) track(id, `chapter ${n}`)
+        cues.chapters[n] = { music: id }
+      }
+      const scenes = new Set(book.chapters.flatMap((c) => c.scenes.map((s) => s.id)))
+      for (const [id, cue] of Object.entries(patch.scenes ?? {})) {
+        if (!scenes.has(id)) throw new Error(`scenes: ${slug} has no scene "${id}" (ids look like ch01.s02)`)
+        if (cue.transition !== undefined && !SCENE_TRANSITIONS.includes(cue.transition)) throw new Error(`scenes.${id}: transition must be ${SCENE_TRANSITIONS.join(', ')}`)
+        if (cue.pause !== undefined && !(cue.pause >= 0)) throw new Error(`scenes.${id}: pause must be 0 or more seconds`)
+        const old = cues.scenes[id]
+        cues.scenes[id] = { transition: cue.transition ?? old?.transition ?? 'dissolve', ...(cue.pause !== undefined ? (cue.pause ? { pause: cue.pause } : {}) : old?.pause ? { pause: old.pause } : {}) }
+      }
+      const casts = new Map<string, Set<string>>()
+      for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.type === 'cast') casts.set(b.id, new Set(b.cast.map((x) => x.charKey)))
+      for (const [id, map] of Object.entries(patch.casts ?? {})) {
+        const members = casts.get(id)
+        if (!members) throw new Error(`casts: ${slug} has no cast beat "${id}" (ids look like ch01.s02.b001; vno_get_story shows the cast beats)`)
+        const used = new Set<string>()
+        for (const [key, slot] of Object.entries(map)) {
+          if (!members.has(key)) throw new Error(`casts.${id}: "${key}" is not in that cast (${[...members].join(', ')})`)
+          if (!SLOTS.includes(slot)) throw new Error(`casts.${id}.${key}: slot must be ${SLOTS.join(', ')}`)
+          if (used.has(slot)) throw new Error(`casts.${id}: two characters in the ${slot} slot`)
+          used.add(slot)
+        }
+        cues.casts[id] = { ...map }
+      }
+      cues.byHand = true
+      await this.store.writeJson(slug, 'cues.json', cues)
+      return cues
+    })
+    await this.emitProject(slug)
+    return out
   }
 
   // ---- voice ----
