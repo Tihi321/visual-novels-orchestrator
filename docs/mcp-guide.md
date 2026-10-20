@@ -85,6 +85,15 @@ After an edit the result lists what happened to the assets: `added` and `orphane
 - `vno_set_music {slug, menu?, chapters?: {"1": "music_02"}, seconds?: {"music_01": 90}, replace?}` sets the menu track, the track of each chapter and each track's length (60 to 180 s). Only `slug` reads the plan. The music step keeps it and only fills what is missing. The number of tracks is `music.tracks` in `vno_update_settings`.
 - `vno_set_cues {slug, menuMusic?, chapters?, scenes?: {"ch01.s02": {"transition": "fade", "pause": 1}}, casts?: {"ch01.s02.b001": {"mara": "left", "tom": "right"}}, replace?}` sets the stage cues. Only `slug` reads them. The stage step then keeps them, does not ask the stage-director, and only adds defaults for what you left out.
 
+## Hand-made art
+
+Draw the images yourself (for example with the pixel-studio MCP) and VN Studio never calls ComfyUI for an image.
+
+1. `vno_update_settings {slug, art: {provider: "hand"}}` (any art style; `null` goes back to ComfyUI). The CLI flag is `--art-provider hand`.
+2. Run the pipeline. The art step plans no prompts (`vno_plan` still writes them, as briefs for the drawing), the generate step makes only music and voice and says how many images wait for a file. `vno_asset_generate` and `vno_asset_regen` on an image are refused; on music they work.
+3. Draw each image and set it with `vno_asset_replace {slug, id, file}` (`vno_asset_list` has the ids). Sprites: transparent background, bottom-aligned, any height up to the screen. Backgrounds: 1920x1080. Cover: portrait. Character sheets are only a reference: they are not needed, and a missing one is not a placeholder.
+4. `vno_build` works at any time: an image without a file gets a placeholder and is listed in the build result.
+
 ## Do the model work yourself
 
 Eight pipeline steps ask a model: `analyse` (script-analyst), `art plan` (art-director), `music plan` (composer), `stage` (stage-director), `voice plan` (voice-director), `edition align` (edition-aligner), `art review` (art-critic) and the run `summary` (director). Instead of LM Studio, Strata or a paid API, you can answer them yourself, with nothing spent. Set a role (or one agent) to the model `client/claude-code`; its jobs then wait until you take them over MCP.

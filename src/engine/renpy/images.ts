@@ -55,7 +55,7 @@ export const pickColor = (key: string): string => COLORS[hashString(key) % COLOR
 const xml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 /** A solid-colour background with the place and time written on it. */
-export async function placeholderBackground(label: string, res: Resolution, format: ImageFormat = 'webp'): Promise<Buffer> {
+export async function placeholderBackground(label: string, res: Resolution, format: ImageFormat = 'webp', lossless = false): Promise<Buffer> {
   const color = pickColor(label)
   const fontSize = Math.round(res.h / 14)
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${res.w}" height="${res.h}">
@@ -64,11 +64,11 @@ export async function placeholderBackground(label: string, res: Resolution, form
   <text x="50%" y="50%" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="${fontSize}" fill="#ffffffcc">${xml(label)}</text>
   <text x="50%" y="${Math.round(res.h * 0.58)}" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="${Math.round(fontSize / 2.4)}" fill="#ffffff80">placeholder</text>
 </svg>`
-  return encode(sharp(Buffer.from(svg)), format)
+  return encode(sharp(Buffer.from(svg)), format, lossless)
 }
 
 /** A coloured silhouette with the name and expression written on it. Transparent around it. */
-export async function placeholderSprite(name: string, expression: string, res: Resolution, format: ImageFormat = 'webp'): Promise<Buffer> {
+export async function placeholderSprite(name: string, expression: string, res: Resolution, format: ImageFormat = 'webp', lossless = false): Promise<Buffer> {
   const h = Math.round(res.h * 0.9)
   const w = Math.round(h * 0.45)
   const color = pickColor(name)
@@ -79,7 +79,7 @@ export async function placeholderSprite(name: string, expression: string, res: R
   <text x="50%" y="${h * 0.6}" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="${fs}" fill="#ffffff">${xml(name)}</text>
   <text x="50%" y="${h * 0.6 + fs * 1.4}" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="${Math.round(fs * 0.8)}" fill="#ffffffcc">${xml(expression)}</text>
 </svg>`
-  return encode(sharp(Buffer.from(svg)), format)
+  return encode(sharp(Buffer.from(svg)), format, lossless)
 }
 
 /** The main menu background used when the book has no cover yet. */
@@ -87,8 +87,9 @@ export async function placeholderCover(title: string, res: Resolution): Promise<
   return placeholderBackground(title, res, 'png')
 }
 
-function encode(img: Sharp, format: ImageFormat): Promise<Buffer> {
-  return format === 'png' ? img.png().toBuffer() : img.webp({ quality: 88 }).toBuffer()
+/** `lossless`: WebP without loss (pixel art: lossy WebP smears colour edges). */
+function encode(img: Sharp, format: ImageFormat, lossless = false): Promise<Buffer> {
+  return format === 'png' ? img.png().toBuffer() : img.webp(lossless ? { lossless: true } : { quality: 88 }).toBuffer()
 }
 
 export interface BuildImagesInput {
@@ -100,6 +101,8 @@ export interface BuildImagesInput {
   resolution: Resolution
   format: ImageFormat
   warnings: string[]
+  /** Pixel art: resize with the nearest-neighbour kernel so it is never blurred. */
+  pixel?: boolean
 }
 
 export interface BuildImagesResult {
@@ -112,6 +115,7 @@ export interface BuildImagesResult {
 /** Copy the selected assets into `game/images` (and `gui/main_menu.png`), making placeholders for missing ones. */
 export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesResult> {
   const { gameSubdir, book, used, resolveAsset, resolution, format } = inp
+  const kernel = inp.pixel ? ('nearest' as const) : undefined
   const written: string[] = []
   const placeholders: string[] = []
   fs.mkdirSync(path.join(gameSubdir, 'images'), { recursive: true })
@@ -122,10 +126,10 @@ export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesRes
     const src = resolveAsset(id)
     let buf: Buffer
     if (src && fs.existsSync(src)) {
-      buf = await encode(sharp(src).resize(resolution.w, resolution.h, { fit: 'cover' }), format)
+      buf = await encode(sharp(src).resize(resolution.w, resolution.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }), format, !!inp.pixel)
     } else {
       const place = id.replace(/^bg_/, '').replace(/_/g, ' ')
-      buf = await placeholderBackground(place, resolution, format)
+      buf = await placeholderBackground(place, resolution, format, !!inp.pixel)
       placeholders.push(id)
     }
     fs.writeFileSync(path.join(gameSubdir, rel), buf)
@@ -139,9 +143,9 @@ export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesRes
     const src = resolveAsset(id)
     let buf: Buffer
     if (src && fs.existsSync(src)) {
-      buf = await encode(sharp(src).ensureAlpha(), format)
+      buf = await encode(sharp(src).ensureAlpha(), format, !!inp.pixel)
     } else {
-      buf = await placeholderSprite(names.get(s.charKey) ?? s.charKey, s.expression, resolution, format)
+      buf = await placeholderSprite(names.get(s.charKey) ?? s.charKey, s.expression, resolution, format, !!inp.pixel)
       placeholders.push(id)
     }
     fs.writeFileSync(path.join(gameSubdir, rel), buf)
@@ -152,7 +156,7 @@ export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesRes
   const coverSrc = resolveAsset('cover')
   let cover: Buffer
   if (coverSrc && fs.existsSync(coverSrc)) {
-    cover = await sharp(coverSrc).resize(resolution.w, resolution.h, { fit: 'cover' }).png().toBuffer()
+    cover = await sharp(coverSrc).resize(resolution.w, resolution.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }).png().toBuffer()
   } else {
     cover = await placeholderCover(book.title, resolution)
     placeholders.push('cover')

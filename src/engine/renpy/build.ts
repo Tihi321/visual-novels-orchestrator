@@ -180,7 +180,7 @@ export async function buildGame(inp: BuildGameInput): Promise<BuildGameResult> {
   for (const [name, content] of Object.entries(emitted.files)) fs.writeFileSync(path.join(sub, name), content, 'utf8')
 
   // 7. Images.
-  const images = await buildImages({ gameSubdir: sub, book, used: emitted.used, resolveAsset: inp.resolveAsset, resolution, format, warnings })
+  const images = await buildImages({ gameSubdir: sub, book, used: emitted.used, resolveAsset: inp.resolveAsset, resolution, format, warnings, pixel: settings.art.style === 'pixel' })
 
   // 8. Languages: options.rpy tokens.
   const langs = bookLanguages(book.primaryLang, [book.primaryLang, ...settings.editions, ...inp.editions.map((e) => e.lang)])

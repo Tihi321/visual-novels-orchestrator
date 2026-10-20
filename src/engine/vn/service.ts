@@ -21,7 +21,7 @@ import type {
   VnCommand
 } from '../../shared/protocol'
 import { assertKnownLang } from '../../shared/languages'
-import { CANONICAL_EXPRESSIONS, CHIPTUNE_ENGINE, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
+import { CANONICAL_EXPRESSIONS, CHIPTUNE_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
 import type { AssetEntry, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets } from '../assets/derive'
 import { lock, mergeDerived, pickVersion, resolveFile, setCustom, unlock } from '../assets/manifest'
@@ -432,8 +432,10 @@ export class VnService {
     const counts: AssetCounts = { total: 0, ready: 0, missing: 0, locked: 0, custom: 0 }
     for (const a of manifest.assets) {
       if (orphans.has(a.id)) continue
+      const file = this.store.resolveAsset(slug, a)
+      if (isHandArt(settings.art) && a.kind === 'sheet' && !file) continue // a sheet is only a reference for the person drawing
       counts.total++
-      if (this.store.resolveAsset(slug, a)) counts.ready++
+      if (file) counts.ready++
       else counts.missing++
       if (a.locked) counts.locked++
       if (a.source === 'custom') counts.custom++
@@ -858,10 +860,16 @@ export class VnService {
     if (entry.kind === 'voiceRef') throw new Error('voice references are uploaded (setVoiceRef), not generated')
     const run = await this.nextRun(slug)
     const { settings } = await this.store.loadSettings(slug)
+    this.assertNotHandImage(settings, entry)
     const gen = await this.enqueue(slug, this.generateTask(settings, entry), id, run, { body: { force: true, prompt: edits.prompt, engine: edits.engine, seed: edits.seed }, label: `regenerate ${id}` })
     const ids = [gen]
     if (edits.rebuild !== false) ids.push(await this.enqueue(slug, TASKS.build, `regen-${id}`, run, { depends_on: [gen] }))
     return ids
+  }
+
+  /** In hand-made art mode an image is never generated: it is set with vno_asset_replace. */
+  assertNotHandImage(settings: ProjectSettings, entry: Pick<AssetEntry, 'id' | 'kind'>): void {
+    if (isHandArt(settings.art) && IMAGE_KINDS.has(entry.kind)) throw new Error(`${entry.id}: this project uses hand-made art (art.provider: hand), so VN Studio does not generate images: make the image yourself and set it with vno_asset_replace`)
   }
 
   /** The job that makes an asset: sprites of a `pixel-studio-draw` book are drawn by an agent (needs a model), the rest are generated. */

@@ -124,7 +124,7 @@ export type Edition = z.infer<typeof editionSchema>
 
 // ---- project settings (project.md frontmatter) ----
 
-export const ART_PROVIDERS = ['comfy', 'pixel-studio-draw'] as const
+export const ART_PROVIDERS = ['comfy', 'pixel-studio-draw', 'hand'] as const
 export const PIXEL_PROVIDERS = ['vno', 'pixel-studio'] as const
 export const MUSIC_PROVIDERS = ['comfy', 'chiptune'] as const
 /** The chips of Chiptune Studio. */
@@ -186,7 +186,7 @@ export const projectSettingsSchema = z.object({
       stylePrompt: z.string().optional(),
       /** How sprites get a transparent background: ComfyUI BiRefNet, a Qwen-Image edit pass then BiRefNet, or keying out a flat background. */
       bgRemoval: z.enum(['birefnet', 'qwen-edit', 'key']).default('birefnet'),
-      /** Who makes the sprites: ComfyUI (the default), or `pixel-studio-draw`: an agent draws small pixel sprites in Pixel Studio. Missing: `comfy`. */
+      /** Who makes the sprites: ComfyUI (the default), or `pixel-studio-draw`: an agent draws small pixel sprites in Pixel Studio, or `hand`: every image is made outside VN Studio and set with vno_asset_replace (ComfyUI is never called for an image). Missing: `comfy`. */
       provider: z.enum(ART_PROVIDERS).optional(),
       /** Who turns an image into pixel art (pixel style only): the built-in sharp quantiser (`vno`) or Pixel Studio. Missing: `vno`. */
       pixelProvider: z.enum(PIXEL_PROVIDERS).optional(),
@@ -230,6 +230,10 @@ export function resolvePixel(art: Pick<ProjectSettings['art'], 'pixel'>): { widt
 
 export const resolvePixelProvider = (art: Pick<ProjectSettings['art'], 'pixelProvider'>): (typeof PIXEL_PROVIDERS)[number] => art.pixelProvider ?? 'vno'
 export const resolveArtProvider = (art: Pick<ProjectSettings['art'], 'provider'>): (typeof ART_PROVIDERS)[number] => art.provider ?? 'comfy'
+/** The asset kinds that are images. */
+export const IMAGE_KINDS: ReadonlySet<string> = new Set(['background', 'sheet', 'sprite', 'cover'])
+/** Hand-made art: VN Studio never generates an image (any art style). */
+export const isHandArt = (art: Pick<ProjectSettings['art'], 'provider'>): boolean => art.provider === 'hand'
 
 /** The music provider: the chosen one, else Chiptune Studio for pixel-style books and ComfyUI for the rest. */
 export function resolveMusicProvider(settings: Pick<ProjectSettings, 'art' | 'music'>): (typeof MUSIC_PROVIDERS)[number] {

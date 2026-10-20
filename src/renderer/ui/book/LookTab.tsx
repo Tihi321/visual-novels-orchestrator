@@ -29,6 +29,8 @@ function Select({ value, options, onChange, testId }: { value: string; options: 
   )
 }
 
+const HAND_OPTION = { id: 'hand', label: 'Hand-made (no ComfyUI)' }
+
 function ArtCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
   const art = detail.settings.art
   const engines = useVn((s) => s.engines)
@@ -65,6 +67,17 @@ function ArtCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
           </>
         )}
         {pixel && <PixelControls slug={slug} detail={detail} />}
+        {!pixel && (
+          <>
+            <label className="dim">Images</label>
+            <Select
+              value={resolveArtProvider(art) === 'hand' ? 'hand' : 'comfy'}
+              options={[{ id: 'comfy', label: 'Generated with ComfyUI' }, HAND_OPTION]}
+              onChange={(v) => updateSettings(slug, { art: { provider: v === 'hand' ? 'hand' : null } })}
+              testId="art-provider"
+            />
+          </>
+        )}
         <label className="dim">Generator engine</label>
         <Select value={art.generator} options={generatorChoices(engines, workflows, art.generator)} onChange={(v) => updateSettings(slug, { art: { generator: v } })} testId="art-generator" />
         <label className="dim">Editor engine</label>
@@ -162,9 +175,10 @@ function PixelControls({ slug, detail }: { slug: string; detail: ProjectDetail }
         value={resolveArtProvider(art)}
         options={[
           { id: 'comfy', label: 'ComfyUI edit, then converted' },
-          { id: 'pixel-studio-draw', label: 'Drawn by an agent in Pixel Studio (small sprites)' }
+          { id: 'pixel-studio-draw', label: 'Drawn by an agent in Pixel Studio (small sprites)' },
+          HAND_OPTION
         ]}
-        onChange={(v) => updateSettings(slug, { art: { provider: v === 'comfy' ? null : (v as 'pixel-studio-draw') } })}
+        onChange={(v) => updateSettings(slug, { art: { provider: v === 'comfy' ? null : (v as 'pixel-studio-draw' | 'hand') } })}
         testId="art-provider"
       />
     </>
