@@ -17,7 +17,7 @@ import { buildGame } from '../renpy/build'
 import type { VoiceSource } from '../renpy/emit'
 import { androidBuild } from '../renpy/android'
 import { lint, sdkExists } from '../renpy/run'
-import { defaultCues } from '../renpy/stage'
+import { defaultCues, fillCues } from '../renpy/stage'
 import type { StageCues } from '../renpy/stage'
 import { alignEdition } from './align'
 import { planArt } from './agents/art-director'
@@ -130,6 +130,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     TASKS.import,
     async (_ctx, slug) => {
       const { settings } = await store.loadSettings(slug)
+      if (settings.source === '') return 'made over MCP: nothing to import'
       const r = await svc.importProject(settings.source, { lang: settings.primaryLang })
       return `imported ${r.preview.chapters} chapter(s), ${r.preview.characters} character(s), ${r.preview.uncertain} item(s) for the script-analyst`
     },
@@ -219,7 +220,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const book = await store.loadBook(slug)
     const manifest = await store.loadAssets(slug)
     const orphans = svc.orphanIds(book, settings, manifest.assets)
-    const need = manifest.assets.filter((a) => IMAGE_KINDS.has(a.kind) && !orphans.has(a.id) && !a.locked && a.source === 'generated' && (force || (a.versions.length === 0 && a.prompt === '')))
+    const need = manifest.assets.filter((a) => IMAGE_KINDS.has(a.kind) && !orphans.has(a.id) && !a.locked && !a.promptByHand && a.source === 'generated' && (force || (a.versions.length === 0 && a.prompt === '')))
     if (!need.length) return 'every asset already has a prompt'
     const r = await tryAgent(ctx, 'art-director', () => planArt(call(ctx), book, settings, need))
     const pixel = settings.art.style === 'pixel'
@@ -250,7 +251,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const music = manifest.assets.filter((a) => a.kind === 'music' && !orphans.has(a.id))
     if (!music.length) return 'the project has no music assets'
     const ids = music.map((a) => a.id).sort()
-    const need = music.filter((a) => !a.locked && a.source === 'generated' && a.versions.length === 0 && (force || a.prompt === ''))
+    const need = music.filter((a) => !a.locked && !a.promptByHand && a.source === 'generated' && a.versions.length === 0 && (force || a.prompt === ''))
     const existing = await store.readJson<MusicPlan>(slug, 'music.json')
     const wantsChips = chipOptionsFor(book, settings).chiptune
     if (!need.length && existing && (!wantsChips || ids.every((id) => existing.tracks?.[id]))) return 'every track already has a prompt and a plan'
@@ -265,7 +266,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       seconds,
       ...(chipOpts.chiptune ? { tracks: fallbackChipPlans(ids, chipOpts, seconds) } : {})
     }
-    const plan: MusicPlan = r.ok
+    const planned: MusicPlan = r.ok
       ? {
           menu: r.value.plan.menu ?? fallback.menu,
           chapters: { ...fallback.chapters, ...r.value.plan.chapters },
@@ -273,6 +274,16 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
           ...(chipOpts.chiptune ? { tracks: { ...fallback.tracks, ...r.value.plan.tracks } } : {})
         }
       : fallback
+    // a plan set with vno_set_music wins: the planner only fills what it lacks (a new chapter, a new track)
+    const plan: MusicPlan = existing?.byHand
+      ? {
+          menu: 'menu' in existing ? existing.menu : planned.menu,
+          chapters: { ...planned.chapters, ...existing.chapters },
+          seconds: { ...planned.seconds, ...existing.seconds },
+          ...(planned.tracks || existing.tracks ? { tracks: { ...planned.tracks, ...existing.tracks } } : {}),
+          byHand: true
+        }
+      : planned
     await store.withLock(slug, async () => {
       const cur = await store.loadAssets(slug)
       const wanted = new Set(need.map((a) => a.id))
@@ -281,7 +292,8 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       await store.saveAssets(slug, { assets })
       await store.writeJson(slug, 'music.json', plan)
     })
-    return r.ok ? `${ids.length} track(s) planned by the composer` : `${ids.length} track(s) planned from the book (the composer did not answer: ${r.error})`
+    const kept = existing?.byHand ? '; the menu, chapters and lengths set by hand were kept' : ''
+    return r.ok ? `${ids.length} track(s) planned by the composer${kept}` : `${ids.length} track(s) planned from the book (the composer did not answer: ${r.error})${kept}`
   })
 
   // ---- generate ----
@@ -461,6 +473,14 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const dir = store.dir(slug)
     const musicIds = manifest.assets.filter((a) => a.kind === 'music' && resolveFile(dir, a)).map((a) => a.id).sort()
     const warnings: string[] = []
+    // cues set with vno_set_cues win: the stage-director is not asked, only what they lack (a new scene or cast) gets the defaults
+    const current = await store.readJson<StageCues>(slug, 'cues.json')
+    if (current?.byHand) {
+      const filled = fillCues(current, book, { musicIds, warn: (m) => warnings.push(m) })
+      for (const w of warnings) ctx.log(`stage: ${w}`)
+      await store.writeJson(slug, 'cues.json', { ...filled.cues, byHand: true })
+      return `cues set by hand kept${filled.added ? `, ${filled.added} default cue(s) added for new chapters, scenes or casts` : ''}; the stage-director was not asked`
+    }
     let cues: StageCues = defaultCues(book, { musicIds, warn: (m) => warnings.push(m) })
     // the composer's plan decides the music; the stage-director may still choose another track per chapter
     const plan = await store.readJson<MusicPlan>(slug, 'music.json')

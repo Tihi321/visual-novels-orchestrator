@@ -24,6 +24,8 @@ export interface MusicPlan {
   seconds: Record<string, number>
   /** Chiptune Studio: track id -> what to compose (`compose_track` arguments). Only when the project's music provider is chiptune. */
   tracks?: Record<string, ChipTrackPlan>
+  /** Set with `vno_set_music`: the music step keeps the menu, chapters and lengths and only fills what is missing. */
+  byHand?: boolean
 }
 
 export const MIN_SECONDS = 60

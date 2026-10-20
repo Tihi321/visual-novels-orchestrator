@@ -2,7 +2,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { chapterLabel, characterColor, emitScripts, translatableStrings, voicePath, type VoiceSource } from '../src/engine/renpy/emit'
 import { defaultCues } from '../src/engine/renpy/stage'
-import { bookLanguages, languageTable } from '../src/engine/renpy/build'
+import { bookLanguages, languageTable, languageWarnings } from '../src/engine/renpy/build'
 import { fixturesDir, loadBook, loadEdition } from './fixtures/vn/load'
 
 const snap = (name: string): string => path.join(fixturesDir, '__snapshots__', name)
@@ -203,5 +203,20 @@ describe('language table', () => {
   })
   it('one language', () => {
     expect(bookLanguages('en', ['en', 'en'])).toEqual(['en'])
+  })
+})
+
+describe('language table for other languages', () => {
+  it('German primary: german is the default, English and Croatian are editions', () => {
+    const t = languageTable('de', bookLanguages('de', ['de', 'en', 'hr']))
+    expect(t.list).toBe('[("german", "Deutsch"), ("english", "English"), ("croatian", "Hrvatski")]')
+    expect(t.defaultLanguage).toBe('"german"')
+  })
+  it('warns about menus without a UI table, a font without glyphs and right-to-left text', () => {
+    expect(languageWarnings('en', ['en', 'hr'])).toEqual([])
+    const w = languageWarnings('de', ['de', 'ja', 'he'])
+    expect(w).toContain('the menus of German stay in English (no UI strings for de; add them in config/languages.md)')
+    expect(w).toContain('the game font (DejaVuSans) has no kana glyphs: Japanese text shows as boxes')
+    expect(w.some((m) => m.startsWith('right-to-left'))).toBe(true)
   })
 })

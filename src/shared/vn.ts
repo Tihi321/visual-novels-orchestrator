@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { BUILTIN_LANGUAGES, LEGACY_LANGS } from './languages'
 
 /**
  * The VN data contract: the book structure (`vn.json`), editions (`editions/<lang>.json`), the per-project settings
@@ -8,8 +9,10 @@ import { z } from 'zod'
  * the words of another language keyed by beat id, so a new edition reuses every asset.
  */
 
-export const LANGS = ['en', 'hr'] as const
-export const langSchema = z.enum(LANGS)
+/** The codes of the built-in languages (`config/languages.md` can add more: see `shared/languages.ts`). */
+export const LANGS: readonly string[] = BUILTIN_LANGUAGES.map((l) => l.code)
+/** The format of a language code only: whether it is known is checked where a language enters a project (`assertKnownLang`). */
+export const langSchema = z.string().regex(/^[a-z]{2,3}(-[a-z0-9]{2,8})?$/, 'a language code such as en, hr, de or pt-br')
 export type Lang = z.infer<typeof langSchema>
 
 /** The standard sprite expressions. Free-form ones in a script are mapped to one of these. */
@@ -144,14 +147,14 @@ export const PIXEL_DEFAULTS = { width: 320, height: 180, dither: 'none' as Dithe
 
 /**
  * Projects from before per-language voices stored one voice id per speaker. An OmniVoice id (`omni:*`) is dropped (the speaker needs
- * a new plan), a Supertonic id reads every language, any other id (Kokoro) reads English only.
+ * a new plan), a Supertonic id reads English and Croatian (the languages of that time), any other id (Kokoro) reads English only.
  */
 function legacyVoices(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
   const out: Record<string, unknown> = {}
   for (const [speaker, v] of Object.entries(raw)) {
     if (typeof v !== 'string') out[speaker] = v
-    else if (v.startsWith('supertonic:')) out[speaker] = Object.fromEntries(LANGS.map((l) => [l, v]))
+    else if (v.startsWith('supertonic:')) out[speaker] = Object.fromEntries(LEGACY_LANGS.map((l) => [l, v]))
     else if (!v.startsWith('omni:') && v) out[speaker] = { en: v }
   }
   return out
@@ -210,7 +213,7 @@ export const projectSettingsSchema = z.object({
       /** Which engine reads English: the Kokoro voices (the default) or the Supertonic ones. Other languages always use Supertonic. Missing: `kokoro`. */
       englishEngine: z.enum(['kokoro', 'supertonic']).optional(),
       /** Speaker key (character key or `narrator`) -> language -> VibeTTS voice id such as `af_heart` (en) or `supertonic:F2`. */
-      voices: z.preprocess(legacyVoices, z.record(z.string(), z.partialRecord(langSchema, z.string()))).default({})
+      voices: z.preprocess(legacyVoices, z.record(z.string(), z.record(langSchema, z.string()))).default({})
     })
     .default({ enabled: false, langs: [], provider: 'vibetts', engines: {}, voices: {} })
 })
@@ -280,6 +283,8 @@ export const assetEntrySchema = z.object({
   customFile: z.string().optional(),
   /** Locked assets are never regenerated. */
   locked: z.boolean(),
+  /** The prompt was set with `vno_asset_set`: the art-director and composer keep it. */
+  promptByHand: z.boolean().optional(),
   review: z
     .object({
       status: z.enum(['pending', 'approved', 'rejected']),

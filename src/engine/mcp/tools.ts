@@ -1,8 +1,12 @@
 import { z } from 'zod'
 import type { PipelineStep, ProjectSettingsPatch } from '../../shared/protocol'
+import { languages } from '../../shared/languages'
+import { langSchema } from '../../shared/vn'
 import { jsonSchemaOf } from '../pipeline/llm'
 import { isStep, STEPS, TASKS } from '../vn/pipeline'
 import type { VnService } from '../vn/service'
+import { planTools } from './tools-plan'
+import { storyTools } from './tools-story'
 
 /**
  * The MCP tools. They drive the same `VnService` as the app and the CLI, so a shared engine shows what an agent does in the UI
@@ -21,7 +25,13 @@ export interface McpOptions {
   waitTimeoutMs?: number
   /** The queue switches of the engine (`vno_pause_all`, `vno_resume_all`, `vno_stop_now`). Without it those tools say they are unavailable. */
   control?: { setPaused(paused: boolean): Promise<void>; stopNow(): Promise<void> }
+  /** Sets the Scriptorium library folder (`scriptoriumData` in config/settings.md) and returns it resolved. Without it `vno_set_library` says it is unavailable. */
+  setScriptoriumData?: (folder: string) => Promise<string>
 }
+
+/** Makes a tool: the arguments are parsed with `schema` before `run` sees them. */
+export type ToolDef = <S extends z.ZodType>(name: string, description: string, schema: S, run: (args: z.output<S>) => Promise<unknown>) => Tool
+export const def: ToolDef = (name, description, schema, run) => ({ name, description, schema, run: run as Tool['run'] })
 
 /** The result of a `tools/call`: a readable text item plus the same data as `structuredContent`. */
 export interface ToolResult {
@@ -32,7 +42,7 @@ export interface ToolResult {
 }
 
 const slug = z.string().describe('The project slug (see vno_list_projects)')
-const lang = z.enum(['en', 'hr'])
+const lang = langSchema.describe('A language code such as en, hr, de or ja (vno_languages lists them)')
 const wait = z.boolean().optional().describe('Wait until the jobs finish before answering')
 const assetKind = z.enum(['background', 'sheet', 'sprite', 'cover', 'music', 'voiceRef'])
 
@@ -48,7 +58,6 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     if (!opts.control) throw new Error('the queue switches are not available here')
     return opts.control
   }
-  const def = <S extends z.ZodType>(name: string, description: string, schema: S, run: (args: z.output<S>) => Promise<unknown>): Tool => ({ name, description, schema, run: run as Tool['run'] })
 
   return [
     def('vno_list_books', 'List the books in the Scriptorium library that can become visual novels (slug, title, format, folder).', z.object({}), async () => ({ scriptoriumData: svc.scriptoriumDir(), books: await svc.listSourceBooks() })),
@@ -123,12 +132,12 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     def(
       'vno_add_edition',
-      'Add a translated edition (a book folder in the same format, translated by a person) to a project. It reuses every asset and only adds text. Returns the alignment report.',
-      z.object({ slug, source: z.string().describe('The translated book folder (or library slug)'), lang, wait }),
+      'Add a translated edition (a book folder in the same format, translated by a person or by Book Translator) to a project. It reuses every asset and only adds text. Without lang the language of the folder is detected. Returns the alignment report.',
+      z.object({ slug, source: z.string().describe('The translated book folder (or library slug)'), lang: lang.optional(), wait }),
       async (a) => {
-        const job = await svc.addEdition(a.slug, a.source, a.lang)
+        const r = await svc.addEdition(a.slug, a.source, a.lang)
         const w = await settle(a.slug, a.wait ?? true)
-        return { job, ...w, report: await svc.alignReport(a.slug, a.lang) }
+        return { job: r.job, lang: r.lang, detected: r.detected, ...w, report: await svc.alignReport(a.slug, r.lang) }
       }
     ),
 
@@ -253,6 +262,12 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
       return status
     }),
     def('vno_comfy_free', 'Free the VRAM of the ComfyUI lanes (unload models).', z.object({}), async () => ({ results: await svc.comfyFree() })),
+    def(
+      'vno_languages',
+      "The languages a project or edition can use: code, English name, native name, the Ren'Py language name, right-to-left, script, whether VibeTTS Supertonic reads it and whether the game menus are translated. Add more in config/languages.md.",
+      z.object({}),
+      async () => ({ languages: languages().map((l) => ({ code: l.code, name: l.name, native: l.native, renpy: l.renpy, rtl: !!l.rtl, script: l.script, supertonic: !!l.supertonic, uiStrings: !!l.ui })) })
+    ),
     def('vno_themes', 'The game themes a project can use (name, label, description, light, pixel).', z.object({}), async () => ({ themes: svc.listThemes().map((t) => ({ name: t.name, label: t.label, description: t.description, light: t.light, pixel: t.pixel })) })),
 
     // ---- build ----
@@ -284,6 +299,12 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
         return { timedOut: r.timedOut, failedJobs: r.failed, status: await svc.status(a.slug) }
       }
     ),
+    // ---- story: make and edit a visual novel without a book folder ----
+    ...storyTools(svc, def),
+
+    // ---- plans, music, cues, library ----
+    ...planTools(svc, def, opts),
+
     def('vno_pause_all', 'Pause the whole queue: running jobs finish, no new job starts (it stays paused after a restart).', z.object({}), async () => {
       await control().setPaused(true)
       return { paused: true }
