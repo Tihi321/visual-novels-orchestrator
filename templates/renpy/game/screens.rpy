@@ -1657,7 +1657,8 @@ screen the_end(message=""):
             xalign 0.5
             spacing 60
 
-            textbutton _("Start again") action Start() style "the_end_button"
+            ## Start() only works from the main menu: inside the game it raises JumpOutException.
+            textbutton _("Start again") action Jump("start") style "the_end_button"
             textbutton _("Back to main menu") action MainMenu(confirm=False) style "the_end_button"
 
 
