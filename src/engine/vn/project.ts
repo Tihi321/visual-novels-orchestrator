@@ -116,6 +116,19 @@ export class ProjectStore {
 
   // ---- project.md ----
 
+  /** The `models` of every project's settings, kept so the scheduler can read them without waiting for a file (see `projectModel`). */
+  private models = new Map<string, Record<string, string>>()
+
+  /** The model a project chose for a role, or undefined. */
+  projectModel(slug: string, role: string): string | undefined {
+    return this.models.get(slug)?.[role]
+  }
+
+  /** Reads the settings of every project once, to fill the `models` cache (at engine start). */
+  async warmModels(): Promise<void> {
+    for (const slug of await this.slugs()) await this.loadSettings(slug).catch(() => undefined)
+  }
+
   async loadSettings(slug: string): Promise<ProjectFiles> {
     const file = this.file(slug, 'project.md')
     let text: string
@@ -125,6 +138,7 @@ export class ProjectStore {
       throw new Error(`no project "${slug}"`)
     }
     const doc = parseMdWith(text, projectSettingsSchema, file)
+    this.models.set(slug, doc.data.models)
     return { settings: doc.data, notes: doc.body }
   }
 
@@ -140,6 +154,7 @@ export class ProjectStore {
     }
     const parsed = projectSettingsSchema.parse(settings)
     await writeMd(file, { kind: 'project', ...parsed }, body)
+    this.models.set(parsed.slug, parsed.models)
   }
 
   // ---- vn.json and editions ----

@@ -547,6 +547,8 @@ export type Command =
 /** The settings an `updateProjectSettings` command may change (each part is merged into the current one). */
 export interface ProjectSettingsPatch {
   theme?: string | null
+  /** Role -> `provider/model` for this project, merged into the current ones; `null` clears a role. */
+  models?: Record<string, string | null>
   /** `null` clears an optional field (`palette`, `stylePrompt`, `provider`, `pixelProvider`, `pixel`). `pixel` is merged field by field. */
   art?: Partial<Omit<ProjectSettings['art'], 'palette' | 'stylePrompt' | 'provider' | 'pixelProvider' | 'pixel'>> & {
     palette?: string | null

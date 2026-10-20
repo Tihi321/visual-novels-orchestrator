@@ -169,6 +169,8 @@ export const projectSettingsSchema = z.object({
   editions: z.array(langSchema).default([]),
   /** The game theme, or null to pick one from the format, genre and style. */
   theme: z.string().nullable().default(null),
+  /** Models this project uses, per role (`art-director: client/claude-code`): they go before the agent's model and the role's list in config/roles.md, which stay as the fallback. */
+  models: z.record(z.string(), z.string()).default({}),
   art: z
     .object({
       style: z.enum(['illustrated', 'pixel']).default('illustrated'),

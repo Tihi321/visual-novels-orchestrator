@@ -8,7 +8,9 @@ import type { Decision } from '../src/engine/vn/agents/script-analyst'
 import { applyDecisions } from '../src/engine/vn/fixes'
 import type { Uncertain } from '../src/engine/vn/script'
 import type { AssetEntry, VnBook } from '../src/shared/vn'
-import { book, failures, jsonAfter, makeVnEnv, waitIdle } from './vn-helpers'
+import { MockProvider } from '../src/engine/models/mock'
+import { answerClientTasks, book, failures, jsonAfter, makeVnEnv, waitIdle } from './vn-helpers'
+import { waitFor } from './helpers'
 import type { VnEnv } from './vn-helpers'
 
 let env: VnEnv | undefined
@@ -205,3 +207,117 @@ describe('data folder', () => {
 })
 
 export type { AssetEntry }
+
+describe('answered through the client queue', () => {
+  /** The scripted art-director and stage-director of the other tests, on any mock. */
+  function script(mock: MockProvider): void {
+    mock.on({ task: 'vn.art.plan' }, (req) => {
+      const assets = jsonAfter(req, /^Assets \(id/) as { id: string; kind: string }[]
+      return JSON.stringify({
+        stylePrefix: 'soft watercolour storybook illustration, warm pastel palette',
+        assets: assets.map((a) => ({ id: a.id, prompt: `A ${a.kind}, ${a.id}`, negative: 'modern clothes, text' }))
+      })
+    })
+    // a music plan with nothing in it: the client queue refuses text that is not JSON, which the default mock reply is
+    mock.on({ task: 'vn.music.plan' }, JSON.stringify({ tracks: [], menuTrack: "", chapters: [] }))
+    mock.on({ task: 'vn.pipeline.summary' }, JSON.stringify({ summary: 'all steps ran', redo: [] }))
+    mock.on({ task: 'vn.stage' }, (req) => {
+      const chapter = jsonAfter(req, /^Chapter:/) as { n: number; scenes: { id: string; beats: { id: string; type: string; cast?: { charKey: string }[] }[] }[] }
+      const casts = chapter.scenes.flatMap((s) => s.beats.filter((b) => b.type === 'cast').map((b) => ({ beatId: b.id, slots: (b.cast ?? []).slice(0, 2).map((c, i) => ({ charKey: c.charKey, slot: i === 0 ? 'right' : 'left' })) })))
+      return JSON.stringify({ music: null, scenes: chapter.scenes.map((s) => ({ id: s.id, transition: 'fade', pause: 1 })), casts })
+    })
+  }
+
+  it('the art plan and the stage give the same files as with the mock', async () => {
+    const viaMock = await makeVnEnv({ sdk: false })
+    const viaClient = await makeVnEnv({ sdk: false, client: true })
+    try {
+      script(viaMock.mock)
+      const answerer = new MockProvider('answerer', { chunkDelayMs: 1 })
+      script(answerer)
+
+      const a = await viaMock.engine.vn.importProject(book('linear-en'))
+      await viaMock.engine.vn.runPipeline(a.slug, 'art')
+      expect((await waitIdle(viaMock, a.slug, 120_000)).failed, (await failures(viaMock)).join(' | ')).toEqual([])
+
+      const b = await viaClient.engine.vn.importProject(book('linear-en'))
+      await viaClient.engine.vn.runPipeline(b.slug, 'art')
+      const run = await answerClientTasks(viaClient, b.slug, answerer)
+      expect(run.failed, (await failures(viaClient)).join(' | ')).toEqual([])
+      // waitIdle gave the control back while jobs waited in the queue, and the art plan and the stage went through it
+      expect(run.waitCalls).toBeGreaterThan(1)
+      const tasks = run.answered.map((x) => x.task)
+      expect(tasks).toContain('vn.art.plan')
+      expect(tasks).toContain('vn.stage')
+      expect(run.answered.every((x) => /^.+#\d+$/.test(x.id))).toBe(true)
+      expect(viaClient.engine.clientQueue.counts()).toEqual({ waiting: 0, leased: 0 })
+
+      const promptsOf = async (e: VnEnv, slug: string) => (await e.engine.vn.store.loadAssets(slug)).assets.map((x) => [x.id, x.prompt, x.negative])
+      expect(await promptsOf(viaClient, b.slug)).toEqual(await promptsOf(viaMock, a.slug))
+      const cues = (e: VnEnv, slug: string) => readFile(path.join(e.engine.vn.store.dir(slug), 'cues.json'), 'utf8')
+      expect(await cues(viaClient, b.slug)).toEqual(await cues(viaMock, a.slug))
+      const ch1 = (e: VnEnv, slug: string) => readFile(path.join(e.engine.vn.store.dir(slug), 'game', 'game', 'ch01.rpy'), 'utf8')
+      expect(await ch1(viaClient, b.slug)).toEqual(await ch1(viaMock, a.slug))
+    } finally {
+      await viaClient.cleanup()
+      await viaMock.cleanup()
+    }
+  }, 180_000)
+
+  it('waitIdle reports clientTasks while a job waits for the client, and not after it is answered', async () => {
+    env = await makeVnEnv({ sdk: false, client: true })
+    const svc = env.engine.vn
+    const { slug } = await svc.importProject(book('linear-en'))
+    await svc.reconcileAssets(slug)
+    await svc.enqueue(slug, 'vn.art.plan', 'all', 1)
+    const first = await waitFor(async () => {
+      const r = await svc.waitIdle(slug, { timeoutMs: 1 })
+      return r.clientTasks > 0 ? r : null
+    }, 20_000, 'a client task')
+    expect(first.timedOut).toBe(false)
+    expect(first.clientTasks).toBe(1)
+    expect((await svc.status(slug)).running).toHaveLength(1) // the job is running (parked), the call still returned
+    const t = env.engine.clientQueue.lease({ task: 'vn.art.plan' })!
+    expect(t.book).toBe(slug)
+    expect(env.engine.clientQueue.submit(t.id, 'not json')).toMatchObject({ accepted: false })
+    expect(env.engine.clientQueue.counts()).toEqual({ waiting: 0, leased: 1 })
+    // a reply that is not the JSON object asked for is refused, and the task stays leased
+    const assets = jsonAfter({ model: 'x', messages: t.messages }, /^Assets \(id/) as { id: string; kind: string }[]
+    expect(env.engine.clientQueue.submit(t.id, JSON.stringify({ stylePrefix: 'x', assets: assets.map((a) => ({ id: a.id, prompt: `P ${a.id}`, negative: '' })) }))).toEqual({ accepted: true })
+    // the rest of the batches, answered like a client would
+    const answerer = new MockProvider('answerer', { chunkDelayMs: 1 })
+    script(answerer)
+    const { failed } = await answerClientTasks(env, slug, answerer, 60_000)
+    expect(failed).toEqual([])
+    expect((await svc.waitIdle(slug, { timeoutMs: 1 })).clientTasks).toBe(0)
+  })
+})
+
+describe('a model per project', () => {
+  it('one project on client/claude-code parks its jobs while another project goes to the mock; the role list is the fallback', async () => {
+    env = await makeVnEnv({ sdk: false, mixed: true })
+    const svc = env.engine.vn
+    const a = await svc.importProject(book('linear-en'))
+    const b = await svc.importProject(book('linear-hr'))
+    await svc.reconcileAssets(a.slug)
+    await svc.reconcileAssets(b.slug)
+    // refs are validated: a role that does not exist, and a model that does not exist, are refused
+    await expect(svc.updateSettings(a.slug, { models: { writer: 'client/claude-code' } })).rejects.toThrow(/not a role/)
+    await expect(svc.updateSettings(a.slug, { models: { 'art-director': 'client/nope' } })).rejects.toThrow(/no model/)
+    const saved = await svc.updateSettings(a.slug, { models: { 'art-director': 'client/claude-code' } })
+    expect(saved.models).toEqual({ 'art-director': 'client/claude-code' })
+    expect((await svc.store.loadSettings(a.slug)).settings.models).toEqual({ 'art-director': 'client/claude-code' })
+    await svc.enqueue(a.slug, 'vn.art.plan', 'all', 1)
+    await svc.enqueue(b.slug, 'vn.art.plan', 'all', 1)
+    const q = env.engine.clientQueue
+    await waitFor(() => q.counts().waiting === 1, 20_000, 'the project on client parks')
+    expect(q.list()[0]).toMatchObject({ book: a.slug, role: 'art-director', task: 'vn.art.plan' })
+    // the other project's job ran on the mock (the default reply is no JSON, so its planner falls back, and the job still finishes)
+    await waitFor(async () => (await env!.engine.jobs.list('done')).some((j) => j.data.book === b.slug && j.data.task === 'vn.art.plan'), 20_000, 'the other project done')
+    expect(env.mock.calls.some((c) => c.meta?.task === 'vn.art.plan' && c.meta.book === b.slug)).toBe(true)
+    expect(env.mock.calls.some((c) => c.meta?.book === a.slug)).toBe(false)
+    // clearing the role sends the next job to the role's list again
+    await svc.updateSettings(a.slug, { models: { 'art-director': null } })
+    expect((await svc.store.loadSettings(a.slug)).settings.models).toEqual({})
+  }, 60_000)
+})

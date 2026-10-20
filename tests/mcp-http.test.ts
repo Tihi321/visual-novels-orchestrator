@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { McpHttpServer } from '../src/engine/mcp/http'
 import { buildTools } from '../src/engine/mcp/tools'
 import type { BatchItem, BatchResult, FileResult, VibeTtsClient, VibeVoiceList } from '../src/engine/voice/vibetts'
+import { waitFor } from './helpers'
 import { book, makeVnEnv } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
 
@@ -49,9 +50,9 @@ afterEach(async () => {
   env = undefined
 })
 
-async function start(o: { token?: string; port?: number } = {}): Promise<McpHttpServer> {
-  env = await makeVnEnv({ sdk: false, engine: { vibetts: new FakeVibeTts() } })
-  server = new McpHttpServer({ host: { tools: buildTools(env.engine.vn, { control: env.engine.mcpControl() }) }, port: o.port ?? 0, token: o.token })
+async function start(o: { token?: string; port?: number; client?: boolean } = {}): Promise<McpHttpServer> {
+  env = await makeVnEnv({ sdk: false, client: o.client, engine: { vibetts: new FakeVibeTts() } })
+  server = new McpHttpServer({ host: { tools: buildTools(env.engine.vn, { control: env.engine.mcpControl(), clientQueue: env.engine.clientQueue }) }, port: o.port ?? 0, token: o.token })
   const st = await server.start()
   expect(st.running).toBe(true)
   return server
@@ -89,7 +90,7 @@ describe('MCP over HTTP', () => {
     expect(client.getInstructions()).toMatch(/vno_voice_status/)
     expect(s.getStatus().sessions).toBe(1)
     const names = (await client.listTools()).tools.map((t) => t.name)
-    for (const n of ['vno_list_books', 'vno_import', 'vno_list_projects', 'vno_run_pipeline', 'vno_status', 'vno_build', 'vno_add_edition', 'vno_get_project', 'vno_update_beat', 'vno_asset_pick', 'vno_asset_generate', 'vno_themes', 'vno_wait', 'vno_pause_all', 'vno_voice_status', 'vno_voice_plan', 'vno_voice_set', 'vno_voice_preview', 'vno_voice_generate']) expect(names).toContain(n)
+    for (const n of ['vno_list_books', 'vno_import', 'vno_list_projects', 'vno_run_pipeline', 'vno_status', 'vno_build', 'vno_add_edition', 'vno_get_project', 'vno_update_beat', 'vno_asset_pick', 'vno_asset_generate', 'vno_themes', 'vno_wait', 'vno_pause_all', 'vno_voice_status', 'vno_voice_plan', 'vno_voice_set', 'vno_voice_preview', 'vno_voice_generate', 'vno_client_tasks', 'vno_get_task', 'vno_submit_task', 'vno_release_task']) expect(names).toContain(n)
     const imported = await client.callTool({ name: 'vno_import', arguments: { source: book('linear-en') } })
     expect(imported.structuredContent).toMatchObject({ slug: 'lighthouse-letters' })
     const list = await client.callTool({ name: 'vno_list_projects', arguments: {} })
@@ -169,5 +170,93 @@ describe('MCP over HTTP', () => {
     } finally {
       await new Promise((r) => blocker.close(r))
     }
+  })
+})
+
+describe('MCP client tasks', () => {
+  type Tasks = { waiting: number; leased: number; tasks: { id: string; state: string; role: string }[] }
+  const call = async (c: Client, name: string, args: Record<string, unknown> = {}) => (await c.callTool({ name, arguments: args })).structuredContent as Record<string, unknown>
+
+  it('lists the four client tools, the guide section and clientTasks in vno_status', async () => {
+    const s = await start({ client: true })
+    const c = await connect(s.url()!)
+    const names = (await c.listTools()).tools.map((t) => t.name)
+    for (const n of ['vno_client_tasks', 'vno_get_task', 'vno_submit_task', 'vno_release_task']) expect(names).toContain(n)
+    expect(c.getInstructions()).toMatch(/vno_get_task/)
+    expect(await call(c, 'vno_client_tasks')).toEqual({ waiting: 0, leased: 0, tasks: [] })
+    expect(await call(c, 'vno_get_task')).toEqual({ none: true, waiting: 0 })
+    await env!.engine.vn.importProject(book('linear-en'))
+    expect((await call(c, 'vno_status', { slug: 'lighthouse-letters' })).clientTasks).toEqual({ waiting: 0, leased: 0 })
+    const guide = (await c.readResource({ uri: 'vn-studio://guide' })).contents[0] as { text: string }
+    expect(guide.text).toMatch(/Do the model work yourself/)
+  })
+
+  it('vno_wait returns at once while a job waits for the client; get, bad submit, release and good submit work over MCP', async () => {
+    const s = await start({ client: true })
+    const c = await connect(s.url()!)
+    const svc = env!.engine.vn
+    const { slug } = await svc.importProject(book('linear-en'))
+    await svc.reconcileAssets(slug)
+    await svc.enqueue(slug, 'vn.art.plan', 'all', 1)
+    const t0 = Date.now()
+    const waited = await waitFor(async () => {
+      const w = await call(c, 'vno_wait', { slug, timeoutSeconds: 20 })
+      return (w.clientTasks as number) > 0 ? w : null
+    }, 30_000, 'vno_wait with clientTasks')
+    expect(Date.now() - t0).toBeLessThan(15_000)
+    expect(waited).toMatchObject({ timedOut: false, clientTasks: 1 })
+    expect(String(waited.hint)).toMatch(/vno_get_task/)
+    expect((await call(c, 'vno_status', { slug })).clientTasks).toEqual({ waiting: 1, leased: 0 })
+    const list = (await call(c, 'vno_client_tasks')) as unknown as Tasks
+    expect(list).toMatchObject({ waiting: 1, leased: 0, tasks: [{ role: 'art-director', state: 'waiting' }] })
+
+    expect(await call(c, 'vno_get_task', { role: 'composer' })).toEqual({ none: true, waiting: 1 })
+    const got = await call(c, 'vno_get_task', { task: 'vn.art.plan' })
+    expect(got).toMatchObject({ taskId: expect.stringMatching(/--vn\.art\.plan--all--r1#1$/), meta: { role: 'art-director', task: 'vn.art.plan', book: slug }, leaseMinutes: 30 })
+    expect(typeof got.system).toBe('string')
+    expect(got.user).toMatch(/^Assets \(id/m)
+    expect(got.schema).toMatchObject({ type: 'object' })
+    expect(got.output).toBe('Reply with one JSON object that matches `schema`. No prose, no code fence.')
+    expect(await call(c, 'vno_get_task')).toEqual({ none: true, waiting: 0 }) // it is leased now
+    const bad = await call(c, 'vno_submit_task', { taskId: got.taskId, text: 'no' })
+    expect(bad.accepted).toBe(false)
+    expect((bad.problems as string[]).length).toBeGreaterThan(0)
+    expect(await call(c, 'vno_release_task', { taskId: got.taskId })).toEqual({ released: true })
+    expect(((await call(c, 'vno_client_tasks')) as unknown as Tasks).waiting).toBe(1)
+    expect(await call(c, 'vno_release_task', { taskId: 'nope#1' })).toEqual({ released: false })
+    expect(await call(c, 'vno_submit_task', { taskId: 'nope#1', text: '{}' })).toEqual({ accepted: false, problems: ['task not found (it was aborted, answered, or the engine restarted)'] })
+
+    // answer it the way the art-director would
+    const again = await call(c, 'vno_get_task', {})
+    const lines = String(again.user).split('\n')
+    const assets = JSON.parse(lines[lines.findIndex((l) => /^Assets \(id/.test(l)) + 1]!) as { id: string }[]
+    const ok = await call(c, 'vno_submit_task', { taskId: again.taskId, text: JSON.stringify({ stylePrefix: 'ink wash', assets: assets.map((a) => ({ id: a.id, prompt: `prompt ${a.id}`, negative: '' })) }) })
+    expect(ok).toEqual({ accepted: true })
+    expect(((await call(c, 'vno_client_tasks')) as unknown as Tasks).leased).toBe(0)
+  })
+
+  it('a vision task returns its images as MCP image content, with [image n] in the text', async () => {
+    const s = await start({ client: true })
+    const c = await connect(s.url()!)
+    env!.engine.clientQueue.add(
+      {
+        messages: [
+          { role: 'system', content: 'You are the art critic.' },
+          { role: 'system', content: 'Be brief.' },
+          { role: 'user', content: [{ type: 'text', text: 'Is this the harbour?' }, { type: 'image', mime: 'image/png', data: 'AAAA' }, { type: 'text', text: 'And this?' }, { type: 'image', mime: 'image/jpeg', data: 'BBBB' }] }
+        ]
+      },
+      { job: 'p--vn.art.review--bg_harbour--r1', role: 'art-critic', task: 'vn.art.review', book: 'p', unit: 'bg_harbour' }
+    )
+    const res = await c.callTool({ name: 'vno_get_task', arguments: { role: 'art-critic' } })
+    const content = res.content as { type: string; text?: string; data?: string; mimeType?: string }[]
+    expect(content.map((x) => x.type)).toEqual(['text', 'image', 'image'])
+    expect(content[1]).toMatchObject({ data: 'AAAA', mimeType: 'image/png' })
+    expect(content[2]).toMatchObject({ data: 'BBBB', mimeType: 'image/jpeg' })
+    const view = res.structuredContent as { system: string; user: string; output: string; schema?: unknown; messages?: unknown[] }
+    expect(view.system).toBe('You are the art critic.\n\nBe brief.')
+    expect(view.user).toBe('Is this the harbour?\n[image 1]\nAnd this?\n[image 2]')
+    expect(view.output).toBe('Reply with the text only: no preamble, no notes, no code fence.')
+    expect(view.messages).toHaveLength(3)
   })
 })

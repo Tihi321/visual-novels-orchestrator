@@ -106,6 +106,8 @@ export interface SchedulerDeps {
   onAgentsChanged?: () => void
   /** True for a book paused on its own (`paused: true` in book.md): its jobs wait, running ones finish. */
   isBookPaused?: (book: string) => boolean
+  /** The model a book chose for a role (VN Studio: `models` in project.md), or undefined. It goes first in the job's model list. */
+  projectModel?: (book: string, role: string) => string | undefined
 }
 
 const sha = (s: string) => createHash('sha1').update(s).digest('hex').slice(0, 8)
@@ -205,7 +207,8 @@ export class Scheduler {
   /** The models a running job may use now: the agent's own model (as its file says now), then its role's list. */
   private modelsFor(rj: RunningJob): ModelInfo[] {
     const def = this.d.agents.get(rj.agentId)
-    return this.d.router.candidates(rj.job.data.role, { agentModel: def?.data.model, avoidFamily: rj.job.data.avoid_family, visionOnly: rj.job.data.vision })
+    const book = rj.job.data.book
+    return this.d.router.candidates(rj.job.data.role, { agentModel: def?.data.model, avoidFamily: rj.job.data.avoid_family, visionOnly: rj.job.data.vision, projectModel: book ? this.d.projectModel?.(book, rj.job.data.role) : undefined })
   }
 
   /** Fire: graceful lets the current job finish, then removes the file. Now aborts it and removes the file at once. */
@@ -304,7 +307,7 @@ export class Scheduler {
           this.launch(claimedLocal, agent, [], undefined)
           continue
         }
-        const models = router.candidates(j.role, { agentModel: agent.data.model, avoidFamily: j.avoid_family, visionOnly: j.vision })
+        const models = router.candidates(j.role, { agentModel: agent.data.model, avoidFamily: j.avoid_family, visionOnly: j.vision, projectModel: j.book ? this.d.projectModel?.(j.book, j.role) : undefined })
         if (models.length === 0) {
           rt.errorUntil = t + 3000
           this.setState(rt, agent, 'error', 'no model available for this role')
@@ -481,7 +484,7 @@ export class Scheduler {
                 maxTokens: o.maxTokens,
                 temperature: o.temperature,
                 signal: request.signal,
-                meta: { role: j.role, task: j.task, book: j.book ?? undefined, agent: agent.id, unit: j.unit ?? undefined }
+                meta: { job: j.id, role: j.role, task: j.task, book: j.book ?? undefined, agent: agent.id, unit: j.unit ?? undefined }
               },
               rj.held
             )) {

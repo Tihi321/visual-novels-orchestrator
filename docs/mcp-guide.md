@@ -85,6 +85,44 @@ After an edit the result lists what happened to the assets: `added` and `orphane
 - `vno_set_music {slug, menu?, chapters?: {"1": "music_02"}, seconds?: {"music_01": 90}, replace?}` sets the menu track, the track of each chapter and each track's length (60 to 180 s). Only `slug` reads the plan. The music step keeps it and only fills what is missing. The number of tracks is `music.tracks` in `vno_update_settings`.
 - `vno_set_cues {slug, menuMusic?, chapters?, scenes?: {"ch01.s02": {"transition": "fade", "pause": 1}}, casts?: {"ch01.s02.b001": {"mara": "left", "tom": "right"}}, replace?}` sets the stage cues. Only `slug` reads them. The stage step then keeps them, does not ask the stage-director, and only adds defaults for what you left out.
 
+## Do the model work yourself
+
+Eight pipeline steps ask a model: `analyse` (script-analyst), `art plan` (art-director), `music plan` (composer), `stage` (stage-director), `voice plan` (voice-director), `edition align` (edition-aligner), `art review` (art-critic) and the run `summary` (director). Instead of LM Studio, Strata or a paid API, you can answer them yourself, with nothing spent. Set a role (or one agent) to the model `client/claude-code`; its jobs then wait until you take them over MCP.
+
+**Setting it up.** The `client` provider has to be enabled in `config/providers.md` (the seed has a commented example):
+
+```yaml
+- id: client
+  kind: client
+  local: true
+  concurrency: 8
+  models:
+    - id: claude-code
+      vision: true     # the art-critic sends images
+```
+
+**Choosing what the client does.**
+- **One project (the way to do it):** `vno_update_settings {slug, models: {"art-director": "client/claude-code", "stage-director": "client/claude-code"}}`. These models go first for the jobs of that project, before the agent's own model and the role's list, which stay as the fallback; other projects are not touched. The refs are checked (an unknown role or model is refused); `null` for a role clears it (`models: {"art-director": null}`). They are saved as `models` in the project's `project.md`.
+- **Every project (global alternative):** edit the data folder, there is no `set_model` tool. In `config/roles.md` put `client/claude-code` first in the role's `models` list, for example `stage-director: {models: [client/claude-code, strata]}`; it is reloaded at once, and a request that is already waiting is asked again on the new model. The roles are `script-analyst`, `art-director`, `composer`, `stage-director`, `voice-director`, `edition-aligner`, `art-critic` and `director`. One agent: `model: client/claude-code` in `agents/<agent>.md`.
+- Put things back when you are done: a role left on `client` with nobody answering stalls every job that uses it. The Models page shows `client` as local and free.
+
+**The loop.**
+1. Start the work: `vno_run_pipeline {slug, from}` (or `vno_plan`, `vno_add_edition`, ...), then `vno_wait {slug}`. It returns as soon as nothing runs except jobs that wait for you, with `clientTasks: n` and a hint (it does not block until the timeout). `vno_status` shows `clientTasks: {waiting, leased}` too, and `vno_client_tasks` lists the tasks (id, role, task, project, age).
+2. `vno_get_task {role?, book?, task?}` leases the oldest matching task to you for 30 minutes. You get `{taskId, meta: {job, call, role, task, book, agent, unit}, system, user, schema?, maxTokens?, output, leaseMinutes}`, or `{none: true, waiting}`. With more than one message there is also `messages: [{role, content}]`.
+3. Write the answer as `output` says: one JSON object that matches `schema` (no prose, no code fence), or the text only.
+4. `vno_submit_task {taskId, text}`. When the task has a schema the text is checked first: `{accepted: false, problems}` means fix it and submit again (the task stays yours, so the engine does not spend a repair round). `{accepted: true}` lets the job go on as if a model had answered. `vno_release_task {taskId}` gives a task back.
+5. Repeat until `vno_get_task` says `none`, then `vno_wait` again, until the steps are done. A lease that runs out (30 minutes) puts the task back in the queue, so several clients, or subagents with one task each, can work in parallel.
+
+**Vision.** The art-critic's tasks (`art review`) carry images. `vno_get_task` returns them as MCP image content after the text, in order; the `user` text has `[image 1]`, `[image 2]` where each one sat. That role needs a client that can look at images.
+
+**Batching.** `analyse` asks in batches of 30 items, `art plan` in batches of 10 assets and `edition align` in batches of 25 beats. One job makes several tasks in a row: the next one appears after you answer the previous one (the ids are `<job>#1`, `<job>#2`, ...). So take tasks until `none` and `vno_wait` returns with no `clientTasks`, not just one per step.
+
+**Good to know.**
+- A job that waits for you still holds its agent: an agent takes `max_parallel` jobs at a time (1 by default, `agents/<agent>.md`). Raise it, or hire more agents of the role, so several tasks wait at once; the provider's `concurrency` (8) is the other limit.
+- No timeout, and the provider is never marked down: a waiting job just waits. A job you stop (`vno_stop_now`, a model change) drops its task, and a later submit gets "task not found (it was aborted, answered, or the engine restarted)". The queue lives in memory: an engine restart loses the tasks, and the running jobs ask again.
+- Out of scope: the Pixel Studio draw loop (the `pixel-studio-draw` mode, task `vn.assets.draw`, which asks the art-director role) is multi-turn and bounded by `drawTimeoutS` (240), so it would time out with `client`. For a project in that mode keep the art-director on a real model (or pin only the art plan by agent), or draw the sprites yourself with the pixel-studio MCP and `vno_asset_replace`. Images and music still come from ComfyUI and Chiptune Studio.
+- Jobs that never call a model (analyse with nothing to settle, stage with every cue set by hand, build, lint) run as usual.
+
 ## Languages
 
 - `vno_languages` lists the languages a project or edition can use: the 31 that VibeTTS Supertonic reads plus Book Translator's (37 in all, for example en, hr, de, fr, es, it, pt, nl, pl, cs, ru, uk, sr, ja, ko, zh, ar, he, fa, hi). More, or changes, go in `config/languages.md` in the data folder.
@@ -99,6 +137,7 @@ After an edit the result lists what happened to the assets: `added` and `orphane
 | Library and projects | `vno_list_books`, `vno_set_library`, `vno_import`, `vno_list_projects`, `vno_get_project`, `vno_update_settings`, `vno_delete_project`, `vno_languages` |
 | Story | `vno_create_project`, `vno_get_story`, `vno_story_edit`, `vno_book_update`, `vno_character_set`, `vno_character_remove`, `vno_place_set`, `vno_place_remove`, `vno_chapter_add`, `vno_chapter_update`, `vno_chapter_remove`, `vno_scene_add`, `vno_scene_update`, `vno_scene_remove`, `vno_beat_add`, `vno_beat_update`, `vno_beat_remove` |
 | Pipeline | `vno_run_pipeline`, `vno_plan`, `vno_status`, `vno_wait`, `vno_pause_all`, `vno_resume_all`, `vno_stop_now` |
+| Model work by you (`client/claude-code`) | `vno_client_tasks`, `vno_get_task`, `vno_submit_task`, `vno_release_task` |
 | Editions | `vno_add_edition`, `vno_edition_set`, `vno_get_edition`, `vno_update_beat`, `vno_align_report` |
 | Assets, music, staging | `vno_asset_list`, `vno_asset_set`, `vno_asset_replace`, `vno_asset_regen`, `vno_asset_pick`, `vno_asset_lock`, `vno_asset_unlock`, `vno_asset_generate`, `vno_set_music`, `vno_set_cues` |
 | Voice | `vno_voice_status`, `vno_voice_plan`, `vno_voice_set`, `vno_voice_preview`, `vno_voice_generate` |

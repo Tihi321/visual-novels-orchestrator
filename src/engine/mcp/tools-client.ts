@@ -1,0 +1,72 @@
+import { z } from 'zod'
+import { DEFAULT_LEASE_MS } from '../models/client'
+import type { ClientTask } from '../models/client'
+import type { ChatMessage } from '../models/types'
+import type { VnService } from '../vn/service'
+import { ToolOutput } from './tools'
+import type { McpOptions, Tool, ToolDef } from './tools'
+
+const JSON_OUTPUT = 'Reply with one JSON object that matches `schema`. No prose, no code fence.'
+const TEXT_OUTPUT = 'Reply with the text only: no preamble, no notes, no code fence.'
+
+/** A message's text, with `[image n]` where an image sat. `seen` counts the images across the messages. */
+function textOf(m: ChatMessage, seen: { n: number }): string {
+  if (typeof m.content === 'string') return m.content
+  return m.content.map((p) => (p.type === 'text' ? p.text : `[image ${++seen.n}]`)).join('\n')
+}
+
+/** What `vno_get_task` shows of a leased task: the prompt split into system and user, how to answer, and the images. */
+export function taskView(t: ClientTask): { view: Record<string, unknown>; images: { mime: string; data: string }[] } {
+  const seen = { n: 0 }
+  const texts = t.messages.map((m) => ({ role: m.role, content: textOf(m, seen) }))
+  const system = texts.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
+  const user = texts.filter((m) => m.role !== 'system').map((m) => m.content).join('\n\n')
+  const view: Record<string, unknown> = {
+    taskId: t.id,
+    meta: { job: t.job, call: t.call, role: t.role, task: t.task, book: t.book, agent: t.agent, unit: t.unit },
+    system,
+    user,
+    ...(t.messages.length > 1 ? { messages: texts } : {}),
+    ...(t.schema ? { schema: t.schema } : {}),
+    ...(t.maxTokens ? { maxTokens: t.maxTokens } : {}),
+    output: t.schema ? JSON_OUTPUT : TEXT_OUTPUT,
+    leaseMinutes: DEFAULT_LEASE_MS / 60_000
+  }
+  if (t.images?.length) view.images = `${t.images.length} image(s) follow as image content, in order ([image 1] ...)`
+  return { view, images: t.images ?? [] }
+}
+
+/** The tools that let an MCP client answer the model calls of a `client/...` model (the engine's client task queue). */
+export function clientTools(svc: VnService, def: ToolDef, opts: McpOptions): Tool[] {
+  const queue = () => opts.clientQueue ?? svc.deps.registry.clientQueue
+  return [
+    def(
+      'vno_client_tasks',
+      'List the model calls waiting for you (roles or agents set to a client/... model, for example client/claude-code) and the ones leased to a client. See the guide section "Do the model work yourself".',
+      z.object({}),
+      async () => ({ ...queue().counts(), tasks: queue().list() })
+    ),
+    def(
+      'vno_get_task',
+      'Take the oldest waiting model call (leased to you for 30 minutes). Returns the prompt (system, user), the JSON schema if the answer must be JSON, and how to answer. Write the answer and send it with vno_submit_task. Vision tasks (art-critic) also return the images. {none: true} when nothing waits.',
+      z.object({
+        role: z.string().optional().describe('Only a task of this role, for example art-director or stage-director'),
+        book: z.string().optional().describe('Only a task of this project (slug)'),
+        task: z.string().optional().describe('Only this task, for example art-plan or stage')
+      }),
+      async (a) => {
+        const t = queue().lease(a, DEFAULT_LEASE_MS)
+        if (!t) return { none: true, waiting: queue().counts().waiting }
+        const { view, images } = taskView(t)
+        return images.length ? new ToolOutput(view, images.map((i) => ({ type: 'image' as const, data: i.data, mimeType: i.mime }))) : view
+      }
+    ),
+    def(
+      'vno_submit_task',
+      'Answer a task from vno_get_task. When the task has a schema the text is checked: a failed check returns {accepted: false, problems} and the task stays yours, so fix the text and submit again.',
+      z.object({ taskId: z.string().describe('The taskId from vno_get_task'), text: z.string().describe('The answer: one JSON object when the task has a schema, else the text only') }),
+      async (a) => queue().submit(a.taskId, a.text)
+    ),
+    def('vno_release_task', 'Give a task back without answering it, so another client can take it.', z.object({ taskId: z.string() }), async (a) => ({ released: queue().release(a.taskId) }))
+  ]
+}

@@ -210,6 +210,10 @@ export function printEvent(e: EngineEvent): void {
 async function waitAndReport(svc: VnService, slug: string, o: { timeoutMs?: number } = {}): Promise<number> {
   const r = await svc.waitIdle(slug, { timeoutMs: o.timeoutMs })
   const st = await svc.status(slug)
+  if (r.clientTasks > 0) {
+    out(`${r.clientTasks} model call(s) wait for an MCP client (a role is set to a client/... model); nothing here answers them. Connect an MCP client (vno_get_task) or change the role's model.`)
+    return 1
+  }
   if (r.timedOut) out(`stopped waiting: ${st.jobs.queued} queued, ${st.jobs.running} running`)
   if (r.failed.length) {
     out(`failed job(s): ${r.failed.join(', ')}`)

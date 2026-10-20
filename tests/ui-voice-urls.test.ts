@@ -54,6 +54,7 @@ describe('settings patch', () => {
     source: '',
     primaryLang: 'en',
     editions: ['en'],
+    models: {},
     theme: null,
     art: { style: 'illustrated', generator: 'g', editor: 'e', review: false, bgRemoval: 'birefnet' },
     music: { engine: 'm', tracks: 3 },

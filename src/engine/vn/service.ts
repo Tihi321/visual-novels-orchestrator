@@ -40,6 +40,7 @@ import { run as runRenpyGame, sdkExists } from '../renpy/run'
 import { findTheme, listThemes } from '../themes/load'
 import { pickTheme } from '../themes/pick'
 import { themeFontFaces, themePreviewCss } from '../themes/emit'
+import { ROLES } from '../../shared/schemas'
 import type { SettingsConfig } from '../../shared/schemas'
 import { findAppDirs } from './appdirs'
 import type { AppDirs } from './appdirs'
@@ -509,8 +510,21 @@ export class VnService {
     const art: Record<string, unknown> = clearNulls({ ...cur.art, ...(patch.art ?? {}) })
     // the pixel settings are merged field by field (a patch with only the dither keeps the size)
     if (patch.art?.pixel) art.pixel = clearNulls({ ...(cur.art.pixel ?? {}), ...patch.art.pixel })
+    const models: Record<string, string> = { ...cur.models }
+    for (const [role, ref] of Object.entries(patch.models ?? {})) {
+      if (!(ROLES as readonly string[]).includes(role)) throw new Error(`"${role}" is not a role (roles: ${ROLES.join(', ')})`)
+      if (ref === null || ref === '') delete models[role]
+      else {
+        const full = this.deps.registry.resolve(ref)
+        const m = this.deps.registry.getModel(full)
+        if (!m) throw new Error(`no model "${ref}" (see config/providers.md; a client model is client/claude-code, with the client provider enabled)`)
+        if (m.embedding) throw new Error(`"${ref}" is an embedding model`)
+        models[role] = full
+      }
+    }
     const next = projectSettingsSchema.parse({
       ...cur,
+      models,
       theme: patch.theme !== undefined ? patch.theme : cur.theme,
       art,
       music: clearNulls({ ...cur.music, ...(patch.music ?? {}) }),
@@ -518,6 +532,7 @@ export class VnService {
     })
     await this.store.saveSettings(next)
     if (patch.art || patch.music || patch.voice) await this.reconcileAssets(slug)
+    if (patch.models) this.deps.kick?.()
     await this.emitProject(slug)
     return next
   }
@@ -1255,8 +1270,15 @@ export class VnService {
   /**
    * Waits until the project (or every project) has nothing left to run: no running job, and every queued job is blocked by a failed
    * one. Returns the failed job ids. Used by the CLI.
+   *
+   * A running job whose model call waits in the client task queue (`client/...` model, answered over MCP) is not working: the call
+   * returns as soon as nothing else runs, with `clientTasks` (how many tasks wait or are leased for this project) so the caller
+   * can take them (`vno_get_task`). Without one it would block until the timeout.
    */
-  async waitIdle(slug: string | null, o: { timeoutMs?: number; pollMs?: number; onTick?: () => void } = {}): Promise<{ failed: string[]; timedOut: boolean }> {
+  async waitIdle(
+    slug: string | null,
+    o: { timeoutMs?: number; pollMs?: number; onTick?: () => void } = {}
+  ): Promise<{ failed: string[]; timedOut: boolean; clientTasks: number }> {
     const end = o.timeoutMs ? Date.now() + o.timeoutMs : Infinity
     const mine = (b: string | null) => !slug || b === slug
     let idleSeen = false
@@ -1266,6 +1288,11 @@ export class VnService {
       const queued = (await this.deps.jobs.list('queued')).filter((j) => mine(j.data.book))
       const running2 = (await this.deps.jobs.list('running')).filter((j) => mine(j.data.book))
       const running = [...new Map([...running1, ...running2].map((j) => [j.id, j])).values()]
+      // jobs parked in the client queue (waiting for Claude): not running work
+      const queue = this.deps.registry.clientQueue
+      const parked = queue.jobs()
+      const working = running.filter((j) => !parked.has(j.id))
+      const clientTasks = queue.countFor((job) => running.some((j) => j.id === job))
       const failed = (await this.deps.jobs.list('failed')).filter((j) => mine(j.data.book)).map((j) => j.id)
       const blocked = new Set<string>()
       const failedSet = new Set(failed)
@@ -1283,15 +1310,16 @@ export class VnService {
       // only the failures of the latest run count: an older run's failed job is history
       const latest = slug ? (await this.nextRun(slug)) - 1 : 0
       const current = slug ? failed.filter((id) => runOf(id) === latest) : failed
+      if (working.length === 0 && clientTasks > 0) return { failed: current, timedOut: false, clientTasks }
       if (running.length === 0 && pending.length === 0) {
         // a job that just ended may have queued its next jobs after the read above: look once more before saying idle
-        if (idleSeen) return { failed: current, timedOut: false }
+        if (idleSeen) return { failed: current, timedOut: false, clientTasks: 0 }
         idleSeen = true
         await new Promise((r) => setTimeout(r, 75))
         continue
       }
       idleSeen = false
-      if (Date.now() > end) return { failed: current, timedOut: true }
+      if (Date.now() > end) return { failed: current, timedOut: true, clientTasks }
       o.onTick?.()
       await new Promise((r) => setTimeout(r, o.pollMs ?? 300))
     }

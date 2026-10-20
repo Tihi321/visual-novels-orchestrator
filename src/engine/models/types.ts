@@ -35,6 +35,8 @@ export interface RequestMeta {
   book?: string
   agent?: string
   unit?: string
+  /** The id of the job asking (the `client` provider names its tasks after it). */
+  job?: string
 }
 
 export interface ChatRequest {

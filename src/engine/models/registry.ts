@@ -6,6 +6,7 @@ import { modelsConfigSchema, providersSchema, rolesSchema, settingsSchema } from
 import type { ModelsConfig, ProviderEntry, RolesConfig, SettingsConfig } from '../../shared/schemas'
 import { promises as fs } from 'node:fs'
 import { AnthropicClient } from './anthropic'
+import { ClientProvider, ClientTaskQueue } from './client'
 import { GeminiClient } from './gemini'
 import { resolveKey } from './keys'
 import type { KeyResolver } from './keys'
@@ -77,6 +78,8 @@ export interface RegistryOptions {
   mock?: MockProvider
   /** LM Studio's `lms` command line, used to load models. Default: `~/.lmstudio/bin/lms(.exe)` when it exists. `null`: use the REST API. */
   lmsPath?: string | null
+  /** The engine's one client task queue, for `kind: client` providers. Default: a queue of the registry's own. */
+  clientQueue?: ClientTaskQueue
 }
 
 function defaultLmsPath(): string | undefined {
@@ -121,6 +124,8 @@ export class ModelRegistry {
   /** config/models.md: the models picked in the Models dialog and the refs the pickers leave out. */
   modelChoices: ModelsConfig = { kind: 'models', picked: [], hidden: [], limits: {} }
   readonly mock: MockProvider
+  /** The model calls of `kind: client` providers wait here for an MCP client (see `ClientProvider`). */
+  readonly clientQueue: ClientTaskQueue
   /** The slot counts servers reported for `concurrency: auto` providers, kept across config reloads. */
   private serverSlots = new Map<string, number>()
   /** Which of them did not answer the last check, kept across config reloads. */
@@ -133,6 +138,7 @@ export class ModelRegistry {
     private readonly opts: RegistryOptions = {}
   ) {
     this.mock = opts.mock ?? new MockProvider('mock')
+    this.clientQueue = opts.clientQueue ?? new ClientTaskQueue()
   }
 
   /** (Re)reads config/providers.md and config/roles.md. Keeps the previous state if a file is invalid. */
@@ -155,7 +161,7 @@ export class ModelRegistry {
         id: p.id,
         kind: p.kind,
         enabled: p.enabled,
-        local: p.local,
+        local: p.kind === 'client' ? true : p.local, // a client provider has no server and no price: always local and free
         baseUrl: p.base_url,
         apiKeyEnv: p.api_key_env,
         concurrency: p.concurrency === 'auto' ? (this.serverSlots.get(p.id) ?? 1) : (set.concurrency ?? p.concurrency),
@@ -278,6 +284,12 @@ export class ModelRegistry {
         info.unavailableReason = `no key (set ${info.apiKeyEnv} or run: npm run key:set ${info.apiKeyEnv})`
         return
       }
+      info.available = true
+      return
+    }
+    if (info.kind === 'client') {
+      // no model, no key, no network: the request waits for an MCP client (vno_get_task / vno_submit_task)
+      info.client = new ClientProvider(info.id, this.clientQueue)
       info.available = true
       return
     }
@@ -457,6 +469,7 @@ export class ModelRegistry {
     const order = this.defaults.order ?? []
     if (order.length === 0) return list
     const rank = (ref: string) => {
+      if (this.providers.get(this.resolve(ref).split('/')[0]!)?.kind === 'client') return -1 // a client model was put there on purpose: it stays first
       const g = this.groupOf(ref)
       const i = g ? order.indexOf(g) : -1
       return i < 0 ? order.length : i
