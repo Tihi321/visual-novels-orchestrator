@@ -127,7 +127,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     def(
       'vno_asset_regen',
-      'Generate a new version of an asset with ComfyUI (optionally with a new prompt, engine or seed), select it, and rebuild.',
+      'Generate a new version of an asset with ComfyUI (optionally with a new prompt, engine or seed), select it, and rebuild. An image of a hand-made art project (art.provider hand) is refused: use vno_asset_replace.',
       z.object({ slug, id: z.string(), prompt: z.string().optional(), engine: z.string().optional(), seed: z.number().int().optional(), wait }),
       async (a) => {
         const jobs = await svc.regenerateAsset(a.slug, a.id, { prompt: a.prompt, engine: a.engine, seed: a.seed })
@@ -169,7 +169,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     def('vno_get_project', 'One project in full: its settings (theme, art, music, voice), editions, assets, pipeline state, build and lint results.', z.object({ slug }), async (a) => ({ project: await svc.detail(a.slug) })),
     def(
       'vno_update_settings',
-      'Change the settings of a project: each part is merged into the current one, and the asset list follows. theme: a theme name (vno_themes) or null. art: style (pixel or illustrated), palette, stylePrompt, provider, pixelProvider, pixel {width,height,dither,outline}. music: provider, chip, tracks. voice: provider, englishEngine and the other voice settings (vno_get_project shows them). models: {role: provider/model, ...} the models this project uses for those roles, before the agent and role lists of config/roles.md (the way to have an MCP client do one project: {"art-director": "client/claude-code"}); null for a role clears it. null clears an optional field.',
+      'Change the settings of a project: each part is merged into the current one, and the asset list follows. theme: a theme name (vno_themes) or null. art: style (pixel or illustrated), palette, stylePrompt, provider (comfy, pixel-studio-draw, or hand: images are made by you and set with vno_asset_replace, ComfyUI is never called for an image), pixelProvider, pixel {width,height,dither,outline}. music: provider, chip, tracks. voice: provider, englishEngine and the other voice settings (vno_get_project shows them). models: {role: provider/model, ...} the models this project uses for those roles, before the agent and role lists of config/roles.md (the way to have an MCP client do one project: {"art-director": "client/claude-code"}); null for a role clears it. null clears an optional field.',
       z.object({
         slug,
         theme: z.string().nullable().optional(),
@@ -220,15 +220,18 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     def('vno_asset_unlock', 'Unlock an asset, so the pipeline may generate it again.', z.object({ slug, id: z.string() }), async (a) => ({ asset: svc.assetView(a.slug, await svc.lockAsset(a.slug, a.id, false)) })),
     def(
       'vno_asset_generate',
-      'Generate the assets that have no file yet (all, or the given kind or ids). force: also those that have one (locked and custom ones stay). Uses the prompts already planned.',
+      'Generate the assets that have no file yet (all, or the given kind or ids). force: also those that have one (locked and custom ones stay). Uses the prompts already planned. With art.provider hand no image is generated (naming an image is an error: use vno_asset_replace); music and voice are.',
       z.object({ slug, kind: assetKind.optional(), only: z.array(z.string()).optional().describe('Asset ids'), force: z.boolean().optional(), wait }),
       async (a) => {
         await svc.reconcileAssets(a.slug)
         let ids: string[] | undefined
         if (a.only || a.kind) {
           const assets = await svc.listAssets(a.slug)
-          ids = assets.filter((x) => (!a.only || a.only.includes(x.id)) && (!a.kind || x.kind === a.kind) && !x.orphaned).map((x) => x.id)
+          const matched = assets.filter((x) => (!a.only || a.only.includes(x.id)) && (!a.kind || x.kind === a.kind) && !x.orphaned)
+          ids = matched.map((x) => x.id)
           if (!ids.length) throw new Error('no asset matches kind/only')
+          const { settings } = await svc.store.loadSettings(a.slug)
+          for (const x of matched) svc.assertNotHandImage(settings, x)
         }
         const job = await svc.enqueue(a.slug, TASKS.generate, 'all', await svc.nextRun(a.slug), { body: { dispatch: true, force: !!a.force, ids, tail: false } })
         return { job, ...(await settle(a.slug, a.wait)) }

@@ -3,6 +3,7 @@ import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
 import type { BuildResult, PipelineStep } from '../../shared/protocol'
+import { IMAGE_KINDS, isHandArt } from '../../shared/vn'
 import type { AssetEntry, Lang, ProjectSettings } from '../../shared/vn'
 import { fallbackNegative, fallbackPrompt } from '../assets/derive'
 import { generateAsset } from '../assets/generate'
@@ -51,7 +52,6 @@ sharp.cache(false)
 /** The agent retries of the art-critic: after this many revised prompts the best version is kept and marked rejected. */
 export const REVIEW_RETRIES = 2
 
-const IMAGE_KINDS = new Set(['background', 'sheet', 'sprite', 'cover'])
 const sha1 = (s: string | Buffer) => createHash('sha1').update(s).digest('hex')
 const nowIso = () => new Date().toISOString()
 
@@ -217,6 +217,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const force = !!bodyOf<{ force: boolean }>(ctx.jobBody).force
     await svc.reconcileAssets(slug)
     const { settings } = await store.loadSettings(slug)
+    if (isHandArt(settings.art) && !bodyOf<{ explicit: boolean }>(ctx.jobBody).explicit) return 'hand-made art: no prompts planned'
     const book = await store.loadBook(slug)
     const manifest = await store.loadAssets(slug)
     const orphans = svc.orphanIds(book, settings, manifest.assets)
@@ -359,6 +360,17 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     return { entry: next }
   }
 
+  /** In hand-made art mode: how many images still wait for a file (sheets are only a reference), as a suffix for the step message. */
+  const handWaiting = async (slug: string): Promise<string> => {
+    const { settings } = await store.loadSettings(slug)
+    if (!isHandArt(settings.art)) return ''
+    const book = await store.loadBook(slug)
+    const manifest = await store.loadAssets(slug)
+    const orphans = svc.orphanIds(book, settings, manifest.assets)
+    const n = manifest.assets.filter((a) => IMAGE_KINDS.has(a.kind) && a.kind !== 'sheet' && !orphans.has(a.id) && !resolveFile(store.dir(slug), a)).length
+    return n ? `; ${n} image(s) wait for a hand-made file (vno_asset_replace)` : ''
+  }
+
   /** One asset job: generates it unless it has a file already (`draw`: the sprite is drawn by the agent in Pixel Studio). */
   const generateJob = async (ctx: JobContext, slug: string, draw: boolean): Promise<string> => {
     const body = bodyOf<{ force: boolean; prompt: string; engine: string; seed: number }>(ctx.jobBody)
@@ -366,12 +378,13 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     if (!id) throw new Error(`${ctx.job.task} has no asset id`)
     const explicit = !!body.force && (body.prompt !== undefined || body.engine !== undefined || body.seed !== undefined)
     const entry = await svc.requireAsset(slug, id)
+    if (IMAGE_KINDS.has(entry.kind) && isHandArt((await store.loadSettings(slug)).settings.art)) return `${id}: hand-made art, not generated (set it with vno_asset_replace)`
     if (!body.force && resolveFile(store.dir(slug), entry)) {
-      await svc.bumpStep(slug, 'generate', `${id}: already has a file`)
+      await svc.bumpStep(slug, 'generate', `${id}: already has a file${await handWaiting(slug)}`)
       return `${id}: already has a file, skipped`
     }
     const r = await generateOne(ctx, slug, id, { force: !!body.force, ...(explicit ? { prompt: body.prompt, engine: body.engine, seed: body.seed } : {}) }, { draw })
-    await svc.bumpStep(slug, 'generate', r.skipped ? `${id}: ${r.skipped}, skipped` : `${id}: version ${r.entry.selected}`)
+    await svc.bumpStep(slug, 'generate', `${r.skipped ? `${id}: ${r.skipped}, skipped` : `${id}: version ${r.entry.selected}`}${await handWaiting(slug)}`)
     return r.skipped ? `${id}: ${r.skipped}, skipped` : `${id}: new version ${r.entry.selected} (${r.entry.engine})`
   }
 
@@ -396,11 +409,13 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const book = await store.loadBook(slug)
     const manifest = await store.loadAssets(slug)
     const orphans = svc.orphanIds(book, settings, manifest.assets)
+    const hand = isHandArt(settings.art)
     const todo = manifest.assets
-      .filter((a) => a.kind !== 'voiceRef' && !orphans.has(a.id) && (!body.ids || body.ids.includes(a.id)))
+      .filter((a) => a.kind !== 'voiceRef' && !(hand && IMAGE_KINDS.has(a.kind)) && !orphans.has(a.id) && (!body.ids || body.ids.includes(a.id)))
       .filter((a) => !a.locked && a.source === 'generated' && (body.force || !resolveFile(store.dir(slug), a)))
       .sort((a, b) => (a.kind === 'sheet' ? 0 : 1) - (b.kind === 'sheet' ? 0 : 1))
-    await svc.setStep(slug, 'generate', todo.length ? 'running' : 'done', todo.length ? `${todo.length} asset(s) to generate` : 'every asset already has a file', { done: 0, total: todo.length })
+    const waiting = await handWaiting(slug)
+    await svc.setStep(slug, 'generate', todo.length ? 'running' : 'done', todo.length ? `${todo.length} asset(s) to generate${waiting}` : `${hand ? 'hand-made art: nothing to generate' : 'every asset already has a file'}${waiting}`, { done: 0, total: todo.length })
     const reviewOn = settings.art.review && deps.router.candidates('art-critic', { visionOnly: true }).length > 0
     if (settings.art.review && !reviewOn) ctx.log('art review is on but no vision model is available: the images are not reviewed')
     const generated = new Map<string, string>()
@@ -413,7 +428,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       if (reviewOn && IMAGE_KINDS.has(a.kind)) all.push(await svc.enqueue(slug, TASKS.review, a.id, run, { depends_on: [id], vision: true, label: `review ${a.id}` }))
     }
     if (body.tail !== false) await svc.enqueueTail(slug, run, 'voice', all)
-    return `${todo.length} asset job(s) queued${reviewOn ? ' with reviews' : ''}`
+    return `${todo.length} asset job(s) queued${reviewOn ? ' with reviews' : ''}${waiting}`
   }
 
   // ---- review ----

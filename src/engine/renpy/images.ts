@@ -100,6 +100,8 @@ export interface BuildImagesInput {
   resolution: Resolution
   format: ImageFormat
   warnings: string[]
+  /** Pixel art: resize with the nearest-neighbour kernel so it is never blurred. */
+  pixel?: boolean
 }
 
 export interface BuildImagesResult {
@@ -112,6 +114,7 @@ export interface BuildImagesResult {
 /** Copy the selected assets into `game/images` (and `gui/main_menu.png`), making placeholders for missing ones. */
 export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesResult> {
   const { gameSubdir, book, used, resolveAsset, resolution, format } = inp
+  const kernel = inp.pixel ? ('nearest' as const) : undefined
   const written: string[] = []
   const placeholders: string[] = []
   fs.mkdirSync(path.join(gameSubdir, 'images'), { recursive: true })
@@ -122,7 +125,7 @@ export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesRes
     const src = resolveAsset(id)
     let buf: Buffer
     if (src && fs.existsSync(src)) {
-      buf = await encode(sharp(src).resize(resolution.w, resolution.h, { fit: 'cover' }), format)
+      buf = await encode(sharp(src).resize(resolution.w, resolution.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }), format)
     } else {
       const place = id.replace(/^bg_/, '').replace(/_/g, ' ')
       buf = await placeholderBackground(place, resolution, format)
@@ -152,7 +155,7 @@ export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesRes
   const coverSrc = resolveAsset('cover')
   let cover: Buffer
   if (coverSrc && fs.existsSync(coverSrc)) {
-    cover = await sharp(coverSrc).resize(resolution.w, resolution.h, { fit: 'cover' }).png().toBuffer()
+    cover = await sharp(coverSrc).resize(resolution.w, resolution.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }).png().toBuffer()
   } else {
     cover = await placeholderCover(book.title, resolution)
     placeholders.push('cover')

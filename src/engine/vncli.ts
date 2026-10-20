@@ -42,7 +42,7 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   voice status                           is VibeTTS reachable, and its fixed voices (Kokoro: English, Supertonic: 31 languages)
   comfy status|free                      ComfyUI lanes and engines / free its VRAM
   settings <slug> [--style pixel|illustrated] [--palette name|none] [--music-provider chiptune|comfy|auto] [--chip nes|gb|genesis|snes|pce|auto]
-           [--pixel-provider pixel-studio|vno] [--art-provider pixel-studio-draw|comfy] [--pixel-size 320x180] [--dither none|ordered|floyd] [--outline[=false]] [--tracks n]
+           [--pixel-provider pixel-studio|vno] [--art-provider comfy|pixel-studio-draw|hand] [--pixel-size 320x180] [--dither none|ordered|floyd] [--outline[=false]] [--tracks n]
                                          show or change the look settings of a project
   studios status                         are Pixel Studio and Chiptune Studio reachable (how to start them if not)
   studio open <slug> <assetId> [--wait] [--via launch|mcp] [--timeout seconds]   open an asset in Pixel Studio / Chiptune Studio; a save there makes a new custom, locked version (--wait: until the first save)
@@ -293,7 +293,7 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
       const [slug] = need(p, 1, 'plan <slug> [--refresh-prompts]')
       const refresh = !!(p.flags.force || p.flags['refresh-prompts'])
       const run = await svc.nextRun(slug!)
-      const art = await svc.enqueue(slug!, TASKS.artPlan, 'all', run, { body: { force: refresh } })
+      const art = await svc.enqueue(slug!, TASKS.artPlan, 'all', run, { body: { force: refresh, explicit: true } })
       await svc.enqueue(slug!, TASKS.musicPlan, 'all', run, { depends_on: [art], body: { force: refresh } })
       return waitAndReport(svc, slug!)
     }

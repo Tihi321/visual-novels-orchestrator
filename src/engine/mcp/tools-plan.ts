@@ -46,7 +46,7 @@ export function planTools(svc: VnService, def: ToolDef, opts: McpOptions): Tool[
       async (a) => {
         await need(a.slug)
         const run = await svc.nextRun(a.slug)
-        const art = await svc.enqueue(a.slug, TASKS.artPlan, 'all', run, { body: { force: !!a.refreshPrompts }, label: 'plan the art prompts' })
+        const art = await svc.enqueue(a.slug, TASKS.artPlan, 'all', run, { body: { force: !!a.refreshPrompts, explicit: true }, label: 'plan the art prompts' })
         const music = await svc.enqueue(a.slug, TASKS.musicPlan, 'all', run, { depends_on: [art], body: { force: !!a.refreshPrompts }, label: 'plan the music' })
         const w = await settle(a.slug, a.wait)
         if (!w.waited) return { jobs: [art, music], ...w }
