@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { AssetEntry, ProjectSettings, VnBook } from '../../../shared/vn'
-import { BACKGROUND_FRAMING, fallbackNegative, resolveStylePrompt, styleForKind, SHEET_FRAMING, spriteFraming, visualLooks, withoutCharacterSentences } from '../../assets/derive'
+import { BACKGROUND_FRAMING, fallbackNegative, imageOfAsset, INSERT_FRAMING, resolveStylePrompt, styleForKind, SHEET_FRAMING, spriteFraming, visualLooks, withoutCharacterSentences } from '../../assets/derive'
 import { asJson, askJson, batches, clip } from './common'
 import type { AgentCall } from './common'
 
@@ -71,6 +71,19 @@ export function describeAsset(book: VnBook, entry: Pick<AssetEntry, 'id' | 'kind
       const c = book.characters.find((x) => x.key === key)
       return { id: entry.id, kind: 'sprite (the same character as the sheet)', name: c?.name ?? key, looks: clip(visualLooks(c?.looks) || (c?.looks ?? ''), 240), expression: at < 0 ? 'neutral' : rest.slice(at + 1) }
     }
+    case 'cg': {
+      const img = imageOfAsset(book, entry.id)
+      const scene = book.chapters.flatMap((c) => c.scenes).find((s) => s.beats.some((b) => b.image === img?.key))
+      const place = scene?.placeKey ? book.places.find((p) => p.key === scene.placeKey) : undefined
+      const people = (img?.characters ?? []).flatMap((k) => book.characters.find((c) => c.key === k) ?? []).map((c) => ({ name: c.name, looks: clip(visualLooks(c.looks) || c.looks, 200) }))
+      return {
+        id: entry.id,
+        kind: img?.display === 'insert' ? 'insert (an object or a document shown small in the middle of the screen)' : 'CG (a picture shown over the whole scene)',
+        shows: clip(img?.description ?? entry.id, 300),
+        people,
+        place: place ? { name: place.name, looks: clip(withoutCharacterSentences(place.looks, book), 200) } : (scene?.placeText ?? null)
+      }
+    }
     case 'cover':
       return { id: entry.id, kind: 'cover (the main menu picture: wide 16:9 landscape key art, the left third calm for the menu buttons)', title: book.title, brief: clip(book.coverBrief ?? '', 400) }
     default:
@@ -79,8 +92,9 @@ export function describeAsset(book: VnBook, entry: Pick<AssetEntry, 'id' | 'kind
 }
 
 /** Adds the framing words that keep the model to one figure (sheet, sprite) or an empty place (background), when the agent left them out. */
-export function ensureFraming(kind: AssetEntry['kind'], id: string, prompt: string): string {
+export function ensureFraming(kind: AssetEntry['kind'], id: string, prompt: string, book?: Pick<VnBook, 'images'>): string {
   const lower = prompt.toLowerCase()
+  if (kind === 'cg' && book && imageOfAsset(book, id)?.display === 'insert' && !lower.includes('close-up')) return `${prompt}, ${INSERT_FRAMING}`
   if (kind === 'sheet' && !lower.includes('one full-body figure only')) return `${prompt}, ${SHEET_FRAMING}`
   if (kind === 'background' && !lower.includes('no people')) return `${prompt}, ${BACKGROUND_FRAMING}`
   if (kind === 'sprite' && !lower.includes('single full-body figure')) {
@@ -124,7 +138,7 @@ export async function planArt(call: AgentCall, book: VnBook, settings: ProjectSe
     for (const a of r.assets) {
       if (!wanted.has(a.id) || !a.prompt.trim()) continue
       const kind = kinds.get(a.id)!
-      let prompt = ensureFraming(kind, a.id, sanitizePrompt(a.prompt))
+      let prompt = ensureFraming(kind, a.id, sanitizePrompt(a.prompt), book)
       if (kind !== 'sprite' && !prompt.toLowerCase().startsWith(stylePrefix.toLowerCase().slice(0, 24))) prompt = `${styleForKind(stylePrefix, kind)}, ${prompt}`
       prompts.set(a.id, { prompt, negative: mergeNegative(a.negative, kind) })
     }

@@ -48,6 +48,8 @@ export function AssetsTab({ slug }: { slug: string; detail: ProjectDetail }) {
         ))}
       </GroupBox>
       <Group title="Cover" assets={groups.cover} slug={slug} />
+      {groups.images.length > 0 && <Group title="CGs and inserts" assets={groups.images} slug={slug} />}
+      {groups.sounds.length > 0 && <Group title="Sound effects and ambiences" assets={groups.sounds} slug={slug} />}
       <Group title="Music" assets={groups.music} slug={slug} />
       {(voiceOn || groups.voice.length > 0) && <Group title="Voice references" assets={groups.voice} slug={slug} />}
       {!all.length && <div className="dim">No assets yet. Run the pipeline (the art plan step creates them).</div>}
@@ -94,7 +96,7 @@ function AssetCard({ asset, slug, small }: { asset: AssetView; slug: string; sma
   const [pendingRev, setPendingRev] = useState<number | null>(null)
   const regenerating = pendingRev !== null && pendingRev === rev
   const badge = reviewBadge(asset)
-  const audio = asset.kind === 'music' || asset.kind === 'voiceRef'
+  const audio = asset.kind === 'music' || asset.kind === 'voiceRef' || asset.kind === 'sfx' || asset.kind === 'ambience'
   const file = asset.fileRel
   const versionNumbers = Object.keys(asset.versionFiles).map(Number).sort((a, b) => a - b)
   const studio = asset.kind === 'voiceRef' ? null : asset.kind === 'music' ? 'Chiptune Studio' : 'Pixel Studio'

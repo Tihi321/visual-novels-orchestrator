@@ -20,7 +20,7 @@ import { buildGame } from '../renpy/build'
 import type { VoiceSource } from '../renpy/emit'
 import { androidBuild } from '../renpy/android'
 import { lint, sdkExists } from '../renpy/run'
-import { defaultCues, fillCues } from '../renpy/stage'
+import { addScenePlan, defaultCues, fillCues } from '../renpy/stage'
 import type { StageCues } from '../renpy/stage'
 import { alignEdition } from './align'
 import { planArt } from './agents/art-director'
@@ -479,10 +479,11 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const all: string[] = []
     const priority = ctx.job.priority ?? 0 // an explicit request (vno_asset_generate) keeps its priority for the jobs it fans out
     for (const a of todo) {
-      const sheet = a.kind === 'sprite' ? generated.get(a.refs?.[0] ?? '') : undefined
-      // a sprite also waits for a sheet job of another run that is still queued or running (a regenerated sheet)
-      const otherSheet = a.kind === 'sprite' && a.refs?.[0] ? (await svc.activeGenerateJobs(slug, [a.refs[0]])).filter((j) => j.data.round !== run).map((j) => j.id) : []
-      const id = await svc.enqueue(slug, svc.generateTask(settings, a), a.id, run, { depends_on: [...(sheet ? [sheet] : []), ...otherSheet], body: { force: !!body.force }, label: `generate ${a.id}`, priority })
+      // a sprite waits for its sheet, a CG for the sheets of its characters, and both for a sheet job of another run that is still queued or running (a regenerated sheet)
+      const refs = a.kind === 'sprite' || a.kind === 'cg' ? (a.refs ?? []) : []
+      const sheets = refs.flatMap((r) => generated.get(r) ?? [])
+      const otherSheet = refs.length ? (await svc.activeGenerateJobs(slug, refs)).filter((j) => j.data.round !== run).map((j) => j.id) : []
+      const id = await svc.enqueue(slug, svc.generateTask(settings, a), a.id, run, { depends_on: [...sheets, ...otherSheet], body: { force: !!body.force }, label: `generate ${a.id}`, priority })
       generated.set(a.id, id)
       all.push(id)
       if (reviewOn && IMAGE_KINDS.has(a.kind)) all.push(await svc.enqueue(slug, TASKS.review, a.id, run, { depends_on: [id], vision: true, label: `review ${a.id}`, priority }))
@@ -552,6 +553,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const current = await store.readJson<StageCues>(slug, 'cues.json')
     if (current?.byHand) {
       const filled = fillCues(current, book, { musicIds, warn: (m) => warnings.push(m) })
+      addScenePlan(filled.cues, book, (await store.readJson<MusicPlan>(slug, 'music.json'))?.scenes, musicIds)
       for (const w of warnings) ctx.log(`stage: ${w}`)
       await store.writeJson(slug, 'cues.json', { ...filled.cues, byHand: true })
       return `cues set by hand kept${filled.added ? `, ${filled.added} default cue(s) added for new chapters, scenes or casts` : ''}; the stage-director was not asked`
@@ -565,6 +567,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         const id = plan.chapters[c.n]
         if (id && musicIds.includes(id)) cues.chapters[c.n] = { music: id }
       }
+      addScenePlan(cues, book, plan.scenes, musicIds)
     }
     let staged = 0
     let down = ''
@@ -575,7 +578,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         down = r.error
         break
       }
-      const merged = mergeChapterCues(cues, chapter, r.value, musicIds)
+      const merged = mergeChapterCues(cues, chapter, r.value, musicIds, book.sounds ?? [])
       cues = merged.cues
       for (const n of merged.notes) ctx.log(`stage-director: ${n}`)
       staged++

@@ -12,10 +12,14 @@ Plan the music for this visual novel. The tracks to write are: {{trackIds}}. The
 Chapters:
 {{chapters}}
 
+Scenes (id, place, time, description; `music` is a track the story already chose for the scene, which stays):
+{{scenes}}
+
 Rules:
 - Calm, gentle, instrumental. No vocals, no lyrics, no sudden loud parts. The music plays under reading, so it stays in the background and loops well.
 - `seconds`: the length of the track, between {{minSeconds}} and {{maxSeconds}}.
 - `menuTrack`: the track of the main menu.
+- `scenes`: only when a scene's mood is clearly not its chapter's (a flashback, a quiet night scene in a tense chapter, a reveal): the scene id and the track for it. Most books need none, so an empty list is the usual answer. Never choose for a scene that has `music` already.
 - `chapters`: for every chapter number, the track that plays in it. Use the chapter themes so the mood follows the story (a tense chapter gets a darker, quieter track, an ending a warmer or sadder one). A track may be used by several chapters. The menu track may be reused in a chapter too.
 
 If the music provider is `comfy` (ACE-Step): each track has a `prompt` that names the mood, the instruments (for example soft piano, strings, harp, music box, light guitar), a slow tempo and the genre tint. Keep it to one line of 15 to 30 words. Start with "calm instrumental". Leave the chiptune fields out.
@@ -27,4 +31,4 @@ If the music provider is `chiptune` (Chiptune Studio, a chip-music composer): ea
 - `bars`: the length in bars (4/4): about seconds x bpm / 240, in a multiple of 4, between 8 and 48.
 
 Answer with one JSON object and nothing else:
-{"tracks": [{"id": "music_01", "prompt": "calm instrumental, ...", "seconds": 100, "mood": "peaceful", "chip": "snes", "bpm": 72, "key": "C", "bars": 32}], "menuTrack": "music_01", "chapters": [{"n": 1, "trackId": "music_02"}]}
+{"tracks": [{"id": "music_01", "prompt": "calm instrumental, ...", "seconds": 100, "mood": "peaceful", "chip": "snes", "bpm": 72, "key": "C", "bars": 32}], "menuTrack": "music_01", "chapters": [{"n": 1, "trackId": "music_02"}], "scenes": []}

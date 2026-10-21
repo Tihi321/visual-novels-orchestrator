@@ -1,6 +1,6 @@
 import { basename } from 'node:path'
 import { vnBookSchema } from '../../shared/vn'
-import type { Edition, Lang, VnBook, VnChapter } from '../../shared/vn'
+import type { Edition, ImageEntry, Lang, SoundEntry, VnBook, VnChapter } from '../../shared/vn'
 import { mergeBibleAliases } from './aliases'
 import type { AliasMerge } from './aliases'
 import { parseBible } from './bible'
@@ -23,6 +23,9 @@ export interface ParsedFolder {
   chapters: VnChapter[]
   uncertain: Uncertain[]
   warnings: string[]
+  /** The pictures and sounds the cue lines (`CG:`, `SFX:` ...) of the scripts named, once each. */
+  images: ImageEntry[]
+  sounds: SoundEntry[]
   /** Bible entries that were the same person under another name and were merged into one character. */
   aliases: AliasMerge[]
 }
@@ -46,11 +49,15 @@ export function parseRawBook(raw: RawBook): ParsedFolder {
   warnings.push(...map.warnings)
 
   const chapters: VnChapter[] = []
+  const images = new Map<string, ImageEntry>()
+  const sounds = new Map<string, SoundEntry>()
   for (const m of map.chapters) {
     const file = raw.chapters.find((c) => c.n === m.n)!
     const parsed = parseChapterScript(file.body, { chapter: m.n, bible })
     warnings.push(...parsed.warnings)
     uncertain.push(...parsed.uncertain)
+    for (const i of parsed.images) if (!images.has(i.key)) images.set(i.key, i)
+    for (const x of parsed.sounds) if (!sounds.has(`${x.kind}:${x.key}`)) sounds.set(`${x.kind}:${x.key}`, x)
     chapters.push({ n: m.n, title: m.title, ...(m.summary ? { summary: m.summary } : {}), choices: m.choices, ending: m.ending, scenes: parsed.scenes })
   }
 
@@ -58,7 +65,7 @@ export function parseRawBook(raw: RawBook): ParsedFolder {
   if (unknown.length) warnings.push(`speakers not in the bible (no sprite): ${unknown.join(', ')}`)
   const noPlace = uncertain.filter((u) => u.kind === 'place').length
   if (noPlace) warnings.push(`${noPlace} scene(s) have a place that matches no bible place`)
-  return { raw, bible, map, chapters, uncertain, warnings, aliases: merged.merged }
+  return { raw, bible, map, chapters, uncertain, warnings, images: [...images.values()], sounds: [...sounds.values()], aliases: merged.merged }
 }
 
 /** The text used to detect the language: chapter titles and every spoken or narrated line. */
@@ -118,6 +125,8 @@ export async function importBook(folderPath: string, opts: { lang?: Lang } = {})
     style: parsed.bible.style,
     characters: parsed.bible.characters,
     places: parsed.bible.places,
+    ...(parsed.images.length ? { images: parsed.images } : {}),
+    ...(parsed.sounds.length ? { sounds: parsed.sounds } : {}),
     ...(raw.coverBrief ? { coverBrief: raw.coverBrief } : {}),
     chapters: parsed.chapters,
     warnings: parsed.warnings

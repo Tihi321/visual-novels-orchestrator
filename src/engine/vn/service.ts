@@ -21,7 +21,7 @@ import type {
   VnCommand
 } from '../../shared/protocol'
 import { assertKnownLang } from '../../shared/languages'
-import { CANONICAL_EXPRESSIONS, CHIPTUNE_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
 import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
 import { importAssetFile } from '../assets/import'
@@ -52,6 +52,7 @@ import type { SceneTransition, Slot, StageCues } from '../renpy/stage'
 import { MAX_SECONDS, MIN_SECONDS } from './agents/composer'
 import type { MusicPlan } from './agents/composer'
 import { buildEdition, importBook, textSample } from './import'
+import { expressionsOf } from './expressions'
 import { detectLanguage } from './lang'
 import { loadLanguageConfig } from './languages-config'
 import { applyStoryOps, buildBook, storySummary, syncEdition, validateBook } from './story'
@@ -116,8 +117,15 @@ const SCENE_TRANSITIONS: SceneTransition[] = ['dissolve', 'fade', 'none']
 const SLOTS: Slot[] = ['left', 'center', 'right']
 
 /** The engine id a kind of asset is generated with, from the project settings. */
-export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings): string | null {
+export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings, refs?: string[]): string | null {
   switch (kind) {
+    case 'cg':
+      // a picture with characters is made from their sheets by the edit engine, one without by the generator
+      return refs?.length ? settings.art.editor : settings.art.generator
+    case 'ambience':
+      return settings.sound.ambienceEngine
+    case 'sfx':
+      return settings.sound.sfxEngine ?? null
     case 'background':
     case 'sheet':
     case 'cover':
@@ -372,6 +380,7 @@ export class VnService {
       const book = result.book
       const sceneIds = new Set(book.chapters.flatMap((c) => c.scenes.map((s) => s.id)))
       const castIds = new Set(book.chapters.flatMap((c) => c.scenes.flatMap((s) => s.beats.filter((b) => b.type === 'cast').map((b) => b.id))))
+      const beatIds = new Set(book.chapters.flatMap((c) => c.scenes.flatMap((s) => s.beats.map((b) => b.id))))
       const chapterNs = new Set(book.chapters.map((c) => c.n))
       const keep = <T>(rec: Record<string, T>, ok: (k: string) => boolean): Record<string, T> => Object.fromEntries(Object.entries(rec).filter(([k]) => ok(k)))
       const cues = await this.store.readJson<StageCues>(slug, 'cues.json')
@@ -380,16 +389,17 @@ export class VnService {
           ...cues,
           chapters: keep(cues.chapters ?? {}, (k) => chapterNs.has(Number(k))),
           scenes: keep(cues.scenes ?? {}, (k) => sceneIds.has(k)),
-          casts: keep(cues.casts ?? {}, (k) => castIds.has(k))
+          casts: keep(cues.casts ?? {}, (k) => castIds.has(k)),
+          ...(cues.beats ? { beats: keep(cues.beats, (k) => beatIds.has(k)) } : {})
         })
       }
       const music = await this.store.readJson<MusicPlan>(slug, 'music.json')
-      if (music) await this.store.writeJson(slug, 'music.json', { ...music, chapters: keep(music.chapters ?? {}, (k) => chapterNs.has(Number(k))) })
+      if (music) await this.store.writeJson(slug, 'music.json', { ...music, chapters: keep(music.chapters ?? {}, (k) => chapterNs.has(Number(k))), ...(music.scenes ? { scenes: keep(music.scenes, (k) => sceneIds.has(k)) } : {}) })
       return result
     })
     const { added, orphaned } = await this.reconcileAssets(slug)
     const subject = new Set([
-      ...r.affected.chars.flatMap((k) => [sheetId(k), ...CANONICAL_EXPRESSIONS.map((e) => spriteId(k, e))]),
+      ...r.affected.chars.flatMap((k) => [sheetId(k), ...expressionsOf(r.book, r.book.characters.find((c) => c.key === k)).map((e) => spriteId(k, e))]),
       ...r.affected.backgrounds,
       ...(r.affected.cover ? [coverId] : [])
     ])
@@ -559,7 +569,8 @@ export class VnService {
       theme: patch.theme !== undefined ? patch.theme : cur.theme,
       art,
       music: clearNulls({ ...cur.music, ...(patch.music ?? {}) }),
-      voice: { ...cur.voice, ...(patch.voice ?? {}) }
+      voice: { ...cur.voice, ...(patch.voice ?? {}) },
+      sound: clearNulls({ ...cur.sound, ...(patch.sound ?? {}) })
     })
     await this.store.saveSettings(next)
     // the style words are baked into each stored prompt: a new style prefix is swapped into the prompts that have not been generated yet
@@ -572,7 +583,7 @@ export class VnService {
         if (was !== now) restyle = await this.restylePrompts(slug, was, now)
       }
     }
-    if (patch.art || patch.music || patch.voice) await this.reconcileAssets(slug)
+    if (patch.art || patch.music || patch.voice || patch.sound) await this.reconcileAssets(slug)
     if (patch.models) this.deps.kick?.()
     await this.emitProject(slug)
     return { settings: next, warnings, ...(restyle ? { restyle } : {}) }
@@ -654,7 +665,7 @@ export class VnService {
         if (a.kind === 'cover' && a.versions.length === 0 && !a.locked && !a.promptByHand && a.source === 'generated' && ((a.size?.w === PORTRAIT.w && a.size.h === PORTRAIT.h) || /portrait composition/i.test(a.prompt))) {
           a = { ...a, size: { ...LANDSCAPE }, prompt: a.prompt.replace(/portrait composition/gi, 'landscape composition') }
         }
-        const engine = engineFor(a.kind, settings)
+        const engine = engineFor(a.kind, settings, a.refs)
         if (!engine || a.locked || a.source !== 'generated' || a.engine === engine) return a
         // an asset with versions keeps its engine, except music: that follows the project's music provider (chiptune or the configured ComfyUI engine)
         return a.versions.length === 0 || a.kind === 'music' ? { ...a, engine } : a
@@ -1123,7 +1134,7 @@ export class VnService {
    * maps a chapter number to a track id, or null to drop the entry. `replace` starts from an empty plan instead of the current one.
    * Track ids are the project's music assets (`music_01` ...), chapter numbers the book's, lengths are clamped.
    */
-  async setMusicPlan(slug: string, patch: { menu?: string | null; chapters?: Record<string, string | null>; seconds?: Record<string, number>; replace?: boolean }): Promise<MusicPlan> {
+  async setMusicPlan(slug: string, patch: { menu?: string | null; chapters?: Record<string, string | null>; scenes?: Record<string, string | null>; seconds?: Record<string, number>; replace?: boolean }): Promise<MusicPlan> {
     const out = await this.store.withLock(slug, async () => {
       const book = await this.store.loadBook(slug)
       const tracks = new Set((await this.store.loadAssets(slug)).assets.filter((a) => a.kind === 'music').map((a) => a.id))
@@ -1147,6 +1158,18 @@ export class VnService {
           plan.chapters[n] = id
         }
       }
+      // a scene's own track: null is silence in that scene, an empty string drops the entry
+      const sceneIds = new Set(book.chapters.flatMap((c) => c.scenes.map((s) => s.id)))
+      for (const [sceneId, id] of Object.entries(patch.scenes ?? {})) {
+        if (!sceneIds.has(sceneId)) throw new Error(`scenes: ${slug} has no scene "${sceneId}" (ids look like ch01.s02)`)
+        plan.scenes ??= {}
+        if (id === '') delete plan.scenes[sceneId]
+        else {
+          if (id !== null) track(id, `scene ${sceneId}`)
+          plan.scenes[sceneId] = id
+        }
+      }
+      if (plan.scenes && !Object.keys(plan.scenes).length) delete plan.scenes
       for (const [id, s] of Object.entries(patch.seconds ?? {})) {
         track(id, 'seconds')
         plan.seconds[id] = Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, Math.round(s)))
@@ -1169,7 +1192,7 @@ export class VnService {
     patch: {
       menuMusic?: string | null
       chapters?: Record<string, string | null>
-      scenes?: Record<string, { transition?: SceneTransition; pause?: number }>
+      scenes?: Record<string, { transition?: SceneTransition; pause?: number; music?: string | null; ambience?: string | null }>
       casts?: Record<string, Record<string, Slot>>
       replace?: boolean
     }
@@ -1199,7 +1222,12 @@ export class VnService {
         if (cue.transition !== undefined && !SCENE_TRANSITIONS.includes(cue.transition)) throw new Error(`scenes.${id}: transition must be ${SCENE_TRANSITIONS.join(', ')}`)
         if (cue.pause !== undefined && !(cue.pause >= 0)) throw new Error(`scenes.${id}: pause must be 0 or more seconds`)
         const old = cues.scenes[id]
-        cues.scenes[id] = { transition: cue.transition ?? old?.transition ?? 'dissolve', ...(cue.pause !== undefined ? (cue.pause ? { pause: cue.pause } : {}) : old?.pause ? { pause: old.pause } : {}) }
+        if (cue.music !== undefined && cue.music !== null) track(cue.music, `scenes.${id}.music`)
+        const ambiences = (book.sounds ?? []).filter((s) => s.kind === 'ambience').map((s) => s.key)
+        if (cue.ambience !== undefined && cue.ambience !== null && !ambiences.includes(cue.ambience)) throw new Error(`scenes.${id}.ambience: "${cue.ambience}" is not an ambience of ${slug}${ambiences.length ? ` (${ambiences.join(', ')})` : ' (the book has no ambiences: vno_sound_set adds one)'}`)
+        const music = cue.music !== undefined ? { music: cue.music } : old && 'music' in old ? { music: old.music } : {}
+        const ambience = cue.ambience !== undefined ? { ambience: cue.ambience } : old && 'ambience' in old ? { ambience: old.ambience } : {}
+        cues.scenes[id] = { transition: cue.transition ?? old?.transition ?? 'dissolve', ...(cue.pause !== undefined ? (cue.pause ? { pause: cue.pause } : {}) : old?.pause ? { pause: old.pause } : {}), ...music, ...ambience }
       }
       const casts = new Map<string, Set<string>>()
       for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.type === 'cast') casts.set(b.id, new Set(b.cast.map((x) => x.charKey)))

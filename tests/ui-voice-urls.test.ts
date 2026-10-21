@@ -58,7 +58,8 @@ describe('settings patch', () => {
     theme: null,
     art: { style: 'illustrated', generator: 'g', editor: 'e', review: false, bgRemoval: 'birefnet' },
     music: { engine: 'm', tracks: 3 },
-    voice: { enabled: false, langs: [], provider: 'vibetts', engines: {}, voices: {} }
+    voice: { enabled: false, langs: [], provider: 'vibetts', engines: {}, voices: {} },
+    sound: { ambienceEngine: 'a' }
   } as ProjectSettings
   it('merges each part and replaces the theme', () => {
     const next = applySettingsPatch(base, { theme: 'noir', art: { style: 'pixel', stylePrompt: 'x' }, voice: { enabled: true } })

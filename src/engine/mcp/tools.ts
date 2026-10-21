@@ -61,7 +61,7 @@ export interface ToolResult {
 const slug = z.string().describe('The project slug (see vno_list_projects)')
 const lang = langSchema.describe('A language code such as en, hr, de or ja (vno_languages lists them)')
 const wait = z.boolean().optional().describe('Wait until the jobs finish before answering')
-const assetKind = z.enum(['background', 'sheet', 'sprite', 'cover', 'music', 'voiceRef'])
+const assetKind = z.enum(['background', 'sheet', 'sprite', 'cover', 'cg', 'music', 'sfx', 'ambience', 'voiceRef'])
 
 /** What `wait` says when jobs wait for the client: how many tasks, and what to do. */
 export function clientHint(n: number): { clientTasks?: number; hint?: string } {
@@ -113,7 +113,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     def(
       'vno_asset_list',
-      'List the assets of a project (backgrounds, character sheets, sprites, cover, music, voice references) with their prompt, versions, lock and file.',
+      'List the assets of a project (backgrounds, character sheets, sprites, CGs and inserts, cover, music, sound effects, ambiences, voice references) with their prompt, versions, lock and file.',
       z.object({ slug, kind: assetKind.optional() }),
       async (a) => {
         const assets = await svc.listAssets(a.slug)

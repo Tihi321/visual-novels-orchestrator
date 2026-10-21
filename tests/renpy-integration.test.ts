@@ -202,6 +202,45 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     expect(l.ok).toBe(true)
   })
 
+  it('a CG, an insert, a sound effect, an ambience and scene music: files copied and a lint-clean build', { timeout: T }, async () => {
+    const book = buildBook(
+      storyInputSchema.parse({
+        title: 'The Ledger',
+        characters: [{ name: 'Mara', looks: 'a girl in a red raincoat' }],
+        places: [{ name: 'Harbour', looks: 'a stone harbour' }],
+        images: [{ key: 'ledger', description: 'an open ledger', display: 'insert' }, { key: 'storm', description: 'a storm over the sea', display: 'full' }],
+        sounds: [{ key: 'door', kind: 'sfx', description: 'a door creaks' }, { key: 'rain', kind: 'ambience', description: 'steady rain' }],
+        chapters: [
+          {
+            title: 'Night',
+            scenes: [
+              { place: 'harbour', time: 'night', ambience: 'rain', beats: [{ cast: ['mara'] }, { speaker: 'Mara', text: 'Look.', image: 'ledger', sfx: 'door' }, { text: 'The storm came.', image: 'storm' }, { text: 'Later.', image: null }] },
+              { place: 'harbour', time: 'night', music: null, beats: [{ speaker: 'Mara', text: 'Quiet now.', ambience: null }] }
+            ]
+          }
+        ]
+      }),
+      { slug: 'ledger', lang: 'en' }
+    ).book
+    const en = buildEdition('en', book.title, book.chapters, book.characters)
+    const tmp = path.join(root, 'media-src')
+    fs.mkdirSync(tmp, { recursive: true })
+    const files: Record<string, string> = { sfx_door: 'sfx_door.ogg', amb_rain: 'amb_rain.ogg' }
+    for (const f of Object.values(files)) fs.writeFileSync(path.join(tmp, f), '')
+    const r = await buildGame({ projectDir: path.join(root, 'media'), book, editions: [en], settings: loadSettings(book, { editions: ['en'] }), resolveAsset: (id) => (files[id] ? path.join(tmp, files[id]!) : null), sdkPath })
+    const game = path.join(r.gameDir, 'game')
+    const ch = fs.readFileSync(path.join(game, 'ch01.rpy'), 'utf8')
+    expect(ch).toContain('show cg ledger as vn_cg at vn_insert zorder 50')
+    expect(ch).toContain('play sound "audio/sfx_door.ogg"')
+    expect(ch).toContain('play ambience "audio/amb_rain.ogg"')
+    expect(ch).toContain('stop music fadeout 2.0')
+    expect(fs.existsSync(path.join(game, 'audio', 'sfx_door.ogg'))).toBe(true)
+    expect(fs.existsSync(path.join(game, 'vno_media.rpy'))).toBe(true)
+    const l = await lint(r.gameDir, { sdkPath })
+    expect(l.messages).toEqual([])
+    expect(l.ok).toBe(true)
+  })
+
   it('Croatian primary with an English edition: Croatian UI by default, lint clean', { timeout: T }, async () => {
     const { book, hr, en } = hrPrimary()
     const r = await buildGame({

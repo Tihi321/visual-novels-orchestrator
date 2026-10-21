@@ -11,7 +11,9 @@ export const planMusicSchema = z.object({
   tracks: z.array(z.object({ id: z.string(), prompt: z.string().optional().default(''), seconds: z.number().optional().default(100), ...chipTrackPlanSchema.shape })),
   /** The track of the main menu. */
   menuTrack: z.string(),
-  chapters: z.array(z.object({ n: z.number().int(), trackId: z.string() }))
+  chapters: z.array(z.object({ n: z.number().int(), trackId: z.string() })),
+  /** A scene whose mood is not its chapter's: the track that plays in it. Most books need none. */
+  scenes: z.array(z.object({ sceneId: z.string(), trackId: z.string() })).default([])
 })
 export type PlanMusic = z.infer<typeof planMusicSchema>
 
@@ -20,6 +22,8 @@ export interface MusicPlan {
   menu: string | null
   /** Chapter number -> track id. */
   chapters: Record<number, string>
+  /** Scene id -> track id (null: silence), for a scene whose mood is not its chapter's. A scene whose story sets its own music keeps that. */
+  scenes?: Record<string, string | null>
   /** Track id -> length in seconds. */
   seconds: Record<string, number>
   /** Chiptune Studio: track id -> what to compose (`compose_track` arguments). Only when the project's music provider is chiptune. */
@@ -41,7 +45,7 @@ export interface ChipOptions {
 }
 
 /** Keeps what the book can use: known track ids, lengths in range. With `chip` options, also a `compose_track` plan per track (the composer's draft over the deterministic one). */
-export function validateMusicPlan(plan: PlanMusic, trackIds: string[], chipOpts?: ChipOptions): { prompts: Map<string, string>; plan: MusicPlan } {
+export function validateMusicPlan(plan: Omit<PlanMusic, 'scenes'> & { scenes?: PlanMusic['scenes'] }, trackIds: string[], chipOpts?: ChipOptions, sceneIds?: Set<string>): { prompts: Map<string, string>; plan: MusicPlan } {
   const ids = new Set(trackIds)
   const prompts = new Map<string, string>()
   const seconds: Record<string, number> = {}
@@ -56,6 +60,8 @@ export function validateMusicPlan(plan: PlanMusic, trackIds: string[], chipOpts?
   const chapters: Record<number, string> = {}
   for (const c of plan.chapters) if (ids.has(c.trackId)) chapters[c.n] = c.trackId
   const out: MusicPlan = { menu: ids.has(plan.menuTrack) ? plan.menuTrack : null, chapters, seconds }
+  const scenes = Object.fromEntries((plan.scenes ?? []).filter((s) => ids.has(s.trackId) && (!sceneIds || sceneIds.has(s.sceneId))).map((s) => [s.sceneId, s.trackId]))
+  if (Object.keys(scenes).length) out.scenes = scenes
   if (chipOpts?.chiptune) {
     out.tracks = {}
     for (const id of trackIds) {
@@ -94,11 +100,12 @@ export async function planMusic(call: AgentCall, book: VnBook, settings: Project
       moods: asJson(CALM_MOODS),
       trackIds: asJson(trackIds),
       chapters: asJson(book.chapters.map((c) => ({ n: c.n, title: c.title, summary: clip(c.summary ?? '', 200), ending: c.ending !== null }))),
+      scenes: asJson(book.chapters.flatMap((c) => c.scenes.slice(0, 40).map((s) => ({ id: s.id, place: clip(s.placeText, 40), time: s.time, description: clip(s.description, 80), music: s.music }))).slice(0, 120)),
       minSeconds: MIN_SECONDS,
       maxSeconds: MAX_SECONDS
     },
     planMusicSchema,
     { maxTokens: 2500 }
   )
-  return validateMusicPlan(r, trackIds, chipOptionsFor(book, settings))
+  return validateMusicPlan(r, trackIds, chipOptionsFor(book, settings), new Set(book.chapters.flatMap((c) => c.scenes.map((s) => s.id))))
 }

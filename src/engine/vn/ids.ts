@@ -68,6 +68,11 @@ export function backgroundId(placeKey: string | null, placeText: string, time: s
 export const sheetId = (charKey: string) => `sheet_${charKey}`
 export const spriteId = (charKey: string, expr: string) => `sprite_${charKey}_${expr}`
 export const coverId = 'cover'
+/** `cg_<key>`: a CG or an insert of the book's `images`. */
+export const cgId = (key: string) => `cg_${key}`
+/** `sfx_<key>` and `amb_<key>`: a sound effect and an ambience of the book's `sounds`. */
+export const sfxId = (key: string) => `sfx_${key}`
+export const ambId = (key: string) => `amb_${key}`
 export const musicId = (i: number) => `music_${pad2(i)}`
 export const voiceRefId = (charKeyOrNarrator: string) => `voice_${charKeyOrNarrator}`
 

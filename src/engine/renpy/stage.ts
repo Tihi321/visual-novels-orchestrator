@@ -13,6 +13,17 @@ export interface SceneCue {
   transition: SceneTransition
   /** A pause in seconds after the scene is shown, or 0. */
   pause?: number
+  /** Music for this scene: a track id, null for silence. Missing: the story's `scene.music`, else the chapter's music goes on. */
+  music?: string | null
+  /** An ambience (a key of the book's sounds) for this scene, null to stop it. Missing: the story's, else what plays goes on. */
+  ambience?: string | null
+}
+
+/** Cues on a beat: a picture shown from it (null hides it), a sound effect, an ambience started or (null) stopped. They win over the beat's own fields. */
+export interface BeatCue {
+  image?: string | null
+  sfx?: string
+  ambience?: string | null
 }
 
 export interface StageCues {
@@ -24,6 +35,8 @@ export interface StageCues {
   scenes: Record<string, SceneCue>
   /** Cast beat id -> char key -> slot. Characters left out of the map are not shown. */
   casts: Record<string, Record<string, Slot>>
+  /** Beat id -> its picture, sound effect and ambience cues (the stage-director fills the beats the story leaves without). */
+  beats?: Record<string, BeatCue>
   /** Set with `vno_set_cues`: the stage step keeps these cues and does not ask the stage-director. */
   byHand?: boolean
 }
@@ -69,6 +82,24 @@ export function assignSlots(keys: string[]): { slots: Record<string, Slot>; drop
     if (slot) slots[k] = slot
   })
   return { slots, dropped: keys.slice(MAX_ON_SCREEN) }
+}
+
+/**
+ * Puts the composer's scene music (`MusicPlan.scenes`) into the cues. A scene whose story sets its own `music`, or that already has a music cue
+ * (set by hand), keeps it. Tracks that do not exist yet are skipped.
+ */
+export function addScenePlan(cues: StageCues, book: VnBook, plan: Record<string, string | null> | undefined, musicIds: string[]): void {
+  if (!plan) return
+  for (const ch of book.chapters) {
+    for (const s of ch.scenes) {
+      const track = plan[s.id]
+      if (track === undefined || s.music !== undefined) continue
+      if (track !== null && !musicIds.includes(track)) continue
+      const cue = cues.scenes[s.id] ?? { transition: 'dissolve' as const }
+      if ('music' in cue) continue
+      cues.scenes[s.id] = { ...cue, music: track }
+    }
+  }
 }
 
 export interface DefaultCueOptions {

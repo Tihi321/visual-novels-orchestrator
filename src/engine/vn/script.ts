@@ -1,4 +1,4 @@
-import type { CanonicalExpression, VnBeat, VnScene } from '../../shared/vn'
+import type { Expression, ImageEntry, SoundEntry, VnBeat, VnScene } from '../../shared/vn'
 import type { Bible, BibleCharacter, BiblePlace } from './bible'
 import { mapExpression } from './expressions'
 import { backgroundId, beatId, normText, sceneId, slugKey } from './ids'
@@ -9,6 +9,9 @@ export const CAST_RE = /^\**\s*(?:on screen|na ekranu)\s*:\s*\**\s*(.+?)\s*\**$/
 export const LINE_RE = /^\**([\p{Lu}][\p{Lu}\p{N}'’ .-]{0,40}?)\**(?:\s*\(([^)]{1,120})\))?\s*:\**\s+(.+)$/u
 const BREAK_RE = /^\s*([-*_])(?:\s*\1){2,}\s*$/
 const HEADING_SCENE_RE = /^#{2,6}\s+(.+?)\s*#*\s*$/
+/** A cue line: `CG: ...`, `INSERT: ...`, `SFX: ...`, `AMBIENCE: ...` (Croatian `SLIKA`, `ZVUK`, `ATMOSFERA`); `CG: none` and `END CG` hide the picture. */
+export const CUE_RE = /^\**\s*(CG|SLIKA|INSERT|SFX|SOUND|ZVUK|AMBIENCE|ATMOSFERA)\s*:\s*\**\s*(.*?)\s*\**$/iu
+export const END_CG_RE = /^\**\s*(?:END\s+CG|KRAJ\s+SLIKE)\s*\**$/iu
 const NARRATION_RE = /^\**\s*(?:narration|narrator|naracija|pripovjeda[čc])\s*\**(?:\s*\([^)]*\))?\s*:\**\s*(.*)$/iu
 
 /**
@@ -215,6 +218,17 @@ export interface ParsedChapterScript {
   scenes: VnScene[]
   uncertain: Uncertain[]
   warnings: string[]
+  /** The pictures and sounds the cue lines of this chapter named (the book's catalogue gets them). */
+  images: ImageEntry[]
+  sounds: SoundEntry[]
+}
+
+const CUE_STOP = new Set(['the', 'a', 'an', 'of', 'in', 'at', 'on', 'to', 'and', 'with', 'by', 'for', 'from', 'u', 'na', 'i', 's', 'sa', 'iz', 'za', 'od'])
+
+/** The catalogue key of a cue description: its first four content words (`The ledger page lies open on the desk` -> `ledger_page_lies_open`). */
+export function cueKey(text: string): string {
+  const words = normText(text).split(' ').filter((w) => w.length > 1 && !CUE_STOP.has(w)).slice(0, 4)
+  return slugKey(words.join(' ') || text)
 }
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
@@ -281,7 +295,23 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
   const seenUnc = new Set<string>()
   let cur: SceneDraft | null = null
   let pendingBreak = false
-  let lastExpr = new Map<string, CanonicalExpression>()
+  let lastExpr = new Map<string, Expression>()
+  const images = new Map<string, ImageEntry>()
+  const sounds = new Map<string, SoundEntry>()
+  /** Cues read since the last beat: they go on the next beat of the scene. */
+  let pending: { image?: string | null; sfx?: string; ambience?: string | null } = {}
+
+  /** A cue with no beat after it in its scene is dropped, with a warning. */
+  const dropPending = (where: string) => {
+    if (Object.keys(pending).length) warnings.push(`chapter ${chapter}: a ${Object.keys(pending).map((k) => (k === 'image' ? 'CG' : k === 'sfx' ? 'SFX' : 'AMBIENCE')).join(' and ')} line ${where} has no beat after it in its scene: dropped`)
+    pending = {}
+  }
+  /** Adds a beat to a scene, with the cues that wait for it. */
+  const add = (s: SceneDraft, beat: BeatDraft) => {
+    Object.assign(beat.body, pending)
+    pending = {}
+    s.beats.push(beat)
+  }
 
   const flag = (d: UncertainDraft, dedupe?: string) => {
     if (dedupe) {
@@ -292,6 +322,7 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
   }
 
   const openScene = (placeText: string, placeKey: string | null, time: string | null, description: string[], breakBefore: boolean): SceneDraft => {
+    dropPending('at the end of a scene')
     const s: SceneDraft = { placeText, placeKey, time, description, beats: [], breakBefore }
     drafts.push(s)
     lastExpr = new Map()
@@ -334,12 +365,44 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
       startScene(sm[1]!)
       continue
     }
+    const cue = CUE_RE.exec(line)
+    if (cue) {
+      scene()
+      const kind = cue[1]!.toUpperCase()
+      const text = cue[2]!.trim()
+      if (!text) continue
+      if (kind === 'CG' || kind === 'SLIKA' || kind === 'INSERT') {
+        if (/^(?:none|ništa|nista)$/i.test(text)) pending.image = null
+        else {
+          const key = cueKey(text)
+          if (!images.has(key)) images.set(key, { key, description: text, display: kind === 'INSERT' ? 'insert' : 'full' })
+          pending.image = key
+        }
+      } else if (kind === 'AMBIENCE' || kind === 'ATMOSFERA') {
+        if (/^(?:none|ništa|nista)$/i.test(text)) pending.ambience = null
+        else {
+          const key = cueKey(text)
+          if (!sounds.has(`ambience:${key}`)) sounds.set(`ambience:${key}`, { key, kind: 'ambience', description: text })
+          pending.ambience = key
+        }
+      } else {
+        const key = cueKey(text)
+        if (!sounds.has(`sfx:${key}`)) sounds.set(`sfx:${key}`, { key, kind: 'sfx', description: text })
+        pending.sfx = key
+      }
+      continue
+    }
+    if (END_CG_RE.test(line)) {
+      scene()
+      pending.image = null
+      continue
+    }
     const cm = CAST_RE.exec(line)
     if (cm && classifyOnScreen(cm[1]!, bible) === 'prop') {
       // a ledger page, a sign, a letter: the reader is shown it as narration, and the scene keeps it as a hint. Nobody is cast.
       const s = scene()
       const text = cm[1]!.replace(/\*+/g, '').trim()
-      s.beats.push({ body: { type: 'narration', text } })
+      add(s, { body: { type: 'narration', text } })
       s.description.push(`Also on screen: ${text}.`)
       continue
     }
@@ -363,13 +426,13 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
         }
       }
       if (hints.length) s.description.push(`Also on screen: ${hints.join('; ')}.`)
-      s.beats.push(beat)
+      add(s, beat)
       continue
     }
     const nm = NARRATION_RE.exec(line)
     if (nm) {
       const text = nm[1]!.trim()
-      if (text) scene().beats.push({ body: { type: 'narration', text } })
+      if (text) add(scene(), { body: { type: 'narration', text } })
       continue
     }
     const dm = DIRECTION_ONLY_RE.exec(line)
@@ -378,7 +441,7 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
     if (lm && isDirectionLabel(lm[1]!)) {
       // `SMASH CUT TO: Grumble sets the soother down.`: the label is a stage direction, not a speaker; the text stays as narration
       const text = lm[3]!.trim()
-      if (text) scene().beats.push({ body: { type: 'narration', text } })
+      if (text) add(scene(), { body: { type: 'narration', text } })
       continue
     }
     if (lm) {
@@ -386,7 +449,7 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
       const label = lm[1]!.replace(/\*+/g, '').replace(/\s+/g, ' ').trim()
       const speakerKey = matchCharacter(label, bible.characters)
       const memo = speakerKey ?? `?${label}`
-      let expression: CanonicalExpression = lastExpr.get(memo) ?? 'neutral'
+      let expression: Expression = lastExpr.get(memo) ?? 'neutral'
       let rawExpression: string | undefined
       let unknownExpr = false
       if (lm[2] !== undefined && lm[2].trim()) {
@@ -406,14 +469,15 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
           text: lm[3]!.trim()
         }
       }
-      s.beats.push(beat)
+      add(s, beat)
       if (!speakerKey) flag({ kind: 'speaker', scene: s, beat, text: label, reason: 'not a bible character' }, `speaker:${label}`)
       if (unknownExpr && rawExpression) flag({ kind: 'expression', scene: s, beat, text: rawExpression, reason: `unknown expression for ${label}: neutral used` }, `expr:${label}|${rawExpression}`)
       continue
     }
-    scene().beats.push({ body: { type: 'narration', text: line } })
+    add(scene(), { body: { type: 'narration', text: line } })
   }
 
+  dropPending('at the end of the chapter')
   // Number the scenes that have beats.
   const scenes: VnScene[] = []
   const ids = new Map<SceneDraft, string>()
@@ -451,5 +515,5 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
   const loose = new Map<string, Map<string, string>>()
   for (const [draft, id] of beatIds) if (draft.loose) loose.set(id, draft.loose)
   uncertain.push(...checkCasts(scenes, bible, loose, chapter))
-  return { scenes, uncertain, warnings }
+  return { scenes, uncertain, warnings, images: [...images.values()], sounds: [...sounds.values()] }
 }

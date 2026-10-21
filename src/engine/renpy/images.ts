@@ -19,6 +19,8 @@ export interface UsedImages {
   /** Background asset ids (`bg_<place>_<time|any>`). */
   backgrounds: string[]
   sprites: { charKey: string; expression: string }[]
+  /** The CGs and inserts the script shows (keys of the book's `images`). */
+  cgs?: { key: string; display: 'full' | 'insert' }[]
 }
 
 const safe = (s: string): string => s.replace(/[^A-Za-z0-9_]/g, '_')
@@ -27,6 +29,11 @@ const safe = (s: string): string => s.replace(/[^A-Za-z0-9_]/g, '_')
 export function bgImageName(backgroundId: string): string {
   const rest = backgroundId.replace(/^bg_/, '')
   return `bg ${safe(rest)}`
+}
+
+/** `ledger_page` -> `cg ledger_page` (the Ren'Py image name of a CG or an insert). */
+export function cgImageName(key: string): string {
+  return `cg ${safe(key)}`
 }
 
 /** `mara`, `worried` -> `mara worried`. */
@@ -154,6 +161,26 @@ export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesRes
     } else {
       const place = id.replace(/^bg_/, '').replace(/_/g, ' ')
       buf = await placeholderBackground(place, resolution, format, !!inp.pixel)
+      placeholders.push(id)
+    }
+    fs.writeFileSync(path.join(gameSubdir, rel), buf)
+    written.push(rel)
+  }
+
+  // CGs fill the screen like a background; an insert is scaled down to at most 70% of the screen height (it is shown small, in the middle)
+  for (const g of used.cgs ?? []) {
+    const id = `cg_${g.key}`
+    const rel = imageFile(cgImageName(g.key), format)
+    const src = resolveAsset(id)
+    let buf: Buffer
+    if (src && fs.existsSync(src)) {
+      buf =
+        g.display === 'insert'
+          ? await encode(sharp(src).ensureAlpha().resize({ height: Math.round(resolution.h * 0.7), width: resolution.w, fit: 'inside', withoutEnlargement: true, ...(kernel ? { kernel } : {}) }), format, !!inp.pixel)
+          : await encode(sharp(src).resize(resolution.w, resolution.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }), format, !!inp.pixel)
+    } else {
+      const size = g.display === 'insert' ? { w: Math.round(resolution.h * 0.5), h: Math.round(resolution.h * 0.5) } : resolution
+      buf = await placeholderBackground(g.key.replace(/_/g, ' '), size, format, !!inp.pixel)
       placeholders.push(id)
     }
     fs.writeFileSync(path.join(gameSubdir, rel), buf)

@@ -562,6 +562,8 @@ export interface ProjectSettingsPatch {
   /** `null` clears an optional field (`provider`, `chip`). */
   music?: Partial<Omit<ProjectSettings['music'], 'provider' | 'chip'>> & { provider?: ProjectSettings['music']['provider'] | null; chip?: ProjectSettings['music']['chip'] | null }
   voice?: Partial<ProjectSettings['voice']>
+  /** Sound effects and ambiences. `null` clears `sfxEngine`. */
+  sound?: { ambienceEngine?: string; sfxEngine?: string | null }
 }
 
 /** The commands about VN projects (handled by `VnService`). */

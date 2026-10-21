@@ -51,7 +51,8 @@ Long calls return job ids at once. A client that times out on a long call should
 
 - **Characters and places**: `key` is made from the name when left out (lowercase ascii and `_`; a Cyrillic, Greek, Japanese or Korean name is written in Latin letters, a Chinese one gets a short hash, so `Наташа` is `natasha`). `looks` is what the images show, so write it out in full. A character may have `aliases`: other names the story calls it by (`"the bald man"`). A line whose speaker is an alias belongs to the character and shows the alias in the game, so the reader is not told the name early. An edition translates an alias under the character key plus `#<n>` (`characterNames: {"kessler#1": "..."}`, n counted from 1).
 - **Beats**: a cast beat `{ cast: ["mara", "tom"] }` says who is on screen from there on (at most three are shown); a line `{ speaker, expression?, text }`; a narration `{ text }`. `type` may be left out. Speakers and places may be named by key or by name; an unknown one is kept with a warning (no sprite, no place looks).
-- **Expressions**: neutral, happy, sad, angry, surprised, worried, scared, thinking. Other words are mapped to the nearest one. Each character gets a sprite per expression it uses.
+- **Expressions**: neutral, happy, sad, angry, surprised, worried, scared, thinking. Other words are mapped to the nearest one. Each character gets a sprite per expression it uses. A book may name its own set (`expressions: ["neutral", "smug", "tired"]`, lowercase letters and digits), and a character may add more (`expressions` on the character); a line's expression is then mapped to the nearest in that set.
+- **Pictures and sounds**: the story lists `images` (`{key, description, display: "full"|"insert", characters?}`; a full one is a CG over the whole scene, an insert a small object or document in the middle) and `sounds` (`{key, kind: "sfx"|"ambience", description}`). In the story JSON a beat shows a picture with `image: "key"` (`null` hides it), plays a sound effect with `sfx: "key"`, and starts an ambience with `ambience: "key"` (`null` stops it). A scene has `music: "music_02"` (`null` is silence) and `ambience`. In the edit operations below `"none"` means the same, and null clears the cue. Their assets are `cg_<key>`, `sfx_<key>` and `amb_<key>`: a CG is drawn from the sheets of its characters, an ambience is made with the music engine, and a sound effect needs a file (`vno_asset_import`) unless a `sound.sfxEngine` is set in `vno_update_settings`. A cue to a key that is not listed is an error; a cue to a sound with no file is skipped with a warning in the build.
 - **Backgrounds**: one per place and time (`bg_<place>_<time>`), shared by every scene with the same pair.
 - **Choices and endings**: a chapter with `choices` leads to the chapter numbers in `to`; a book with any choice is a choice book (else linear). In a choice book a chapter without choices ends the game (its `ending` text, else "The End"); in a linear book only the last chapter ends. Chapter numbers default to their position.
 - **Ids**: chapters are numbers, scenes `ch01.s02`, beats `ch01.s02.b003`. They never change: a new scene or beat gets the next free number of its chapter or scene wherever it goes, so editions, voice clips and translations keep matching.
@@ -62,8 +63,8 @@ Long calls return job ids at once. A client that times out on a long call should
 
 | op | Fields | Notes |
 | --- | --- | --- |
-| `book.update` | title, author, genre, style, coverBrief, format | |
-| `character.set` | key, name, looks, voice, aliases | Adds or changes. Renaming updates the speaker labels (a line under an alias keeps it). `aliases` replaces the list, null clears it. |
+| `book.update` | title, author, genre, style, coverBrief, format, expressions | `expressions` replaces the set, null clears it. |
+| `character.set` | key, name, looks, voice, aliases, expressions | Adds or changes. Renaming updates the speaker labels (a line under an alias keeps it). `aliases` replaces the list, null clears it. |
 | `character.remove` | key, force | Refused while it is in a cast or speaks, unless `force`. |
 | `place.set` | key, name, looks | Adds or changes. |
 | `place.remove` | key, force | Refused while a scene uses it, unless `force`. |
@@ -71,10 +72,12 @@ Long calls return job ids at once. A client that times out on a long call should
 | `chapter.update` | n, title, summary, ending, choices | `choices` replaces the list. |
 | `chapter.remove` | n | Refused while a choice leads to it. |
 | `scene.add` | chapter, scene, at | `at`: position from 0, default the end. |
-| `scene.update` | sceneId, place, time, description, breakBefore | The background follows place and time. |
+| `scene.update` | sceneId, place, time, description, breakBefore, music, ambience | The background follows place and time. `music`/`ambience`: a key, "none" for off, null clears. |
 | `scene.remove` | sceneId | |
 | `beat.add` | sceneId, beats, at or after | `after` is a beat id. |
-| `beat.update` | beatId, text, speaker, expression, cast | |
+| `beat.update` | beatId, text, speaker, expression, cast, image, sfx, ambience | `image`/`ambience`: a key, "none" to hide or stop, null clears the cue. |
+| `image.set` / `image.remove` | key, description, display, characters / key, force | The picture catalogue. |
+| `sound.set` / `sound.remove` | key, kind, description / key, kind, force | The sound catalogue. |
 | `beat.remove` | beatIds | |
 
 After an edit the result lists what happened to the assets: `added` and `orphaned` (no longer needed; kept, never deleted), `cleared` (their subject changed and they had no image yet: their prompt is gone, run `vno_plan` again), `stale` (they have an image of the old subject: `vno_asset_regen`), `keptLocked` (locked or custom, untouched) and `keptByHand` (a prompt you set with `vno_asset_set`, untouched). The primary edition follows the story; other editions drop the text of removed beats and keep the rest.
@@ -82,8 +85,8 @@ After an edit the result lists what happened to the assets: `added` and `orphane
 ### Prompts, music and staging by hand
 
 - `vno_asset_set {slug, id, prompt?, negative?, size?, engine?, seed?}` writes an asset's plan without generating. A prompt you set is kept by `vno_plan` and the pipeline, even with `refreshPrompts` or `force`. A locked asset is refused.
-- `vno_set_music {slug, menu?, chapters?: {"1": "music_02"}, seconds?: {"music_01": 90}, replace?}` sets the menu track, the track of each chapter and each track's length (60 to 180 s). Only `slug` reads the plan. The music step keeps it and only fills what is missing. The number of tracks is `music.tracks` in `vno_update_settings`.
-- `vno_set_cues {slug, menuMusic?, chapters?, scenes?: {"ch01.s02": {"transition": "fade", "pause": 1}}, casts?: {"ch01.s02.b001": {"mara": "left", "tom": "right"}}, replace?}` sets the stage cues. Only `slug` reads them. The stage step then keeps them, does not ask the stage-director, and only adds defaults for what you left out.
+- `vno_set_music {slug, menu?, chapters?: {"1": "music_02"}, scenes?: {"ch01.s02": "music_03"}, seconds?: {"music_01": 90}, replace?}` sets the menu track, the track of each chapter and each track's length (60 to 180 s). Only `slug` reads the plan. The music step keeps it and only fills what is missing. The number of tracks is `music.tracks` in `vno_update_settings`.
+- `vno_set_cues {slug, menuMusic?, chapters?, scenes?: {"ch01.s02": {"transition": "fade", "pause": 1, "music": "music_03", "ambience": "rain"}}, casts?: {"ch01.s02.b001": {"mara": "left", "tom": "right"}}, replace?}` sets the stage cues. Only `slug` reads them. The stage step then keeps them, does not ask the stage-director, and only adds defaults for what you left out.
 
 ## Hand-made art
 

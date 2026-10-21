@@ -6,7 +6,7 @@ import type { AssetEntry, AssetManifest, AssetVersion, ProjectSettings, VnBook }
 import type { ComfyClient, ComfyProgress, ComfyResult } from '../comfy/client'
 import { randomSeed } from '../comfy/graphs'
 import { renameRetry } from '../store/atomic'
-import { fallbackNegative, fallbackPrompt, LANDSCAPE, PORTRAIT } from './derive'
+import { fallbackNegative, fallbackPrompt, imageOfAsset, LANDSCAPE, PORTRAIT, SQUARE } from './derive'
 import { addVersion, assetDir, getEntry, nextVersionN, replaceEntry, resolveFile, saveManifest } from './manifest'
 import { loadPalette, type Rgb } from './palettes'
 import { fitBackground, keepMainSubject, keyOutFlatBackground, pixelate, prepareSprite, toWebp, transparentShare } from './postprocess'
@@ -49,6 +49,10 @@ export interface GenerateSizes {
   /** Pixel mode: downscale factor. Default 4. */
   pixelScale?: number
   musicSeconds?: number
+  /** Length of an ambience loop. Default 60. */
+  ambienceSeconds?: number
+  /** Length of a sound effect made by a custom workflow. Default 5. */
+  sfxSeconds?: number
   musicFormat?: 'flac' | 'mp3' | 'opus' | 'wav'
 }
 
@@ -175,6 +179,8 @@ export interface FinishOptions {
   draw?: boolean
   /** The extension of a sheet, which is kept as it is. Default png. */
   ext?: string
+  /** A CG: `full` is fitted to the screen like a background, `insert` keeps its size. Default full. */
+  display?: 'full' | 'insert'
 }
 
 export interface FinishedImage {
@@ -222,7 +228,7 @@ export async function finishImage(ctx: FinishContext, entry: AssetEntry, bytes: 
   const finishPixel = async (png: Buffer): Promise<Buffer> => {
     const meta = await sharp(png).metadata()
     const raw = { w: meta.width ?? 1, h: meta.height ?? 1 }
-    const grid = entry.kind === 'background' ? { w: px.width, h: px.height } : { w: Math.max(8, Math.round(raw.w / factor)), h: Math.max(8, Math.round(raw.h / factor)) }
+    const grid = entry.kind === 'background' || (entry.kind === 'cg' && o.display !== 'insert') ? { w: px.width, h: px.height } : { w: Math.max(8, Math.round(raw.w / factor)), h: Math.max(8, Math.round(raw.h / factor)) }
     const out = { w: grid.w * factor, h: grid.h * factor }
     if (drawing && ctx.ask && ctx.pixel) {
       const dir = path.join(tmpRoot, `ref-${entry.id}`)
@@ -279,9 +285,14 @@ export async function finishImage(ctx: FinishContext, entry: AssetEntry, bytes: 
   const doPixel = pixel && o.pixelate !== false
 
   let out: Buffer
-  if (entry.kind === 'background' || entry.kind === 'cover') {
+  if (entry.kind === 'cg' && o.display === 'insert') {
+    // an insert (an object, a document) keeps its size: it is shown small, in the middle
+    progress('post', 'keep the insert size')
+    const kept = await sharp(bytes).webp(pixel ? { lossless: true } : { quality: 90 }).toBuffer()
+    out = doPixel ? await finishPixelWebp(kept) : kept
+  } else if (entry.kind === 'background' || entry.kind === 'cg' || entry.kind === 'cover') {
     progress('post', `fit ${entry.kind}`)
-    const t = entry.kind === 'background' ? bgSize : (sizes.cover ?? bgSize)
+    const t = entry.kind === 'cover' ? (sizes.cover ?? bgSize) : bgSize
     const meta = await sharp(bytes).metadata()
     const ratio = (meta.width ?? 1) / (meta.height ?? 1) / (t.w / t.h)
     // a cover far from the screen's shape is kept whole (scaled into the frame): the build composes it instead of cutting a strip from it
@@ -339,7 +350,8 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     const sizes = ctx.sizes ?? {}
     const onProgress = (p: ComfyProgress) => progress('comfy', `${p.stage}: ${p.message}`)
     const base = { engine: edited.engine, prompt, negative, seed, onProgress, signal: ctx.signal }
-    const size = edited.size ?? (edited.kind === 'background' || edited.kind === 'cover' ? LANDSCAPE : PORTRAIT)
+    const display = edited.kind === 'cg' ? (imageOfAsset(ctx.book, edited.id)?.display ?? 'full') : undefined
+    const size = edited.size ?? (edited.kind === 'cg' && display === 'insert' ? SQUARE : edited.kind === 'background' || edited.kind === 'cg' || edited.kind === 'cover' ? LANDSCAPE : PORTRAIT)
 
     let palette: Rgb[] | undefined
     if (pixel && ctx.settings.art.palette) {
@@ -353,7 +365,7 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     }
     /** The pixel art at its native size (a PNG), when Pixel Studio made it: kept for "Open in Pixel Studio". */
     let native: Buffer | undefined
-    const finishOpts = { seed, palette, onProgress, progress, size }
+    const finishOpts = { seed, palette, onProgress, progress, size, display }
 
     let out: { bytes: Buffer; ext: string }
     let rawOut: { bytes: Buffer; ext: string } | undefined
@@ -399,6 +411,29 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
         warnings.push(...fin.warnings)
         native = fin.native
         out = { bytes: fin.bytes, ext: fin.ext }
+        break
+      }
+      case 'cg': {
+        // a picture with characters is edited from their sheets (as many as have a file); one without is generated
+        const refFiles = (edited.refs ?? []).flatMap((id) => ctx.resolveRef?.(id) ?? [])
+        if ((edited.refs?.length ?? 0) > 0 && refFiles.length === 0) throw new Error(`the character sheets of ${edited.id} (${edited.refs!.join(', ')}) have no file yet: generate them first`)
+        const r = await ctx.comfy.generate({ ...base, ...(refFiles.length ? { references: refFiles } : {}), width: size.w, height: size.h })
+        const fin = await finishImage(ctx, edited, r.bytes, finishOpts)
+        warnings.push(...fin.warnings)
+        native = fin.native
+        out = { bytes: fin.bytes, ext: fin.ext }
+        break
+      }
+      case 'ambience': {
+        const r: ComfyResult = await ctx.comfy.generate({ engine: edited.engine, prompt, seed, seconds: sizes.ambienceSeconds ?? 60, format: sizes.musicFormat, onProgress, signal: ctx.signal })
+        out = { bytes: r.bytes, ext: r.ext }
+        break
+      }
+      case 'sfx': {
+        // there is no sound-effect engine by default: a custom ComfyUI workflow (sound.sfxEngine) makes it, else the file is imported
+        if (!edited.engine.startsWith('custom:')) return { ok: true, skipped: true, entry, reason: 'no SFX engine: import a file (vno_asset_import)' }
+        const r: ComfyResult = await ctx.comfy.generate({ engine: edited.engine, prompt, seed, seconds: sizes.sfxSeconds ?? 5, format: sizes.musicFormat, onProgress, signal: ctx.signal })
+        out = { bytes: r.bytes, ext: r.ext }
         break
       }
       case 'music': {
@@ -459,7 +494,7 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
 }
 
 /** Generation order: sheets before the sprites that reference them. */
-const KIND_ORDER: Record<string, number> = { sheet: 0, background: 1, cover: 2, sprite: 3, music: 4, voiceRef: 5 }
+const KIND_ORDER: Record<string, number> = { sheet: 0, background: 1, cover: 2, sprite: 3, cg: 4, music: 5, ambience: 6, sfx: 7, voiceRef: 8 }
 
 export interface GenerateAllOptions {
   /** Only these ids; default all entries. */
