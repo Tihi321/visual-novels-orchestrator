@@ -10,6 +10,7 @@ export const DATA_LAYOUT = [
   'config',
   'agents',
   'prompts',
+  'fonts',
   'projects',
   'jobs/queued',
   'jobs/running',

@@ -27,6 +27,7 @@ fonts:
   name: Lora-Bold.ttf
   interface: Lora-Regular.ttf
   bold: Lora-Bold.ttf
+  scripts: [latin, cyrillic]
 sizes:
   text: 35
   name: 44

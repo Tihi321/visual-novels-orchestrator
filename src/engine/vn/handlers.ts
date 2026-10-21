@@ -726,7 +726,8 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         resolution: renpy.resolution,
         imageFormat: renpy.imageFormat,
         templateDir: svc.dirs.templates,
-        themesDir: svc.dirs.themes
+        themesDir: svc.dirs.themes,
+        fontsDir: dataFolders(deps.dataDir).fonts
       })
       const messages = [...r.warnings]
       if (!sdk) messages.push(`the Ren'Py SDK was not found at ${renpy.sdkPath}: the menu images keep the template colours, other editions are not translated and the game cannot be linted or run (set sdkPath in config/renpy.md)`)

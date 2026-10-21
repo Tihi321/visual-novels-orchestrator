@@ -139,7 +139,9 @@ Eight pipeline steps ask a model: `analyse` (script-analyst), `art plan` (art-di
 - `vno_languages` lists the languages a project or edition can use: the 31 that VibeTTS Supertonic reads plus Book Translator's (37 in all, for example en, hr, de, fr, es, it, pt, nl, pl, cs, ru, uk, sr, ja, ko, zh, ar, he, fa, hi). More, or changes, go in `config/languages.md` in the data folder.
 - The primary language is detected on import and on `vno_create_project`; `vno_add_edition` detects the language of a translated folder when `lang` is left out.
 - Each edition is a Ren'Py language; the game has a language picker and starts in the primary language.
-- The game menus are translated only for Croatian; the others keep the English menus (a build warning says so; add a `ui` table in `config/languages.md`). For Arabic, Hebrew and Persian the build turns on Ren'Py's right-to-left text, but the layout is not mirrored. The built-in font has no Chinese, Japanese, Korean, Hindi or Thai glyphs: the build warns, and that text shows as boxes.
+- The game menus are translated for every built-in language (49 strings each, written by a language model: native review is welcome). A `ui` table in `config/languages.md` overrides single strings; a language you add without `ui` keeps the English menus and the build says so.
+- Fonts. A theme's text font covers some scripts (`fonts.scripts` in `theme.yaml`). For a language in another script the build gives that language a font of its own, in `game/vno_fonts.rpy`: the `font` of the language in `config/languages.md`, else `<data>/fonts/<script>.ttf` (or `.otf`, `.ttc`; `<script>-bold.ttf` is the bold face), else an installed system font, else DejaVuSans for Cyrillic, Greek, Arabic and Hebrew. A system font is copied into the game with a warning to check its license before you share the game. With no font the build warns and says what to do. `vno_fonts_fetch {script}` downloads a free Noto Sans font (SIL Open Font License) for `han` (Chinese), `kana` (Japanese), `hangul` (Korean), `devanagari` or `thai` into `<data>/fonts/`. It never runs by itself.
+- Right-to-left. For Arabic, Hebrew and Persian the build turns on Ren'Py's right-to-left text and mirrors the menu layout (the name box, the dialogue, the navigation buttons, the history) for those languages only, in `game/vno_rtl.rpy`. The other languages of the game keep the normal layout. The layout cannot be checked by the Ren'Py lint: look at it once in the game.
 
 ## Tools
 
@@ -147,6 +149,7 @@ Eight pipeline steps ask a model: `analyse` (script-analyst), `art plan` (art-di
 | --- | --- |
 | Library and projects | `vno_list_books`, `vno_set_library`, `vno_import`, `vno_list_projects`, `vno_get_project`, `vno_update_settings`, `vno_delete_project`, `vno_languages` |
 | Story | `vno_create_project`, `vno_get_story`, `vno_story_edit`, `vno_book_update`, `vno_character_set`, `vno_character_remove`, `vno_place_set`, `vno_place_remove`, `vno_chapter_add`, `vno_chapter_update`, `vno_chapter_remove`, `vno_scene_add`, `vno_scene_update`, `vno_scene_remove`, `vno_beat_add`, `vno_beat_update`, `vno_beat_remove` |
+| Languages and fonts | `vno_languages`, `vno_fonts_fetch` |
 | Pipeline | `vno_run_pipeline`, `vno_plan`, `vno_status`, `vno_wait`, `vno_pause_all`, `vno_resume_all`, `vno_stop_now` |
 | Model work by you (`client/claude-code`) | `vno_client_tasks`, `vno_get_task`, `vno_submit_task`, `vno_release_task` |
 | Editions | `vno_add_edition`, `vno_edition_set`, `vno_get_edition`, `vno_update_beat`, `vno_align_report` |

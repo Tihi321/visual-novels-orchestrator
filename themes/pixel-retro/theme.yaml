@@ -24,6 +24,7 @@ namebox:
   textColor: "#ffcc33"
 fonts:
   text: PixelifySans-Regular.ttf
+  scripts: [latin, cyrillic, greek]
 sizes:
   text: 38
   name: 46

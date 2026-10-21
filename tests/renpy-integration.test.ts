@@ -114,6 +114,42 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     expect(l.messages).toEqual([])
   })
 
+  it('a ja and an ar edition: a font block for Japanese, the mirrored layout for Arabic, lint clean', { timeout: T }, async () => {
+    const book = loadBook('linear')
+    const hr = loadEdition('linear', 'hr') // the text stays Croatian: only the language code matters for the build
+    const editions: Edition[] = [loadEdition('linear', 'en'), { ...hr, lang: 'ja' }, { ...hr, lang: 'ar' }]
+    // a font in the data folder for kana: DejaVuSans from the SDK stands in for a Japanese font
+    const fontsDir = path.join(root, 'ja-ar-fonts')
+    fs.mkdirSync(fontsDir, { recursive: true })
+    fs.copyFileSync(path.join(sdkPath, 'renpy', 'common', 'DejaVuSans.ttf'), path.join(fontsDir, 'kana.ttf'))
+    const r = await buildGame({
+      projectDir: path.join(root, 'ja-ar'),
+      book,
+      editions,
+      settings: loadSettings(book, { editions: ['en', 'ja', 'ar'] }),
+      resolveAsset: () => null,
+      sdkPath,
+      fontsDir
+    })
+    expect(r.translated.sort()).toEqual(['arabic', 'japanese'])
+    const game = path.join(r.gameDir, 'game')
+    expect(fs.existsSync(path.join(game, 'fonts', 'lang', 'kana.ttf'))).toBe(true)
+    const fonts = fs.readFileSync(path.join(game, 'vno_fonts.rpy'), 'utf8')
+    expect(fonts).toContain('translate japanese python:')
+    expect(fonts).toContain('    gui.text_font = "fonts/lang/kana.ttf"')
+    expect(fonts).toContain('translate arabic python:')
+    expect(fonts).toContain('    gui.text_font = "DejaVuSans.ttf"')
+    expect(r.warnings.filter((w) => w.startsWith('no font') || w.startsWith('copied the system font'))).toEqual([])
+    const rtl = fs.readFileSync(path.join(game, 'vno_rtl.rpy'), 'utf8')
+    expect(rtl).toContain('define config.rtl = True')
+    expect(rtl).toContain('translate arabic python:\n    gui.name_xpos = 1560')
+    expect(rtl).toContain('translate None python:\n    gui.name_xpos = 360')
+    expect(rtl).toContain('translate japanese python:\n    gui.name_xpos = 360')
+    const l = await lint(r.gameDir, { sdkPath })
+    expect(l.messages).toEqual([])
+    expect(l.ok).toBe(true)
+  })
+
   it('Croatian primary with an English edition: Croatian UI by default, lint clean', { timeout: T }, async () => {
     const { book, hr, en } = hrPrimary()
     const r = await buildGame({

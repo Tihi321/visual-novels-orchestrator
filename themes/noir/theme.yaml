@@ -27,6 +27,7 @@ fonts:
   name: CourierPrime-Bold.ttf
   interface: CourierPrime-Regular.ttf
   bold: CourierPrime-Bold.ttf
+  scripts: [latin]
 sizes:
   text: 34
   name: 44

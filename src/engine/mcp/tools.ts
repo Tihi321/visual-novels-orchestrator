@@ -7,6 +7,7 @@ import { isStep, STEPS, TASKS } from '../vn/pipeline'
 import type { VnService } from '../vn/service'
 import type { ClientTaskQueue } from '../models/client'
 import { clientTools } from './tools-client'
+import { langTools } from './tools-lang'
 import { planTools } from './tools-plan'
 import { storyTools } from './tools-story'
 
@@ -31,6 +32,8 @@ export interface McpOptions {
   clientQueue?: ClientTaskQueue
   /** Sets the Scriptorium library folder (`scriptoriumData` in config/settings.md) and returns it resolved. Without it `vno_set_library` says it is unavailable. */
   setScriptoriumData?: (folder: string) => Promise<string>
+  /** The fetch `vno_fonts_fetch` downloads with (tests pass a fake). Default: the global one. */
+  fetchImpl?: typeof fetch
 }
 
 /** Makes a tool: the arguments are parsed with `schema` before `run` sees them. */
@@ -333,6 +336,9 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
 
     // ---- plans, music, cues, library ----
     ...planTools(svc, def, opts),
+
+    // ---- fonts for the languages the theme font lacks ----
+    ...langTools(svc, def, opts),
 
     // ---- model work done by the MCP client (client/... models) ----
     ...clientTools(svc, def, opts),

@@ -27,6 +27,7 @@ fonts:
   name: Quicksand-Bold.ttf
   interface: Quicksand-Medium.ttf
   bold: Quicksand-Bold.ttf
+  scripts: [latin]
 sizes:
   text: 40
   name: 50

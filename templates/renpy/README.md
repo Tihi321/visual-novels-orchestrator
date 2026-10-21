@@ -10,7 +10,10 @@ Changes to the generated files:
 - `options.rpy`: tokens filled in by the build (`{{TITLE}}`, `{{VERSION}}`, `{{BUILD_NAME}}`, `{{SAVE_DIR}}`, `{{HAS_VOICE}}`, `{{LANGUAGES}}`, `{{DEFAULT_LANGUAGE}}`); `config.old_substitutions = False` (so `%` in book text is literal); `vn_voice` (True only when the book has voice clips), `vn_languages` (the languages of the book, the primary one first) and `config.default_language`.
 - `screens.rpy`:
   - Preferences: a **Language** section (`Language(code)` buttons), shown only when the book has more than one language; the **Voice Volume** slider only when `vn_voice` is True.
+  - `gui.navigation_xanchor` (in `gui.rpy`, 0.0) is the anchor of the navigation buttons, used by the `navigation` screen and `return_button`: a right-to-left language mirrors the menus by setting it to 1.0 (see `vno_rtl.rpy` below).
   - A `the_end(message)` screen with "Start again" and "Back to main menu".
   - A `chapter_card(title)` screen shown at the start of each chapter.
+
+Two files are written next to the template by the build, only when needed: `vno_fonts.rpy` (a `translate <language> python:` block with a font for each language whose script the theme font lacks, see `src/engine/renpy/fonts.ts`) and `vno_rtl.rpy` (`config.rtl` and the mirrored `gui.*` layout of the right-to-left languages, `src/engine/renpy/rtl.ts`).
 
 Languages: Ren'Py's source language (`None`) holds the primary text. For an English primary book `None` is English and `tl/croatian/` holds the Croatian edition. For a Croatian primary book the template UI is translated by `tl/croatian/ui.rpy` and `config.default_language` is `"croatian"`; an English edition is `tl/english/`.

@@ -303,7 +303,7 @@ export function loadComfyConfigFor(dataDir: string): Promise<ComfyConfig> {
   return loadComfyConfig(path.join(dataDir, 'config', 'comfy.md'))
 }
 
-/** Where the custom workflows and palettes are (both seeded into the data folder from `seed/`). */
-export function dataFolders(dataDir: string): { workflows: string[]; palettes: string; voices: string } {
-  return { workflows: workflowDirs(dataDir), palettes: path.join(dataDir, 'palettes'), voices: path.join(dataDir, 'voices') }
+/** Where the custom workflows and palettes are (both seeded into the data folder from `seed/`), and the fonts you drop in for the languages the theme font lacks. */
+export function dataFolders(dataDir: string): { workflows: string[]; palettes: string; voices: string; fonts: string } {
+  return { workflows: workflowDirs(dataDir), palettes: path.join(dataDir, 'palettes'), voices: path.join(dataDir, 'voices'), fonts: path.join(dataDir, 'fonts') }
 }
