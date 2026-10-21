@@ -22,7 +22,7 @@ Per kind:
 - background: an EMPTY place. Name the place, its main objects, materials, colours and the light for the time of day, and "wide landscape composition". No people, no characters, no creatures, no animals, not even asleep or small or in the distance. The data above has no people in it; do not add any.
 - character sheet: ONE character, ONE full-body figure, front view, standing, plain white background. Describe only that character's visible looks from the bible. Never a model sheet, a turnaround, several views, face studies or a collage.
 - sprite: the same character as the sheet, one single full-body figure, with the expression and a matching small gesture. Start with "same character". Do not repeat the style prefix.
-- cover: a single illustration of the premise from the brief, portrait composition, no title text.
+- cover: the main menu picture, a single wide 16:9 illustration of the premise from the brief, landscape composition, the left third calm and uncluttered (the menu buttons go there), no title text.
 - `negative`: extra things to avoid for this asset (for example "modern clothes" in a fairy tale). The standard negatives are added for you, so keep it short or empty.
 
 Answer with one JSON object and nothing else:

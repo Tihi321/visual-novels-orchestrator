@@ -7,6 +7,7 @@ import { isStep, STEPS, TASKS } from '../vn/pipeline'
 import type { VnService } from '../vn/service'
 import type { ClientTaskQueue } from '../models/client'
 import { clientTools } from './tools-client'
+import { importTools } from './tools-import'
 import { langTools } from './tools-lang'
 import { planTools } from './tools-plan'
 import { storyTools } from './tools-story'
@@ -347,6 +348,9 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
 
     // ---- plans, music, cues, library ----
     ...planTools(svc, def, opts),
+
+    // ---- files you made: an image or track for an asset, voice clips ----
+    ...importTools(svc, def, opts),
 
     // ---- fonts for the languages the theme font lacks ----
     ...langTools(svc, def, opts),

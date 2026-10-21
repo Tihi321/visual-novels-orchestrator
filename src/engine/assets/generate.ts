@@ -9,8 +9,8 @@ import { renameRetry } from '../store/atomic'
 import { fallbackNegative, fallbackPrompt, LANDSCAPE, PORTRAIT } from './derive'
 import { addVersion, assetDir, getEntry, nextVersionN, replaceEntry, resolveFile, saveManifest } from './manifest'
 import { loadPalette, type Rgb } from './palettes'
-import { fitBackground, keepMainSubject, keyOutFlatBackground, pixelate, prepareSprite, toWebp } from './postprocess'
-import { drawSpriteWithStudio } from '../studios/draw'
+import { fitBackground, keepMainSubject, keyOutFlatBackground, pixelate, prepareSprite, toWebp, transparentShare } from './postprocess'
+import { drawSpriteFromGrid, drawSpriteWithStudio } from '../studios/draw'
 import type { ModelReply } from '../studios/draw'
 import { fallbackChipPlan } from '../studios/chip-plan'
 import type { ChipTrackPlan } from '../studios/chip-plan'
@@ -36,17 +36,13 @@ export const QWEN_REMOVE_BG_PROMPT = 'Remove the background, and output a PNG im
 
 /** True when the image has a real alpha channel with transparent pixels (more than 1% of the area). */
 export async function hasTransparency(png: Buffer): Promise<boolean> {
-  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
-  if (info.channels < 4) return false
-  let clear = 0
-  for (let i = 3; i < data.length; i += 4) if (data[i]! < 250) clear++
-  return clear / (data.length / 4) > 0.01
+  return (await transparentShare(png)) > 0.01
 }
 
 export interface GenerateSizes {
   /** Final background size. Default 1920x1080. */
   background?: { w: number; h: number }
-  /** Final cover size. Default 1080x1920. */
+  /** Final cover size. Default: the background size (the cover is landscape). */
   cover?: { w: number; h: number }
   /** Sprite height after trimming. Default 972 (90% of 1080). */
   spriteHeight?: number
@@ -84,8 +80,8 @@ export interface GenerateContext {
   chipPlan?: ChipTrackPlan
   /** The agent's model, for the drawing mode (`pixel-studio-draw`). Without it (or when it fails) the import path runs. */
   ask?: ModelReply
-  /** Limits of the drawing loop. */
-  draw?: { steps: number; ms: number }
+  /** How a sprite is drawn: the limits of the loop (`ms` may be Infinity), and the mode (default loop). */
+  draw?: { steps: number; ms: number; mode?: 'loop' | 'grid' }
 }
 
 export type GenerateResult =
@@ -158,6 +154,156 @@ export async function removeBackground(
   return keyOutFlatBackground(image)
 }
 
+/** What `finishImage` needs of the generation context (an import has no model and no ComfyUI job of its own). */
+export type FinishContext = Pick<GenerateContext, 'book' | 'settings' | 'projectDir' | 'comfy' | 'palettesDir' | 'sizes' | 'pixel' | 'ask' | 'draw' | 'signal'>
+
+export interface FinishOptions {
+  seed?: number
+  /** The size the image was made at: the Qwen background-removal edit asks for it. Default: the image's own size. */
+  size?: { w: number; h: number }
+  /** The palette of a pixel project (loaded by the caller, which has to fail early when it cannot). */
+  palette?: Rgb[]
+  onProgress?: (p: ComfyProgress) => void
+  progress?: (stage: GenerateProgress['stage'], message: string) => void
+  /** Sprites: how the background is cut out. Default: `art.bgRemoval`, else `birefnet`. `none` keeps the image as it is. */
+  removeBackground?: 'birefnet' | 'qwen-edit' | 'key' | 'none'
+  /** Sprites: trim to the figure and scale to the sprite height (default). False: scale only. */
+  trim?: boolean
+  /** Pixel projects: turn the image into pixel art (default). */
+  pixelate?: boolean
+  /** Sprites of a `pixel-studio-draw` project: let the agent draw (default). An import never draws. */
+  draw?: boolean
+  /** The extension of a sheet, which is kept as it is. Default png. */
+  ext?: string
+}
+
+export interface FinishedImage {
+  bytes: Buffer
+  ext: string
+  /** The pixel art at its native size (a PNG), when Pixel Studio made it: kept for "Open in Pixel Studio". */
+  native?: Buffer
+  /** Non-fatal problems, for example a fallback to the flat-colour key. */
+  warnings: string[]
+}
+
+/**
+ * The post-processing of an image asset, the same for a generated image and an imported one:
+ * background (and cover): fitted to the project resolution, then pixel finishing; sprite: background removed, one figure kept, trimmed and
+ * scaled to the sprite height, then pixel finishing; sheet: as it is. A cover whose shape is far from the screen's (a portrait one) is kept
+ * whole: the build composes it (see `renpy/images.ts`).
+ */
+export async function finishImage(ctx: FinishContext, entry: AssetEntry, bytes: Buffer, o: FinishOptions = {}): Promise<FinishedImage> {
+  const warnings: string[] = []
+  const progress = o.progress ?? (() => undefined)
+  const warn = (m: string) => {
+    warnings.push(m)
+    progress('post', `warning: ${m}`)
+  }
+  if (entry.kind === 'sheet') return { bytes, ext: o.ext ?? 'png', warnings }
+  const pixel = ctx.settings.art.style === 'pixel'
+  const sizes = ctx.sizes ?? {}
+  const palette = o.palette
+  const px = resolvePixel(ctx.settings.art)
+  const bgSize = sizes.background ?? { w: 1920, h: 1080 }
+  // the built-in pixelate keeps its legacy scale (4) unless the project sets a pixel grid
+  const scale = sizes.pixelScale ?? (ctx.settings.art.pixel?.width !== undefined ? bgSize.w / px.width : 4)
+  // every pixel of the art is a whole number of screen pixels: the final image is the grid times this factor (6 for 320x180 on 1920x1080)
+  const factor = Math.max(1, Math.round(bgSize.w / px.width))
+  const studioPixels = pixel && resolvePixelProvider(ctx.settings.art) === 'pixel-studio'
+  const drawing = pixel && o.draw !== false && entry.kind === 'sprite' && resolveArtProvider(ctx.settings.art) === 'pixel-studio-draw'
+  const tmpRoot = path.join(ctx.projectDir, '.vno-tmp')
+  /** The pixel art of the pixel grid at its native size (a PNG), when Pixel Studio made it: kept for "Open in Pixel Studio". */
+  let native: Buffer | undefined
+
+  /**
+   * Pixel art from an image (a PNG): drawn by the agent in Pixel Studio (sprites, `pixel-studio-draw`), converted by Pixel Studio
+   * (`pixelProvider: pixel-studio`), or the built-in pixelate. When a studio was asked and fails, the built-in one runs and a warning is kept.
+   */
+  const finishPixel = async (png: Buffer): Promise<Buffer> => {
+    const meta = await sharp(png).metadata()
+    const raw = { w: meta.width ?? 1, h: meta.height ?? 1 }
+    const grid = entry.kind === 'background' ? { w: px.width, h: px.height } : { w: Math.max(8, Math.round(raw.w / factor)), h: Math.max(8, Math.round(raw.h / factor)) }
+    const out = { w: grid.w * factor, h: grid.h * factor }
+    if (drawing && ctx.ask && ctx.pixel) {
+      const dir = path.join(tmpRoot, `ref-${entry.id}`)
+      try {
+        progress('post', 'draw the sprite in Pixel Studio')
+        // Pixel Studio draws at most 128 px: a bigger sprite is drawn on a grid k times smaller and scaled k times more (still whole pixels)
+        const k = Math.ceil(Math.max(grid.w, grid.h) / 128)
+        const drawGrid = { w: Math.max(8, Math.round(grid.w / k)), h: Math.max(8, Math.round(grid.h / k)) }
+        const drawOut = { w: drawGrid.w * factor * k, h: drawGrid.h * factor * k }
+        const pal = palette ?? (ctx.palettesDir ? await loadPalette(ctx.palettesDir, 'db16').catch(() => undefined) : undefined)
+        if (!pal) throw new Error('no palette to draw with: choose one in the Look tab')
+        await fs.mkdir(dir, { recursive: true })
+        const reference = path.join(dir, 'reference.png')
+        await fs.writeFile(reference, png)
+        const common = { client: ctx.pixel, ask: ctx.ask, reference, grid: drawGrid, palette: pal, expression: entry.id.split('_').pop(), name: entry.id, out: drawOut, tmpRoot, signal: ctx.signal, log: (m: string) => progress('post', m) }
+        if (ctx.draw?.mode === 'grid') {
+          const g = await drawSpriteFromGrid(common)
+          if (g.local) warn('Pixel Studio is not running: the sprite was built from the model rows here (Open in Pixel Studio is not available for it)')
+          native = g.native
+          return g.png
+        }
+        const d = await drawSpriteWithStudio({ ...common, maxSteps: ctx.draw?.steps ?? 12, maxMs: ctx.draw?.ms ?? 240_000 })
+        native = d.native
+        return d.png
+      } catch (e) {
+        if (ctx.signal?.aborted) throw e
+        warn(`Pixel Studio drawing failed (${(e as Error).message}); used the import path`)
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true })
+      }
+    } else if (drawing) {
+      warn(ctx.ask ? 'Pixel Studio is not configured' : 'no model answered for the drawing agent; used the import path')
+    }
+    if (studioPixels || drawing) {
+      if (ctx.pixel) {
+        try {
+          progress('post', 'pixel art with Pixel Studio')
+          const r = await pixelateWithStudio(ctx.pixel, png, { tmpRoot, grid, out, palette, dither: px.dither, outline: px.outline, name: entry.id, signal: ctx.signal })
+          native = r.native
+          return r.png
+        } catch (e) {
+          if (ctx.signal?.aborted) throw e
+          warn(`Pixel Studio could not convert the image (${(e as Error).message}); used the built-in pixelate`)
+        }
+      } else {
+        warn('Pixel Studio is not configured; used the built-in pixelate')
+      }
+    }
+    // the built-in pixelate: a whole-number scale, and the result is the grid times it
+    const whole = studioPixels || drawing ? factor : Math.max(1, Math.round(scale))
+    return pixelate(png, { scale: whole, palette, exactScale: true })
+  }
+  const finishPixelWebp = async (png: Buffer) => toWebp(await finishPixel(png), { lossless: true })
+  const doPixel = pixel && o.pixelate !== false
+
+  let out: Buffer
+  if (entry.kind === 'background' || entry.kind === 'cover') {
+    progress('post', `fit ${entry.kind}`)
+    const t = entry.kind === 'background' ? bgSize : (sizes.cover ?? bgSize)
+    const meta = await sharp(bytes).metadata()
+    const ratio = (meta.width ?? 1) / (meta.height ?? 1) / (t.w / t.h)
+    // a cover far from the screen's shape is kept whole (scaled into the frame): the build composes it instead of cutting a strip from it
+    const keepShape = entry.kind === 'cover' && ratio < 0.85
+    const fitted = keepShape ? await sharp(bytes).resize(t.w, t.h, { fit: 'inside' }).webp(pixel ? { lossless: true } : { quality: 90 }).toBuffer() : await fitBackground(bytes, t.w, t.h, { lossless: pixel })
+    out = doPixel ? await finishPixelWebp(fitted) : fitted
+  } else if (entry.kind === 'sprite') {
+    progress('post', 'remove background')
+    const meta = await sharp(bytes).metadata()
+    const size = o.size ?? { w: meta.width ?? 1, h: meta.height ?? 1 }
+    const method = o.removeBackground ?? ctx.settings.art.bgRemoval ?? 'birefnet'
+    let cut = method === 'none' ? bytes : await removeBackground(ctx, bytes, method, { seed: o.seed ?? randomSeed(), size, onProgress: o.onProgress }, warn)
+    cut = await keepMainSubject(cut) // one figure: stray islands and a second figure are dropped before the trim
+    const height = sizes.spriteHeight ?? 972
+    const sprite = o.trim === false ? await sharp(cut).resize({ height, fit: 'inside' }).webp({ quality: 90 }).toBuffer() : await prepareSprite(cut, { targetHeight: height })
+    out = doPixel ? await finishPixelWebp(sprite) : sprite
+  } else {
+    throw new Error(`cannot finish ${entry.kind} assets`)
+  }
+  return { bytes: out, ext: 'webp', ...(native ? { native } : {}), warnings }
+}
+
 /**
  * Generates one asset and records the new version (selected) on the returned entry. Never throws for a failed asset:
  * it returns `{ ok: false, error }` with the entry unchanged. Locked and custom assets are skipped unless `force`.
@@ -193,7 +339,7 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     const sizes = ctx.sizes ?? {}
     const onProgress = (p: ComfyProgress) => progress('comfy', `${p.stage}: ${p.message}`)
     const base = { engine: edited.engine, prompt, negative, seed, onProgress, signal: ctx.signal }
-    const size = edited.size ?? (edited.kind === 'background' ? LANDSCAPE : PORTRAIT)
+    const size = edited.size ?? (edited.kind === 'background' || edited.kind === 'cover' ? LANDSCAPE : PORTRAIT)
 
     let palette: Rgb[] | undefined
     if (pixel && ctx.settings.art.palette) {
@@ -205,86 +351,9 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
       warnings.push(m)
       progress('post', `warning: ${m}`)
     }
-    const px = resolvePixel(ctx.settings.art)
-    const bgSize = sizes.background ?? { w: 1920, h: 1080 }
-    // the built-in pixelate keeps its legacy scale (4) unless the project sets a pixel grid
-    const scale = sizes.pixelScale ?? (ctx.settings.art.pixel?.width !== undefined ? bgSize.w / px.width : 4)
-    // every pixel of the art is a whole number of screen pixels: the final image is the grid times this factor (6 for 320x180 on 1920x1080)
-    const factor = Math.max(1, Math.round(bgSize.w / px.width))
-    const studioPixels = pixel && resolvePixelProvider(ctx.settings.art) === 'pixel-studio'
-    const drawing = pixel && edited.kind === 'sprite' && resolveArtProvider(ctx.settings.art) === 'pixel-studio-draw'
-    const tmpRoot = path.join(ctx.projectDir, '.vno-tmp')
-    /** The pixel art of the pixel grid at its native size (a PNG), when Pixel Studio made it: kept for "Open in Pixel Studio". */
+    /** The pixel art at its native size (a PNG), when Pixel Studio made it: kept for "Open in Pixel Studio". */
     let native: Buffer | undefined
-
-    /**
-     * Pixel art from an image (a PNG): drawn by the agent in Pixel Studio (sprites, `pixel-studio-draw`), converted by Pixel Studio
-     * (`pixelProvider: pixel-studio`), or the built-in pixelate. When a studio was asked and fails, the built-in one runs and a warning is kept.
-     */
-    const finishPixel = async (png: Buffer): Promise<Buffer> => {
-      const meta = await sharp(png).metadata()
-      const raw = { w: meta.width ?? 1, h: meta.height ?? 1 }
-      const grid = edited.kind === 'background' ? { w: px.width, h: px.height } : { w: Math.max(8, Math.round(raw.w / factor)), h: Math.max(8, Math.round(raw.h / factor)) }
-      const out = { w: grid.w * factor, h: grid.h * factor }
-      if (drawing && ctx.ask && ctx.pixel) {
-        const dir = path.join(tmpRoot, `ref-${edited.id}`)
-        try {
-          progress('post', 'draw the sprite in Pixel Studio')
-          // Pixel Studio draws at most 128 px: a bigger sprite is drawn on a grid k times smaller and scaled k times more (still whole pixels)
-          const k = Math.ceil(Math.max(grid.w, grid.h) / 128)
-          const drawGrid = { w: Math.max(8, Math.round(grid.w / k)), h: Math.max(8, Math.round(grid.h / k)) }
-          const drawOut = { w: drawGrid.w * factor * k, h: drawGrid.h * factor * k }
-          const pal = palette ?? (ctx.palettesDir ? await loadPalette(ctx.palettesDir, 'db16').catch(() => undefined) : undefined)
-          if (!pal) throw new Error('no palette to draw with: choose one in the Look tab')
-          await fs.mkdir(dir, { recursive: true })
-          const reference = path.join(dir, 'reference.png')
-          await fs.writeFile(reference, png)
-          const d = await drawSpriteWithStudio({
-            client: ctx.pixel,
-            ask: ctx.ask,
-            reference,
-            grid: drawGrid,
-            palette: pal,
-            expression: edited.id.split('_').pop(),
-            name: edited.id,
-            out: drawOut,
-            tmpRoot,
-            maxSteps: ctx.draw?.steps ?? 12,
-            maxMs: ctx.draw?.ms ?? 240_000,
-            signal: ctx.signal,
-            log: (m) => progress('post', m)
-          })
-          native = d.native
-          return d.png
-        } catch (e) {
-          if (ctx.signal?.aborted) throw e
-          warn(`Pixel Studio drawing failed (${(e as Error).message}); used the import path`)
-        } finally {
-          await fs.rm(dir, { recursive: true, force: true })
-        }
-      } else if (drawing) {
-        warn(ctx.ask ? 'Pixel Studio is not configured' : 'no model answered for the drawing agent; used the import path')
-      }
-      if (studioPixels || drawing) {
-        if (ctx.pixel) {
-          try {
-            progress('post', 'pixel art with Pixel Studio')
-            const r = await pixelateWithStudio(ctx.pixel, png, { tmpRoot, grid, out, palette, dither: px.dither, outline: px.outline, name: edited.id, signal: ctx.signal })
-            native = r.native
-            return r.png
-          } catch (e) {
-            if (ctx.signal?.aborted) throw e
-            warn(`Pixel Studio could not convert the image (${(e as Error).message}); used the built-in pixelate`)
-          }
-        } else {
-          warn('Pixel Studio is not configured; used the built-in pixelate')
-        }
-      }
-      // the built-in pixelate: a whole-number scale, and the result is the grid times it
-      const whole = studioPixels || drawing ? factor : Math.max(1, Math.round(scale))
-      return pixelate(png, { scale: whole, palette, exactScale: true })
-    }
-    const finishPixelWebp = async (png: Buffer) => toWebp(await finishPixel(png), { lossless: true })
+    const finishOpts = { seed, palette, onProgress, progress, size }
 
     let out: { bytes: Buffer; ext: string }
     let rawOut: { bytes: Buffer; ext: string } | undefined
@@ -292,10 +361,10 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     switch (edited.kind) {
       case 'background': {
         const r = await ctx.comfy.generate({ ...base, width: size.w, height: size.h })
-        progress('post', 'fit background')
-        const t = sizes.background ?? { w: 1920, h: 1080 }
-        const fitted = await fitBackground(r.bytes, t.w, t.h, { lossless: pixel })
-        out = { bytes: pixel ? await finishPixelWebp(fitted) : fitted, ext: 'webp' }
+        const fin = await finishImage(ctx, edited, r.bytes, finishOpts)
+        warnings.push(...fin.warnings)
+        native = fin.native
+        out = { bytes: fin.bytes, ext: fin.ext }
         break
       }
       case 'sheet': {
@@ -318,19 +387,18 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
           raw = { bytes: r.bytes, ext: r.ext }
         }
         rawOut = raw
-        progress('post', 'remove background')
-        let cut = await removeBackground(ctx, raw.bytes, ctx.settings.art.bgRemoval ?? 'birefnet', { seed, size, onProgress }, warn)
-        cut = await keepMainSubject(cut) // one figure: stray islands and a second figure are dropped before the trim
-        const sprite = await prepareSprite(cut, { targetHeight: sizes.spriteHeight ?? 972 })
-        out = { bytes: pixel ? await finishPixelWebp(sprite) : sprite, ext: 'webp' }
+        const fin = await finishImage(ctx, edited, raw.bytes, finishOpts)
+        warnings.push(...fin.warnings)
+        native = fin.native
+        out = { bytes: fin.bytes, ext: fin.ext }
         break
       }
       case 'cover': {
         const r = await ctx.comfy.generate({ ...base, width: size.w, height: size.h })
-        progress('post', 'fit cover')
-        const t = sizes.cover ?? { w: 1080, h: 1920 }
-        const fitted = await fitBackground(r.bytes, t.w, t.h, { lossless: pixel })
-        out = { bytes: pixel ? await finishPixelWebp(fitted) : fitted, ext: 'webp' }
+        const fin = await finishImage(ctx, edited, r.bytes, finishOpts)
+        warnings.push(...fin.warnings)
+        native = fin.native
+        out = { bytes: fin.bytes, ext: fin.ext }
         break
       }
       case 'music': {

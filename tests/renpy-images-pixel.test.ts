@@ -84,3 +84,67 @@ describe('buildImages WebP of a pixel project', () => {
     expect(await visible(path.join(sub, 'images', 'mara happy.webp'))).toEqual(['0,0,255,255', '0,200,0,128', '255,0,0,255'])
   })
 })
+
+describe('the main menu picture from a cover (V9, V15)', () => {
+  const RES = { w: 192, h: 108 }
+  /** A portrait cover: a red band on top, green in the middle, a blue band at the bottom. */
+  async function portraitCover(file: string, w = 54, h = 96): Promise<void> {
+    const raw = Buffer.alloc(w * h * 3)
+    for (let y = 0; y < h; y++) {
+      const c = y < 8 ? [255, 0, 0] : y >= h - 8 ? [0, 0, 255] : [0, 200, 0]
+      for (let x = 0; x < w; x++) raw.set(c, (y * w + x) * 3)
+    }
+    await writeFile(file, await sharp(raw, { raw: { width: w, height: h, channels: 3 } }).png().toBuffer())
+  }
+  const menu = async (cover: string, pixel = false) => {
+    const sub = path.join(dir, 'game')
+    const book = { title: 'T', characters: [] } as unknown as VnBook
+    await buildImages({ gameSubdir: sub, book, used: { backgrounds: [], sprites: [] }, resolveAsset: (id) => (id === 'cover' ? cover : null), resolution: RES, format: 'png', warnings: [], pixel })
+    return path.join(sub, 'gui', 'main_menu.png')
+  }
+  const pixelAt = async (file: string, x: number, y: number): Promise<number[]> => {
+    const { data, info } = await sharp(file).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    return [...data.subarray((y * info.width + x) * 3, (y * info.width + x) * 3 + 3)]
+  }
+
+  it('a portrait cover gives a landscape menu picture whose centre-right column shows the whole cover height', async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'vno-cover-'))
+    const cover = path.join(dir, 'cover.png')
+    await portraitCover(cover)
+    const file = await menu(cover)
+    expect(await sharp(file).metadata()).toMatchObject({ width: 192, height: 108 })
+    const x = Math.round(192 * 0.62)
+    const top = await pixelAt(file, x, 0)
+    const middle = await pixelAt(file, x, 54)
+    const bottom = await pixelAt(file, x, 107)
+    expect(top[0]).toBeGreaterThan(200) // the top of the cover
+    expect(top[2]).toBeLessThan(60)
+    expect(middle[1]).toBeGreaterThan(150)
+    expect(bottom[2]).toBeGreaterThan(200) // the bottom of the cover: it was not cut off
+    // the sides are the blurred, darkened cover: not the cover colours at full strength, and not the same on both sides of the picture
+    const left = await pixelAt(file, 4, 54)
+    expect(left[1]).toBeLessThan(160)
+    expect(left[1]).toBeGreaterThan(20)
+  })
+
+  it('a landscape cover is cut to fit as before', async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'vno-cover-'))
+    const cover = path.join(dir, 'cover.png')
+    await writeFile(cover, await sharp({ create: { width: 384, height: 216, channels: 3, background: '#2a5db0' } }).png().toBuffer())
+    const file = await menu(cover)
+    expect(await sharp(file).metadata()).toMatchObject({ width: 192, height: 108 })
+    expect(await pixelAt(file, 5, 5)).toEqual([0x2a, 0x5d, 0xb0])
+    expect(await pixelAt(file, 100, 60)).toEqual([0x2a, 0x5d, 0xb0])
+  })
+
+  it('a pixel project fills with the mean colour of the cover and keeps no other colours', async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'vno-cover-'))
+    const cover = path.join(dir, 'cover.png')
+    await portraitCover(cover)
+    const file = await menu(cover, true)
+    const found = [...(await colours(file))]
+    const mean = '21,167,21' // 8 red rows, 80 green, 8 blue
+    expect(found.filter((c) => !['255,0,0', '0,200,0', '0,0,255'].includes(c))).toEqual([mean])
+    expect(found).toEqual(expect.arrayContaining(['255,0,0', '0,200,0', '0,0,255']))
+  })
+})

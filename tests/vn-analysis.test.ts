@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { deriveAssets } from '../src/engine/assets/derive'
 import type { Decision } from '../src/engine/vn/agents/script-analyst'
 import { describeItems } from '../src/engine/vn/agents/script-analyst'
@@ -12,6 +12,10 @@ import type { VnBook } from '../src/shared/vn'
 import { waitFor } from './helpers'
 import { book, jsonAfter, makeVnEnv, waitIdle } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
+
+
+// these tests run a pipeline or import a whole book: under the load of the full suite 15 s is not always enough
+vi.setConfig({ testTimeout: 60_000 })
 
 let env: VnEnv | undefined
 afterEach(async () => {

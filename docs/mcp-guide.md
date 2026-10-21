@@ -91,7 +91,8 @@ Draw the images yourself (for example with the pixel-studio MCP) and VN Studio n
 
 1. `vno_update_settings {slug, art: {provider: "hand"}}` (any art style; `null` goes back to ComfyUI). The CLI flag is `--art-provider hand`.
 2. Run the pipeline. The art step plans no prompts (`vno_plan` still writes them, as briefs for the drawing), the generate step makes only music and voice and says how many images wait for a file. `vno_asset_generate` and `vno_asset_regen` on an image are refused; on music they work.
-3. Draw each image and set it with `vno_asset_replace {slug, id, file}` (`vno_asset_list` has the ids). Sprites: transparent background, bottom-aligned, any height up to the screen. Backgrounds: 1920x1080. Cover: portrait. Character sheets are only a reference: they are not needed, and a missing one is not a placeholder.
+3. Draw each image and set it with `vno_asset_replace {slug, id, file}` (`vno_asset_list` has the ids): the file is used as it is. Or use `vno_asset_import {slug, id, file}` for an image that is not ready: it does what a generated image gets (a sprite on a plain background is cut out with the flat-colour key, trimmed and scaled to the sprite height; a background is fitted to 1920x1080; a pixel project gets pixel art), keeps your original next to the new version, and never calls ComfyUI in this mode (an image that is transparent already is left alone; `removeBackground: "birefnet"` asks for ComfyUI on purpose; `process: "none"` keeps the file exactly). Sprites: transparent background, bottom-aligned, any height up to the screen. Backgrounds: 1920x1080. Cover: landscape 1920x1080, the left third calm (the menu buttons go there); a portrait cover still works, the menu shows it whole, centred, over a blurred copy. Character sheets are only a reference: they are not needed, and a missing one is not a placeholder.
+   Voice you recorded yourself: `vno_voice_import {slug, lang, folder}` takes a folder of `<beatId>.<ext>` clips (or `beatId` with `file` for one); VibeTTS and ComfyUI generation then keep them (and say how many), and changing a speaker's voice does not drop them.
 4. `vno_build` works at any time: an image without a file gets a placeholder and is listed in the build result.
 
 ## Do the model work yourself
@@ -131,7 +132,7 @@ Eight pipeline steps ask a model: `analyse` (script-analyst), `art plan` (art-di
 **Good to know.**
 - A job that waits for you does not hold its agent: only jobs on other models count against an agent's `max_parallel` (1 by default, `agents/<agent>.md`), so one agent has several tasks waiting at once. The client provider's `concurrency` (8) is the limit: that many jobs wait, the next ones queue behind them.
 - No timeout, and the provider is never marked down: a waiting job just waits. A job you stop (`vno_stop_now`, a model change) drops its task, and a later submit gets "task not found (it was aborted, answered, or the engine restarted)". The queue lives in memory: an engine restart loses the tasks, and the running jobs ask again.
-- Out of scope: the Pixel Studio draw loop (the `pixel-studio-draw` mode, task `vn.assets.draw`, which asks the art-director role) is multi-turn and bounded by `drawTimeoutS` (240), so it would time out with `client`. For a project in that mode keep the art-director on a real model (or pin only the art plan by agent), or draw the sprites yourself with the pixel-studio MCP and `vno_asset_replace`. Images and music still come from ComfyUI and Chiptune Studio.
+- Pixel Studio drawing (the `pixel-studio-draw` mode, task `vn.assets.draw`, which asks the art-director role) works with `client` too: `drawMode: auto` in `config/studios.md` draws a sprite from a grid when the model is the client, in one task with no time limit. The task asks for `{rows: [...]}`: the sprite as h rows of w characters, `.` for a transparent pixel and `0-9a-zA-Z` for the palette colour of that index (the task lists the palette and the reference already reduced to it); `vno_submit_task` checks the row count, the length and the alphabet. Answer with the cleaned-up rows. (`drawMode: loop` is the multi-turn way: one task per step, bounded by `drawSteps`; with a client model it has no time limit.) Images and music still come from ComfyUI and Chiptune Studio.
 - Jobs that never call a model (analyse with nothing to settle, stage with every cue set by hand, build, lint) run as usual.
 
 ## The queue
@@ -161,8 +162,8 @@ Eight pipeline steps ask a model: `analyse` (script-analyst), `art plan` (art-di
 | Pipeline | `vno_run_pipeline`, `vno_plan`, `vno_status`, `vno_wait`, `vno_pause_all`, `vno_resume_all`, `vno_stop_now`, `vno_clear_queue` |
 | Model work by you (`client/claude-code`) | `vno_client_tasks`, `vno_get_task`, `vno_submit_task`, `vno_release_task` |
 | Editions | `vno_add_edition`, `vno_edition_set`, `vno_get_edition`, `vno_update_beat`, `vno_align_report` |
-| Assets, music, staging | `vno_asset_list`, `vno_asset_set`, `vno_asset_replace`, `vno_asset_regen`, `vno_asset_pick`, `vno_asset_lock`, `vno_asset_unlock`, `vno_asset_generate`, `vno_set_music`, `vno_set_cues` |
-| Voice | `vno_voice_status`, `vno_voice_plan`, `vno_voice_set`, `vno_voice_preview`, `vno_voice_generate` |
+| Assets, music, staging | `vno_asset_list`, `vno_asset_set`, `vno_asset_replace`, `vno_asset_import`, `vno_asset_regen`, `vno_asset_pick`, `vno_asset_lock`, `vno_asset_unlock`, `vno_asset_generate`, `vno_set_music`, `vno_set_cues` |
+| Voice | `vno_voice_status`, `vno_voice_plan`, `vno_voice_set`, `vno_voice_preview`, `vno_voice_generate`, `vno_voice_import` |
 | Generators | `vno_studios_status`, `vno_comfy_status`, `vno_comfy_free`, `vno_themes` |
 | Build | `vno_build`, `vno_lint`, `vno_android_preflight`, `vno_android_build`, `vno_renpy_config_get`, `vno_renpy_config_set` |
 

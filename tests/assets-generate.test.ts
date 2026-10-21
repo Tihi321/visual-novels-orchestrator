@@ -235,10 +235,10 @@ describe('generateAsset', () => {
     if (!r.ok) expect(r.entry).toBe(e)
   })
 
-  it('generates a cover (1080x1920) and music (raw audio, seconds, format)', async () => {
+  it('generates a landscape cover (the screen size) and music (raw audio, seconds, format)', async () => {
     const cover = await generateAsset(ctx(), stub('cover'))
     if (!cover.ok || cover.skipped) throw new Error('expected a version')
-    expect(await sharp(await readFile(resolveFile(dir, cover.entry)!)).metadata()).toMatchObject({ width: 1080, height: 1920 })
+    expect(await sharp(await readFile(resolveFile(dir, cover.entry)!)).metadata()).toMatchObject({ width: 1920, height: 1080 })
     const music = await generateAsset(ctx({ sizes: { musicSeconds: 95, musicFormat: 'opus' } }), stub('music_01'))
     if (!music.ok || music.skipped) throw new Error('expected a version')
     expect(music.version.file).toBe('v1.mp3')

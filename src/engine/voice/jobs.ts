@@ -18,6 +18,10 @@ export interface VoiceIndexEntry {
   hash: string
   file: string
   speaker?: string
+  /** A clip you imported (`vno_voice_import`): generation keeps it, and a speaker change does not drop it. */
+  imported?: true
+  /** The hash of the edition text the imported clip was made for (to tell when the text changed since). */
+  textHash?: string
 }
 
 export const voiceDirOf = (svc: VnService, slug: string, lang: Lang): string => path.join(svc.store.dir(slug), 'voice', lang)
@@ -48,7 +52,7 @@ export async function invalidateSpeaker(svc: VnService, slug: string, speaker: s
     const index = await readVoiceIndexIn(dir)
     let changed = false
     for (const [beat, e] of Object.entries(index))
-      if (e.speaker === speaker) {
+      if (e.speaker === speaker && !e.imported) {
         delete index[beat]
         changed = true
         n++
@@ -150,6 +154,8 @@ export async function generateVibeClips(svc: VnService, slug: string, lang: Lang
   const index = await readVoiceIndexIn(dir)
   let kept = 0
   let skipped = 0
+  let importedKept = 0
+  let importedStale = 0
   const missing = new Set<string>()
   const todo: { beatId: string; slot: string; voice: string; text: string; hash: string; file: string }[] = []
   for (const chapter of book.chapters)
@@ -158,6 +164,13 @@ export async function generateVibeClips(svc: VnService, slug: string, lang: Lang
         if (beat.type === 'cast' || (o.beatId && beat.id !== o.beatId)) continue
         const text = edition.beats[beat.id]?.trim()
         if (!text) continue
+        // a clip you imported is never made again
+        const mine = index[beat.id]
+        if (mine?.imported && existsSync(path.join(dir, mine.file))) {
+          importedKept++
+          if (mine.textHash !== sha1(text)) importedStale++
+          continue
+        }
         const own = beat.type === 'line' && beat.speakerKey && voiceOf(beat.speakerKey) ? beat.speakerKey : NARRATOR
         const voice = voiceOf(own)
         if (!voice) {
@@ -208,10 +221,70 @@ export async function generateVibeClips(svc: VnService, slug: string, lang: Lang
   if (!work.length) await writeVoiceIndex(dir, index)
   if (failed && !made) throw new Error(`voice ${lang}: all ${failed} clip(s) failed: ${errors.join('; ')}`)
   const parts = [`${made} clip(s) made, ${kept} unchanged`]
+  if (importedKept) parts.push(importedClipsNote(importedKept, importedStale))
   if (todo.length > work.length) parts.push(`${todo.length - work.length} left (limit ${o.limit})`)
   if (failed) parts.push(`${failed} failed (${errors.join('; ')})`)
   if (skipped) parts.push(`${skipped} skipped: no ${lang} voice for ${[...missing].join(', ')} (${PLAN_HINT})`)
   return { made, kept, failed, skipped, status: 'done', message: `voice ${lang}: ${parts.join('; ')}` }
+}
+
+/** `2 imported clip(s) kept` (and `1 of them for text that changed`). */
+export const importedClipsNote = (kept: number, stale: number): string => `${kept} imported clip(s) kept${stale ? ` (${stale} of them for text that changed)` : ''}`
+
+export interface VoiceImportResult {
+  lang: Lang
+  /** Beat ids that now have an imported clip. */
+  imported: string[]
+  /** File names (or beat ids) that match no text beat of the project. */
+  unknown: string[]
+}
+
+const CLIP_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.opus', '.flac', '.m4a']
+
+/**
+ * Takes voice clips you made (or recorded) for one language: a single `file` for `beatId`, or a `folder` whose files are named
+ * `<beatId>.<ext>`. They are copied to `voice/<lang>/<beatId>.<ext>` and recorded as imported, so the generators keep them. A name that is
+ * not a text beat of the book is reported in `unknown`, and nothing is done for it.
+ */
+export async function importVoiceClips(svc: VnService, slug: string, lang: Lang, from: { beatId: string; file: string } | { folder: string }): Promise<VoiceImportResult> {
+  const book = await svc.store.loadBook(slug)
+  const edition = await svc.store.loadEdition(slug, lang).catch(() => null)
+  if (!edition) throw new Error(`${slug} has no ${lang} edition: add it first`)
+  const textBeats = new Set<string>()
+  for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.type !== 'cast') textBeats.add(b.id)
+  const files: { beatId: string; file: string }[] = []
+  const unknown: string[] = []
+  if ('folder' in from) {
+    if (!existsSync(from.folder)) throw new Error(`no such folder: ${from.folder}`)
+    for (const name of (await fs.readdir(from.folder)).sort()) {
+      const ext = path.extname(name).toLowerCase()
+      if (!CLIP_EXTENSIONS.includes(ext)) continue
+      const beatId = path.basename(name, path.extname(name))
+      if (textBeats.has(beatId)) files.push({ beatId, file: path.join(from.folder, name) })
+      else unknown.push(name)
+    }
+  } else {
+    if (!existsSync(from.file)) throw new Error(`no such file: ${from.file}`)
+    if (!CLIP_EXTENSIONS.includes(path.extname(from.file).toLowerCase())) throw new Error(`a voice clip is ${CLIP_EXTENSIONS.join(', ')} (got ${path.extname(from.file) || 'no extension'})`)
+    if (!textBeats.has(from.beatId)) throw new Error(`no text beat ${from.beatId} in ${slug} (vno_get_edition lists them)`)
+    files.push(from)
+  }
+  const dir = voiceDirOf(svc, slug, lang)
+  await fs.mkdir(dir, { recursive: true })
+  const index = await readVoiceIndexIn(dir)
+  const imported: string[] = []
+  for (const f of files) {
+    const ext = path.extname(f.file).toLowerCase()
+    const name = `${f.beatId}${ext}`
+    const old = index[f.beatId]
+    if (old && old.file !== name) await fs.rm(path.join(dir, old.file), { force: true })
+    await fs.copyFile(f.file, path.join(dir, name))
+    const bytes = await fs.readFile(path.join(dir, name))
+    index[f.beatId] = { hash: `import:${sha1(bytes.toString('latin1'))}`, file: name, imported: true, textHash: sha1(edition.beats[f.beatId]?.trim() ?? '') }
+    imported.push(f.beatId)
+  }
+  await writeVoiceIndex(dir, index)
+  return { lang, imported, unknown }
 }
 
 // ---- the Voice tab: set a voice, preview a voice ----

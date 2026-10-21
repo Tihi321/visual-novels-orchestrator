@@ -1,10 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildTools, callTool } from '../src/engine/mcp/tools'
 import type { ToolResult } from '../src/engine/mcp/tools'
 import { TASKS } from '../src/engine/vn/pipeline'
 import { book, failures, makeVnEnv, waitIdle } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
 import { waitFor } from './helpers'
+
+
+// these tests run a pipeline or import a whole book: under the load of the full suite 15 s is not always enough
+vi.setConfig({ testTimeout: 60_000 })
 
 let env: VnEnv | undefined
 afterEach(async () => {

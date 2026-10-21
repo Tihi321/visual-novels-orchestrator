@@ -11,9 +11,12 @@ export const assetIds = {
 }
 export const NARRATOR_KEY = 'narrator'
 
-/** Generation sizes: landscape for backgrounds, portrait for sheets, sprites and the cover. */
+/** Generation sizes: landscape for backgrounds and the cover (the menu picture), portrait for sheets and sprites. */
 export const LANDSCAPE = { w: 1664, h: 928 }
 export const PORTRAIT = { w: 928, h: 1664 }
+
+/** The framing words of a cover: the main menu shows it full screen with the buttons on the left. */
+export const COVER_FRAMING = 'wide 16:9 key art, landscape composition, keep the left third calm for the menu, full-bleed artwork, no border, no frame, no text, no lettering'
 
 export const DEFAULT_NEGATIVE = 'text, letters, words, watermark, signature, logo, blurry, low quality, deformed, extra limbs, extra fingers, border, frame, open book'
 
@@ -83,7 +86,7 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
       out.push(stub({ id: assetIds.sprite(key, expression), kind: 'sprite', engine: art.editor, size: { ...PORTRAIT }, refs: [assetIds.sheet(key)] }))
     }
   }
-  out.push(stub({ id: assetIds.cover(), kind: 'cover', engine: art.generator, size: { ...PORTRAIT } }))
+  out.push(stub({ id: assetIds.cover(), kind: 'cover', engine: art.generator, size: { ...LANDSCAPE } }))
   for (let n = 1; n <= settings.music.tracks; n++) out.push(stub({ id: assetIds.music(n), kind: 'music', engine: settings.music.engine, size: null }))
   if (settings.voice.enabled) {
     const engine = settings.voice.engines[settings.primaryLang] ?? settings.voice.engines[book.primaryLang] ?? ''
@@ -227,7 +230,7 @@ export function fallbackPrompt(asset: Pick<AssetEntry, 'id' | 'kind'>, book: VnB
       return ['Same character as the reference image', spriteFraming(expression), visualLooks(c?.looks)].filter(Boolean).join('. ')
     }
     case 'cover':
-      return [style, 'single key-art illustration', book.title, book.coverBrief, 'portrait composition, full-bleed artwork, no border, no frame, no text, no lettering'].filter(Boolean).join(', ')
+      return [style, 'single key-art illustration', book.title, book.coverBrief, COVER_FRAMING].filter(Boolean).join(', ')
     case 'music': {
       const tint = GENRE_MUSIC.find(([re]) => re.test(`${book.genre ?? ''} ${book.format} ${book.style}`))?.[1]
       const n = Number(asset.id.replace(/^music_/, '')) || 1

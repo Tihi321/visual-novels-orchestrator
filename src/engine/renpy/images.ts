@@ -87,6 +87,30 @@ export async function placeholderCover(title: string, res: Resolution): Promise<
   return placeholderBackground(title, res, 'png')
 }
 
+/**
+ * The main menu picture from the cover. A cover about as wide as the screen fills it (cut to fit). A narrower one (a portrait cover from an
+ * older project, or one you made by hand) is not cut to a strip: it is shown whole at the full screen height, centred right of the menu
+ * buttons (at 62% of the width), over a blurred and darkened copy of itself that fills the screen. In pixel art the fill is the mean colour
+ * of the cover (a blur would add colours) and the picture is scaled with the nearest-neighbour kernel.
+ */
+export async function menuImage(file: string, res: Resolution, pixel = false): Promise<Buffer> {
+  const kernel = pixel ? ('nearest' as const) : undefined
+  const meta = await sharp(file).metadata()
+  const ratio = (meta.width ?? 1) / (meta.height ?? 1) / (res.w / res.h)
+  if (ratio >= 0.85) return sharp(file).resize(res.w, res.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }).png().toBuffer()
+  let fill: Buffer
+  if (pixel) {
+    const mean = (await sharp(file).removeAlpha().stats()).channels.map((c) => Math.round(c.mean))
+    fill = await sharp({ create: { width: res.w, height: res.h, channels: 3, background: { r: mean[0] ?? 0, g: mean[1] ?? 0, b: mean[2] ?? 0 } } }).png().toBuffer()
+  } else {
+    fill = await sharp(file).resize(res.w, res.h, { fit: 'cover' }).blur(40).modulate({ brightness: 0.55 }).removeAlpha().png().toBuffer()
+  }
+  const front = await sharp(file).resize({ height: res.h, width: res.w, fit: 'inside', ...(kernel ? { kernel } : {}) }).png().toBuffer()
+  const fw = (await sharp(front).metadata()).width ?? res.w
+  const left = Math.max(0, Math.min(res.w - fw, Math.round(res.w * 0.62 - fw / 2)))
+  return sharp(fill).composite([{ input: front, left, top: 0 }]).png().toBuffer()
+}
+
 /** `lossless`: WebP without loss (pixel art: lossy WebP smears colour edges). */
 function encode(img: Sharp, format: ImageFormat, lossless = false): Promise<Buffer> {
   return format === 'png' ? img.png().toBuffer() : img.webp(lossless ? { lossless: true } : { quality: 88 }).toBuffer()
@@ -156,7 +180,7 @@ export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesRes
   const coverSrc = resolveAsset('cover')
   let cover: Buffer
   if (coverSrc && fs.existsSync(coverSrc)) {
-    cover = await sharp(coverSrc).resize(resolution.w, resolution.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }).png().toBuffer()
+    cover = await menuImage(coverSrc, resolution, !!inp.pixel)
   } else {
     cover = await placeholderCover(book.title, resolution)
     placeholders.push('cover')

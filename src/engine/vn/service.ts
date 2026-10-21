@@ -22,8 +22,10 @@ import type {
 } from '../../shared/protocol'
 import { assertKnownLang } from '../../shared/languages'
 import { CANONICAL_EXPRESSIONS, CHIPTUNE_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
-import type { AssetEntry, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
-import { deriveAssets, resolveStylePrompt, styleForKind } from '../assets/derive'
+import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
+import { deriveAssets, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
+import { importAssetFile } from '../assets/import'
+import type { ImportOptions } from '../assets/import'
 import { lock, mergeDerived, pickVersion, resolveFile, setCustom, unlock } from '../assets/manifest'
 import { listPalettes } from '../assets/palettes'
 import { createComfyClient } from '../comfy/client'
@@ -63,8 +65,8 @@ import type { VnTask } from './pipeline'
 import { coverId, sheetId, spriteId, voiceRefId } from './ids'
 import { clientFor, loadVoiceConfig } from '../voice/config'
 import type { VoiceConfig } from '../voice/config'
-import { previewVoice, setVoice } from '../voice/jobs'
-import type { VoicePreview } from '../voice/jobs'
+import { importVoiceClips, previewVoice, setVoice } from '../voice/jobs'
+import type { VoiceImportResult, VoicePreview } from '../voice/jobs'
 import type { VibeTtsClient } from '../voice/vibetts'
 import { chiptuneClientFor, loadStudiosConfig, pixelClientFor, startHint, studioRepo, studioUrl, STUDIO_NAMES } from '../studios/config'
 import type { StudioId, StudiosConfig } from '../studios/config'
@@ -648,6 +650,10 @@ export class VnService {
       const book = await this.store.loadBook(slug)
       const merged = mergeDerived(await this.store.loadAssets(slug), deriveAssets(book, settings))
       const assets = merged.manifest.assets.map((a) => {
+        // a cover that is not made yet and has a portrait plan (an older project) is planned landscape now: the menu picture is 16:9
+        if (a.kind === 'cover' && a.versions.length === 0 && !a.locked && !a.promptByHand && a.source === 'generated' && ((a.size?.w === PORTRAIT.w && a.size.h === PORTRAIT.h) || /portrait composition/i.test(a.prompt))) {
+          a = { ...a, size: { ...LANDSCAPE }, prompt: a.prompt.replace(/portrait composition/gi, 'landscape composition') }
+        }
         const engine = engineFor(a.kind, settings)
         if (!engine || a.locked || a.source !== 'generated' || a.engine === engine) return a
         // an asset with versions keeps its engine, except music: that follows the project's music provider (chiptune or the configured ComfyUI engine)
@@ -1017,6 +1023,52 @@ export class VnService {
     await this.emitAsset(slug, next)
     if (opts.rebuild !== false) await this.rebuildAfterEdit(slug)
     return next
+  }
+
+  /**
+   * Imports a file you made (or found) as the asset: an image is post-processed like a generated one (a sprite on a plain background is cut
+   * out and trimmed, a background is fitted to the screen, a pixel project gets pixel art; `process: 'none'` keeps the file as it is), music
+   * is copied. It becomes a new locked version (`custom:import`) and the original stays next to it. In hand-made art mode ComfyUI is never
+   * called for it unless BiRefNet is asked for. Rebuilds the game unless `rebuild` is false.
+   */
+  async importAsset(slug: string, id: string, file: string, opts: ImportOptions & { rebuild?: boolean } = {}): Promise<{ entry: AssetEntry; version: AssetVersion }> {
+    const source = path.resolve(file)
+    if (!existsSync(source)) throw new Error(`no such file: ${source}`)
+    await this.requireAsset(slug, id)
+    const { settings } = await this.store.loadSettings(slug)
+    const book = await this.store.loadBook(slug)
+    const res = (await loadRenpyConfig(this.dataDir)).resolution
+    const studios = await this.studios()
+    const ctx = {
+      book,
+      settings,
+      projectDir: this.store.dir(slug),
+      comfy: await this.comfy(),
+      palettesDir: dataFolders(this.dataDir).palettes,
+      pixel: studios.pixel,
+      sizes: { background: { w: res.w, h: res.h }, cover: { w: res.w, h: res.h }, spriteHeight: Math.round(res.h * 0.9) }
+    }
+    let imported: { entry: AssetEntry; version: AssetVersion } | undefined
+    await this.store.updateAsset(slug, id, async (cur) => {
+      imported = await importAssetFile(ctx, cur, source, opts)
+      return imported.entry
+    })
+    const done = imported!
+    this.log(`${slug}/${id}: version ${done.version.n} imported from ${path.basename(source)}`)
+    await this.emitAsset(slug, done.entry)
+    if (opts.rebuild !== false) await this.rebuildAfterEdit(slug)
+    return done
+  }
+
+  /** Imports voice clips you made for one language (one file for a beat, or a folder of `<beatId>.<ext>` files). The generators keep them. */
+  async importVoice(slug: string, lang: Lang, from: { beatId: string; file: string } | { folder: string }, opts: { rebuild?: boolean } = {}): Promise<VoiceImportResult> {
+    const r = await importVoiceClips(this, slug, lang, from)
+    if (r.imported.length) {
+      this.log(`${slug}: ${r.imported.length} voice clip(s) imported for ${lang}`)
+      await this.emitProject(slug)
+      if (opts.rebuild !== false) await this.rebuildAfterEdit(slug)
+    }
+    return r
   }
 
   async pickAssetVersion(slug: string, id: string, n: number, opts: { rebuild?: boolean } = {}): Promise<AssetEntry> {

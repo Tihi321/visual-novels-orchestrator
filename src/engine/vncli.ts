@@ -31,6 +31,7 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   asset replace <slug> <id> <file>       use your own file (custom, locked)
   asset pick <slug> <id> <version>       use another version
   asset regen <slug> <id> [--prompt text] [--engine id] [--seed n] [--sprites]   (--sprites: a sheet, also make its sprites again after it)
+  asset import <slug> <id> <file> [--no-process] [--bg key|birefnet|none] [--no-trim] [--no-pixelate]   use a file you made, cut out / fitted / pixelated like a generated image
   asset lock|unlock <slug> <id>
   clear-queue [slug]                     delete the queued jobs (of a project, or all) and mark their pipeline steps skipped
   build <slug>                           build the Ren'Py game
@@ -39,6 +40,7 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   android <slug> [--preflight] [--bundle]   check the setup / build the Android package
   voice <slug> [--lang hr] [--only <beatId>] [--limit n]   generate the voice clips (only when the project's voice is on)
   voice plan <slug> [--overwrite]        assign a VibeTTS voice per character, the narrator and edition language
+  voice import <slug> --lang hr (--folder <dir> | --beat <beatId> --file <clip>)   use clips you made: <beatId>.<ext> files; generation keeps them
   voice set <slug> <speaker> <lang> <voice>   pick one voice (a character key or narrator; en, hr; an id from voice status)
   voice status                           is VibeTTS reachable, and its fixed voices (Kokoro: English, Supertonic: 31 languages)
   comfy status|free                      ComfyUI lanes and engines / free its VRAM
@@ -54,7 +56,7 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
 /** The commands the VN CLI handles (the rest of index.ts handles `probe`, `key-set` and the plain engine). */
 export const CLI_COMMANDS = new Set(['books', 'import', 'projects', 'run', 'edition', 'analyse', 'plan', 'assets', 'generate', 'asset', 'clear-queue', 'build', 'lint', 'play', 'android', 'voice', 'comfy', 'settings', 'studios', 'studio', 'themes', 'help'])
 
-const BOOL_FLAGS = new Set(['force', 'preflight', 'bundle', 'run', 'verbose', 'json', 'no-build', 'refresh-prompts', 'help', 'outline', 'wait', 'sprites'])
+const BOOL_FLAGS = new Set(['force', 'preflight', 'bundle', 'run', 'verbose', 'json', 'no-build', 'refresh-prompts', 'help', 'outline', 'wait', 'sprites', 'no-process', 'no-trim', 'no-pixelate'])
 
 export interface ParsedCli {
   command: string
@@ -334,6 +336,14 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
           out(`${id}: version ${n} selected`)
           return rebuild ? waitAndReport(svc, slug) : 0
         }
+        case 'import': {
+          if (!extra) throw new Error('usage: asset import <slug> <id> <file> [--no-process] [--bg key|birefnet|none]')
+          const bg = flag(p, 'bg')
+          if (bg !== undefined && !['key', 'birefnet', 'none'].includes(bg)) throw new Error('--bg must be key, birefnet or none')
+          const r = await svc.importAsset(slug, id, extra, { process: p.flags['no-process'] ? 'none' : 'auto', removeBackground: bg as 'key' | 'birefnet' | 'none' | undefined, trim: p.flags['no-trim'] ? false : undefined, pixelate: p.flags['no-pixelate'] ? false : undefined, rebuild })
+          out(`${id}: version ${r.version.n} imported from ${path.resolve(extra)} (custom:import, locked)${r.version.warnings?.length ? `; ${r.version.warnings.join('; ')}` : ''}`)
+          return rebuild ? waitAndReport(svc, slug) : 0
+        }
         case 'regen': {
           const seed = flag(p, 'seed')
           const r = await svc.regenerateAsset(slug, id, { prompt: flag(p, 'prompt'), engine: flag(p, 'engine'), seed: seed === undefined ? undefined : Number(seed), rebuild, sprites: !!p.flags.sprites })
@@ -413,6 +423,18 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
         const r = await svc.setVoice(setSlug!, speaker!, setCode, voice!)
         out(`${speaker} (${setCode}): ${r.voice}, preview ${r.file}`)
         return 0
+      }
+      if (p.args[0] === 'import') {
+        const [, impSlug] = need(p, 2, 'voice import <slug> --lang hr (--folder <dir> | --beat <beatId> --file <clip>)')
+        const impLang = lang(p)
+        if (!impLang) throw new Error('usage: voice import <slug> --lang hr (--folder <dir> | --beat <beatId> --file <clip>)')
+        const folder = flag(p, 'folder')
+        const file = flag(p, 'file')
+        const beat = flag(p, 'beat')
+        if (!folder && !(file && beat)) throw new Error('give --folder <dir>, or --beat <beatId> with --file <clip>')
+        const r = await svc.importVoice(impSlug!, impLang, folder ? { folder: path.resolve(folder) } : { beatId: beat!, file: path.resolve(file!) })
+        out(`${r.imported.length} clip(s) imported for ${impLang}${r.unknown.length ? `; no text beat for: ${r.unknown.join(', ')}` : ''}`)
+        return r.imported.length && p.flags['no-build'] !== true ? waitAndReport(svc, impSlug!) : 0
       }
       if (p.args[0] === 'plan') {
         const [, planSlug] = need(p, 2, 'voice plan <slug> [--overwrite]')

@@ -1,5 +1,6 @@
 import { cp, mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
+import sharp from 'sharp'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildTools, callTool } from '../src/engine/mcp/tools'
 import type { McpOptions, ToolResult } from '../src/engine/mcp/tools'
@@ -303,5 +304,42 @@ describe('a new style prefix reaches the prompts that are not generated yet (V11
     // changing nothing about the style restyles nothing
     const again = await ok('vno_update_settings', { slug, art: { stylePrompt: STYLE } })
     expect(again.restyle).toBeUndefined()
+  })
+})
+
+describe('the cover is planned landscape (V9)', () => {
+  const portrait = { w: 928, h: 1664 }
+  const oldPrompt = 'soft watercolour, a lighthouse, portrait composition, full-bleed artwork'
+
+  it('an empty portrait cover plan becomes landscape; one with an image, set by hand or locked is left alone', async () => {
+    expect(await asset('cover')).toMatchObject({ size: { w: 1664, h: 928 } }) // a new project plans it landscape
+    const old = async (patch: Record<string, unknown> = {}) => {
+      await svc().store.updateAsset(slug, 'cover', (c) => ({ ...c, size: portrait, prompt: oldPrompt, promptByHand: undefined, locked: false, versions: [], selected: null, ...patch }))
+    }
+    await old()
+    await svc().reconcileAssets(slug)
+    expect(await asset('cover')).toMatchObject({ size: { w: 1664, h: 928 }, prompt: 'soft watercolour, a lighthouse, landscape composition, full-bleed artwork' })
+
+    await old({ versions: [{ n: 1, file: 'v1.webp', createdAt: new Date().toISOString(), seed: 1, engine: 'z-image-turbo', prompt: oldPrompt }], selected: 1 })
+    await svc().reconcileAssets(slug)
+    expect(await asset('cover')).toMatchObject({ size: portrait, prompt: oldPrompt }) // it has an image: left alone
+
+    await old({ promptByHand: true })
+    await svc().reconcileAssets(slug)
+    expect(await asset('cover')).toMatchObject({ size: portrait, prompt: oldPrompt })
+
+    await old({ locked: true })
+    await svc().reconcileAssets(slug)
+    expect(await asset('cover')).toMatchObject({ size: portrait, prompt: oldPrompt })
+  })
+
+  it('the art plan asks for a landscape menu picture, and the generated cover is the screen size', async () => {
+    await ok('vno_plan', { slug, wait: true })
+    const prompt = (await asset('cover')).prompt
+    expect(prompt).toMatch(/landscape composition/)
+    expect(prompt).not.toMatch(/portrait/)
+    await ok('vno_asset_generate', { slug, only: ['cover'], wait: true })
+    const e = await asset('cover')
+    expect(await sharp(path.join(svc().store.dir(slug), 'assets', 'cover', e.versions[0]!.file)).metadata()).toMatchObject({ width: 1920, height: 1080 })
   })
 })

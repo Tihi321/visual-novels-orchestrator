@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fallbackNegative, fallbackPrompt, resolveStylePrompt } from '../src/engine/assets/derive'
 import { sanitizePrompt } from '../src/engine/vn/agents/art-director'
 import type { Decision } from '../src/engine/vn/agents/script-analyst'
@@ -12,6 +12,10 @@ import { MockProvider } from '../src/engine/models/mock'
 import { answerClientTasks, book, failures, jsonAfter, makeVnEnv, waitIdle } from './vn-helpers'
 import { waitFor } from './helpers'
 import type { VnEnv } from './vn-helpers'
+
+
+// these tests run a pipeline or import a whole book: under the load of the full suite 15 s is not always enough
+vi.setConfig({ testTimeout: 60_000 })
 
 let env: VnEnv | undefined
 afterEach(async () => {

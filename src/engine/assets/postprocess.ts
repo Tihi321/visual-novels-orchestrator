@@ -21,6 +21,15 @@ export async function toWebp(buf: Buffer, opts: WebpOpts = {}): Promise<Buffer> 
     .toBuffer()
 }
 
+/** The share (0 to 1) of an image's pixels that are clearly transparent (alpha under 250). An image with no alpha channel has none. */
+export async function transparentShare(buf: Buffer): Promise<number> {
+  const { data, info } = await sharp(buf).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+  if (info.channels < 4) return 0
+  let clear = 0
+  for (let i = 3; i < data.length; i += 4) if (data[i]! < 250) clear++
+  return clear / (data.length / 4)
+}
+
 interface Raw {
   data: Buffer
   width: number

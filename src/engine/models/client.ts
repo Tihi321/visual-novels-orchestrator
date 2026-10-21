@@ -235,7 +235,7 @@ const typeOf = (v: unknown): string => (v === null ? 'null' : Array.isArray(v) ?
 
 /**
  * A small JSON-schema check, not a full validator (no ajv dependency): `type`, `enum`, `const`, `required`, `properties`, `items`,
- * `anyOf`/`oneOf`, `minItems` and `minLength`. Anything else in the schema is ignored, so it never refuses what the job's own zod schema accepts
+ * `anyOf`/`oneOf`, `minItems`, `maxItems`, `minLength`, `maxLength` and `pattern`. Anything else in the schema is ignored, so it never refuses what the job's own zod schema accepts
  * for a reason it can't see. A field with a `default` is not reported as missing (`z.toJSONSchema` lists it as required).
  */
 function validate(v: unknown, schema: Record<string, unknown>, at: string, out: string[]): void {
@@ -258,8 +258,17 @@ function validate(v: unknown, schema: Record<string, unknown>, at: string, out: 
   }
   if ('const' in schema && JSON.stringify(schema.const) !== JSON.stringify(v)) out.push(`${at}: must be ${JSON.stringify(schema.const)}`)
   if (typeof v === 'string' && typeof schema.minLength === 'number' && v.length < schema.minLength) out.push(`${at}: must be at least ${schema.minLength} characters`)
+  if (typeof v === 'string' && typeof schema.maxLength === 'number' && v.length > schema.maxLength) out.push(`${at}: must be at most ${schema.maxLength} characters`)
+  if (typeof v === 'string' && typeof schema.pattern === 'string') {
+    try {
+      if (!new RegExp(schema.pattern, 'u').test(v)) out.push(`${at}: does not match the pattern ${schema.pattern}`)
+    } catch {
+      /* a pattern this check cannot read is not held against the answer */
+    }
+  }
   if (Array.isArray(v)) {
     if (typeof schema.minItems === 'number' && v.length < schema.minItems) out.push(`${at}: needs at least ${schema.minItems} items`)
+    if (typeof schema.maxItems === 'number' && v.length > schema.maxItems) out.push(`${at}: needs at most ${schema.maxItems} items`)
     if (schema.items && typeof schema.items === 'object') v.forEach((item, i) => validate(item, schema.items as Record<string, unknown>, `${at}[${i}]`, out))
   }
   if (v && typeof v === 'object' && !Array.isArray(v)) {

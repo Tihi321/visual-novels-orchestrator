@@ -29,9 +29,14 @@ export const studiosConfigSchema = z.object({
   timeoutS: z.number().positive().default(15),
   importTimeoutS: z.number().positive().default(120),
   renderTimeoutS: z.number().positive().default(300),
-  /** The pixel-studio-draw agent loop: at most this many model steps and seconds per sprite. */
+  /** The pixel-studio-draw agent: at most this many model steps and seconds per sprite (0 seconds: no time limit). */
   drawSteps: z.number().int().min(1).max(60).default(12),
-  drawTimeoutS: z.number().positive().default(240)
+  drawTimeoutS: z.number().min(0).default(240),
+  /**
+   * How the sprite is drawn. `loop`: the model calls Pixel Studio's drawing tools turn by turn. `grid`: one request for the whole sprite as rows of
+   * text, painted from here (made for a model that takes minutes per answer). `auto` (default): `grid` when the job's model is a client model, else `loop`.
+   */
+  drawMode: z.enum(['auto', 'loop', 'grid']).default('auto')
 })
 export type StudiosConfig = z.infer<typeof studiosConfigSchema>
 
@@ -50,6 +55,16 @@ export async function loadStudiosConfig(dataDir: string, env: NodeJS.ProcessEnv 
     ...(env.VNO_PIXEL_STUDIO_URL ? { pixelStudioUrl: env.VNO_PIXEL_STUDIO_URL } : {}),
     ...(env.VNO_CHIPTUNE_STUDIO_URL ? { chiptuneStudioUrl: env.VNO_CHIPTUNE_STUDIO_URL } : {})
   }
+}
+
+/**
+ * How a sprite is drawn and how long the model may take. `drawMode: auto` draws from a grid (one request) when the job's model is a client model
+ * and with the loop otherwise. A client model can take minutes per answer, so the loop has no time limit then (`drawSteps` still bounds it),
+ * and `drawTimeoutS: 0` means no limit either. `ms` is Infinity for no limit.
+ */
+export function resolveDrawMode(c: Pick<StudiosConfig, 'drawMode' | 'drawTimeoutS'>, clientModel: boolean): { mode: 'loop' | 'grid'; ms: number } {
+  const mode = c.drawMode === 'auto' ? (clientModel ? 'grid' : 'loop') : c.drawMode
+  return { mode, ms: c.drawTimeoutS === 0 || (mode === 'loop' && clientModel) ? Infinity : c.drawTimeoutS * 1000 }
 }
 
 export const STUDIO_NAMES: Record<StudioId, string> = { pixel: 'Pixel Studio', chiptune: 'Chiptune Studio' }

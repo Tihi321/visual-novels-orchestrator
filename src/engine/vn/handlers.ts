@@ -12,6 +12,7 @@ import { pickVersion, resolveFile, setCustom } from '../assets/manifest'
 import { lanesOf } from '../comfy/client'
 import { loadCustomWorkflow } from '../comfy/custom-workflow'
 import { BudgetError, isAbortError } from '../models/types'
+import type { ChatMessage } from '../models/types'
 import type { JobFile } from '../queue/jobs'
 import type { HandlerOptions, JobContext } from '../queue/scheduler'
 import type { Scheduler } from '../queue/scheduler'
@@ -35,13 +36,15 @@ import type { ExistingArt } from './agents/script-analyst'
 import { mergeChapterCues, stageChapter } from './agents/stage-director'
 import { planVoices, speakerOf } from './agents/voice-director'
 import { describeVoices, voiceLangsOf } from '../voice/catalog'
-import { generateVibeClips, planVibeVoices, readVoiceIndexIn } from '../voice/jobs'
+import { generateVibeClips, importedClipsNote, planVibeVoices, readVoiceIndexIn } from '../voice/jobs'
 import type { VoiceIndexEntry } from '../voice/jobs'
 import type { AgentCall } from './agents/common'
 import { applyAlignmentFixes, applyDecisions } from './fixes'
 import { voiceRefId } from './ids'
 import { bodyOf, isStep, Semaphore, STEP_OF_TASK, TASKS } from './pipeline'
 import type { VnTask } from './pipeline'
+import { resolveDrawMode } from '../studios/config'
+import type { StudiosConfig } from '../studios/config'
 import { dataFolders, loadComfyConfigFor, loadRenpyConfig } from './project'
 import { VnService } from './service'
 import type { VnDeps } from './service'
@@ -342,6 +345,17 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
 
   // ---- generate ----
 
+  /**
+   * The drawing agent of a sprite: how it asks the model, the mode and the limits (see `resolveDrawMode`).
+   */
+  const drawing = (ctx: JobContext, config: StudiosConfig) => {
+    const { mode, ms } = resolveDrawMode(config, ctx.model?.provider.kind === 'client')
+    return {
+      ask: async (messages: ChatMessage[], schema?: Record<string, unknown>) => (await ctx.chat({ messages, schema, maxTokens: mode === 'grid' ? 8000 : 3000, temperature: mode === 'grid' ? 0.2 : 0.3 })).text,
+      draw: { steps: config.drawSteps, ms, mode }
+    }
+  }
+
   /** Generates one asset (a new version) and records it. Throws when ComfyUI fails, so the job retries. */
   const generateOne = async (ctx: JobContext, slug: string, id: string, o: GenerateOptions, mode: { draw?: boolean } = {}): Promise<{ skipped?: string; entry: AssetEntry }> => {
     const { settings } = await store.loadSettings(slug)
@@ -369,12 +383,12 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
             pixel: studios.pixel,
             chiptune: studios.chiptune,
             chipPlan: music?.tracks?.[id],
-            ...(mode.draw ? { ask: async (messages) => (await ctx.chat({ messages, maxTokens: 3000, temperature: 0.3 })).text, draw: { steps: studios.config.drawSteps, ms: studios.config.drawTimeoutS * 1000 } } : {}),
+            ...(mode.draw ? drawing(ctx, studios.config) : {}),
             resolveRef: (rid) => {
               const e = manifest.assets.find((a) => a.id === rid)
               return e ? resolveFile(projectDir, e) : null
             },
-            sizes: { background: { w: res.w, h: res.h }, cover: { w: res.h, h: res.w }, spriteHeight: Math.round(res.h * 0.9), musicSeconds: music?.seconds[id] ?? DEFAULT_SECONDS, musicFormat: config.audioFormat },
+            sizes: { background: { w: res.w, h: res.h }, cover: { w: res.w, h: res.h }, spriteHeight: Math.round(res.h * 0.9), musicSeconds: music?.seconds[id] ?? DEFAULT_SECONDS, musicFormat: config.audioFormat },
             onProgress: (p) => {
               if (p.stage !== 'comfy') ctx.log(`${p.id}: ${p.stage} ${p.message}`)
             },
@@ -683,12 +697,21 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       let made = 0
       let kept = 0
       let skipped = 0
+      let importedKept = 0
+      let importedStale = 0
       for (const chapter of book.chapters) {
         for (const scene of chapter.scenes) {
           for (const beat of scene.beats) {
             if (beat.type === 'cast' || (only && beat.id !== only)) continue
             const text = edition.beats[beat.id]?.trim()
             if (!text) continue
+            // a clip you imported is never made again
+            const mine = index[beat.id]
+            if (mine?.imported && existsSync(path.join(dir, mine.file))) {
+              importedKept++
+              if (mine.textHash !== sha1(text)) importedStale++
+              continue
+            }
             const speaker = beat.type === 'line' && beat.speakerKey ? beat.speakerKey : 'narrator'
             const ref = refs.get(voiceRefId(speaker)) ?? refs.get(voiceRefId('narrator'))
             if (wf.mapping.voiceRef && !ref) {
@@ -714,6 +737,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       }
       await fs.writeFile(path.join(dir, 'index.json'), JSON.stringify(index, null, 2))
       const parts = [`${made} clip(s) made, ${kept} unchanged`]
+      if (importedKept) parts.push(importedClipsNote(importedKept, importedStale))
       if (skipped) parts.push(`${skipped} skipped: no voice reference for ${[...missingRef].join(', ')} (upload one with setVoiceRef)`)
       const msg = `voice ${lang}: ${parts.join('; ')}`
       await svc.setStep(slug, 'voice', skipped && !made && !kept ? 'skipped' : 'done', msg)

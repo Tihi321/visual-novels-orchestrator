@@ -72,7 +72,7 @@ export function describeAsset(book: VnBook, entry: Pick<AssetEntry, 'id' | 'kind
       return { id: entry.id, kind: 'sprite (the same character as the sheet)', name: c?.name ?? key, looks: clip(visualLooks(c?.looks) || (c?.looks ?? ''), 240), expression: at < 0 ? 'neutral' : rest.slice(at + 1) }
     }
     case 'cover':
-      return { id: entry.id, kind: 'cover', title: book.title, brief: clip(book.coverBrief ?? '', 400) }
+      return { id: entry.id, kind: 'cover (the main menu picture: wide 16:9 landscape key art, the left third calm for the menu buttons)', title: book.title, brief: clip(book.coverBrief ?? '', 400) }
     default:
       return { id: entry.id, kind: entry.kind }
   }
