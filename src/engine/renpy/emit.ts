@@ -1,5 +1,6 @@
 import path from 'node:path'
 import type { Edition, Lang, VnBook, VnChapter, VnScene } from '../../shared/vn'
+import { aliasIndex } from '../vn/aliases'
 import { renpyPlainString, renpyString, renpyText, slugify } from './escape'
 import { bgImageName, pickColor, spriteImageName, type UsedImages } from './images'
 import { assignSlots, type Slot, type StageCues } from './stage'
@@ -99,17 +100,27 @@ interface CharacterTable {
   /** Ad hoc speakers: label -> variable. */
   extra: Map<string, string>
   known: Set<string>
+  /** Character key -> the aliases (1-based, as in `aliases`) that a line is spoken under. Each gets a `Character` of its own. */
+  aliasUsed: Map<string, Set<number>>
 }
+
+/** The used alias of a character as a variable: `mara__a1`. */
+const aliasVar = (key: string, n: number): string => `${charVar(key)}__a${n}`
 
 function collectCharacters(book: VnBook): CharacterTable {
   const known = new Set(book.characters.map((c) => c.key))
   const extra = new Map<string, string>()
+  const aliasUsed = new Map<string, Set<number>>()
   const taken = new Set<string>()
   for (const ch of book.chapters)
     for (const sc of ch.scenes)
       for (const b of sc.beats) {
         if (b.type !== 'line') continue
-        if (b.speakerKey && known.has(b.speakerKey)) continue
+        if (b.speakerKey && known.has(b.speakerKey)) {
+          const n = aliasIndex(book.characters.find((c) => c.key === b.speakerKey)!, b.speakerLabel)
+          if (n > 0) aliasUsed.set(b.speakerKey, (aliasUsed.get(b.speakerKey) ?? new Set()).add(n))
+          continue
+        }
         const label = b.speakerLabel.trim() || 'Unknown'
         if (extra.has(label)) continue
         let name = `extra_${slugify(label)}`
@@ -118,7 +129,7 @@ function collectCharacters(book: VnBook): CharacterTable {
         taken.add(name)
         extra.set(label, name)
       }
-  return { extra, known }
+  return { extra, known, aliasUsed }
 }
 
 /** The `characters.rpy` file. */
@@ -131,6 +142,11 @@ export function emitCharacters(book: VnBook, editions: Edition[], voiceOn: boole
     const tag = voiceOn ? `, voice_tag=${renpyPlainString(c.key)}` : ''
     const col = uniform ? '' : `, color="${characterColor(c.key, light)}"`
     out.push(`define ${charVar(c.key)} = Character(_(${renpyString(name)})${col}${tag})`)
+    // a line spoken under an alias shows the alias, not the name (the reader may not know it yet); same colour, voice and sprite
+    for (const n of [...(table.aliasUsed.get(c.key) ?? [])].sort((a, b) => a - b)) {
+      const alias = names[`${c.key}#${n}`]?.trim() || c.aliases![n - 1]!
+      out.push(`define ${aliasVar(c.key, n)} = Character(_(${renpyString(alias)}), kind=${charVar(c.key)})`)
+    }
   }
   for (const [label, v] of table.extra) {
     out.push(`define ${v} = Character(_(${renpyString(label)})${uniform ? '' : `, color="${characterColor(v, light)}"`})`)
@@ -243,7 +259,8 @@ function emitScene(w: Writer, ctx: ChapterCtx, scene: VnScene): void {
           w.push('    with vn_show')
         }
       }
-      const who = key && ctx.table.known.has(key) ? charVar(key) : (ctx.table.extra.get(beat.speakerLabel.trim() || 'Unknown') ?? 'narrator')
+      const alias = key && ctx.table.known.has(key) ? aliasIndex(ctx.book.characters.find((c) => c.key === key)!, beat.speakerLabel) : 0
+      const who = key && ctx.table.known.has(key) ? (alias > 0 ? aliasVar(key, alias) : charVar(key)) : (ctx.table.extra.get(beat.speakerLabel.trim() || 'Unknown') ?? 'narrator')
       emitSay(w, ctx, beat.id, `${who} `, beat.text, voice)
       return
     }
@@ -371,8 +388,13 @@ export function translatableStrings(book: VnBook, primaryNames: Record<string, s
     })
     if (ch.ending && ch.ending.trim()) out.push({ old: renpyText(ch.ending), pick: (e) => e.endings[ch.n], what: `chapter ${ch.n} ending` })
   }
+  const used = collectCharacters(book).aliasUsed
   for (const c of book.characters) {
     out.push({ old: renpyText(primaryNames[c.key]?.trim() || c.name), pick: (e) => e.characterNames[c.key], what: `name of ${c.key}` })
+    // the alias a line is spoken under is shown too: an edition translates it under `<key>#<n>`
+    for (const n of [...(used.get(c.key) ?? [])].sort((a, b) => a - b)) {
+      out.push({ old: renpyText(primaryNames[`${c.key}#${n}`]?.trim() || c.aliases![n - 1]!), pick: (e) => e.characterNames[`${c.key}#${n}`], what: `alias ${n} of ${c.key}` })
+    }
   }
   return out
 }

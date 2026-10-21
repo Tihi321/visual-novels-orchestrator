@@ -433,4 +433,32 @@ describe('the service and the tools', () => {
     expect(await readFile(path.join(game, 'ch03.rpy'), 'utf8')).toContain('the_end')
     expect((await svc().detail(slug)).build).toMatchObject({ slug })
   }, 60_000)
+
+  it('a Japanese title gets a romaji slug, a Han title a hash slug, and the keys are ASCII', async () => {
+    const jp = await call('vno_create_project', { book: { title: 'さくらの手紙', characters: [{ name: 'さくら', looks: 'a girl' }], chapters: [{ title: '一', scenes: [{ place: '桜の庭', beats: [{ speaker: 'さくら', text: 'こんにちは' }] }] }] } })
+    expect(jp.slug).toMatch(/^sakurano-[0-9a-f]{6}$/)
+    const story = (await call('vno_get_story', { slug: jp.slug as string })).book as VnBook
+    expect(story.characters[0]!.key).toBe('sakura')
+    expect(story.chapters[0]!.scenes[0]!.beats[0]).toMatchObject({ speakerKey: 'sakura', speakerLabel: 'さくら' })
+    const han = await call('vno_create_project', { book: { title: '红楼梦', chapters: [{ title: 'A', scenes: [] }] } })
+    expect(han.slug).toMatch(/^book-[0-9a-f]{6}$/)
+    const ru = await call('vno_create_project', { book: { title: 'Война и мир', characters: [{ name: 'Наташа' }], chapters: [{ title: 'A', scenes: [{ place: 'Причал', beats: [{ speaker: 'Наташа', text: 'Привет' }] }] }] } })
+    expect(ru.slug).toBe('voina-i-mir')
+    expect(((await call('vno_get_story', { slug: 'voina-i-mir' })).book as VnBook).characters[0]!.key).toBe('natasha')
+  })
+
+  it('vno_edition_set takes the translated name of an alias under <key>#<n>, and a story edit keeps it', async () => {
+    const slug = (await call('vno_create_project', { book: { title: 'The Clock', characters: [{ name: 'Kessler', aliases: ['the bald man'] }], chapters: [{ title: 'A', scenes: [{ place: 'workshop', beats: [{ speaker: 'the bald man', text: 'Hello.' }] }] }] } })).slug as string
+    const r = await call('vno_edition_set', { slug, lang: 'fr', characterNames: { kessler: 'Kessler', 'kessler#1': "l'homme chauve" }, beats: { 'ch01.s01.b001': 'Bonjour.' } })
+    expect(r.lang).toBe('fr')
+    const bad = await fails('vno_edition_set', { slug, lang: 'fr', characterNames: { 'kessler#2': 'x' } })
+    expect(bad).toContain('no character kessler#2')
+    await call('vno_character_set', { slug, key: 'kessler', looks: 'a bald man' })
+    const ed = JSON.parse(await readFile(path.join(svc().store.dir(slug), 'editions', 'fr.json'), 'utf8')) as { characterNames: Record<string, string> }
+    expect(ed.characterNames['kessler#1']).toBe("l'homme chauve")
+    // removing the alias drops its name
+    await call('vno_character_set', { slug, key: 'kessler', aliases: null })
+    const after = JSON.parse(await readFile(path.join(svc().store.dir(slug), 'editions', 'fr.json'), 'utf8')) as { characterNames: Record<string, string> }
+    expect(after.characterNames['kessler#1']).toBeUndefined()
+  })
 })

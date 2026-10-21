@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { CANONICAL_EXPRESSIONS, langSchema, vnBookSchema } from '../../shared/vn'
 import type { Edition, Lang, VnBeat, VnBook, VnChapter, VnScene } from '../../shared/vn'
+import { aliasIndex } from './aliases'
 import { mapExpression } from './expressions'
 import { backgroundId, beatId, normText, sceneId, slugKey } from './ids'
 import { DEFAULT_ENDING } from './outline'
@@ -56,7 +57,8 @@ const characterInputSchema = z.object({
   key: keyField.optional(),
   name: z.string().min(1),
   looks: z.string().optional().describe('What the character looks like (hair, clothes, colours): the character sheet prompt is made from it'),
-  voice: z.string().optional().describe('How the character sounds (a note)')
+  voice: z.string().optional().describe('How the character sounds (a note)'),
+  aliases: z.array(z.string().min(1)).optional().describe('Other names the story calls the character by ("the bald man"). A line spoken under one shows that name in the game, so the reader is not told the real name early')
 })
 const placeInputSchema = z.object({ key: keyField.optional(), name: z.string().min(1), looks: z.string().optional().describe('What the place looks like') })
 
@@ -83,12 +85,17 @@ interface Ctx {
   places: VnBook['places']
 }
 
-/** The character a key or a name points to. */
+/** The character a key, a name or an alias points to. */
 function findChar(chars: Ctx['characters'], text: string): Ctx['characters'][number] | undefined {
   const t = text.trim()
   const n = normText(t)
-  return chars.find((c) => c.key === t) ?? chars.find((c) => normText(c.name) === n) ?? chars.find((c) => c.key === slugKey(t))
+  return (
+    chars.find((c) => c.key === t) ?? chars.find((c) => normText(c.name) === n) ?? chars.find((c) => c.key === slugKey(t)) ?? chars.find((c) => (c.aliases ?? []).some((a) => normText(a) === n))
+  )
 }
+
+/** The speaker label of a line spoken by `who` as `text`: an alias keeps its own words (the game shows them), anything else is the character's name. */
+const speakerLabelFor = (who: Ctx['characters'][number] | undefined, text: string): string => (who && aliasIndex(who, text) > 0 ? text.trim() : (who?.name ?? text.trim()))
 
 /** The place a key or a name points to. */
 function findPlace(places: Ctx['places'], text: string): Ctx['places'][number] | undefined {
@@ -128,7 +135,7 @@ function makeBeat(ctx: Ctx, id: string, input: BeatInput): VnBeat {
     id,
     type: 'line',
     speakerKey: who?.key ?? null,
-    speakerLabel: who?.name ?? label,
+    speakerLabel: speakerLabelFor(who, label),
     expression: mapped.expression,
     ...(mapped.rawExpression ? { rawExpression: mapped.rawExpression } : {}),
     text: input.text
@@ -204,7 +211,10 @@ const joinProblems = (what: string, errors: string[]) => `${what}:\n${errors.map
 
 /** Builds a book from the input. Throws with every problem when it is not valid (see `validateBook`). */
 export function buildBook(input: StoryInput, o: { slug: string; lang: Lang }): { book: VnBook; warnings: string[] } {
-  const characters = makeKeyed(input.characters, 'character').map((c, i) => ({ ...c, ...(input.characters[i]!.voice ? { voice: input.characters[i]!.voice } : {}) }))
+  const characters = makeKeyed(input.characters, 'character').map((c, i) => {
+    const aliases = [...new Set((input.characters[i]!.aliases ?? []).map((a) => a.trim()).filter((a) => a && normText(a) !== normText(c.name)))]
+    return { ...c, ...(input.characters[i]!.voice ? { voice: input.characters[i]!.voice } : {}), ...(aliases.length ? { aliases } : {}) }
+  })
   const places = makeKeyed(input.places, 'place')
   const ctx: Ctx = { characters, places }
   const ns = input.chapters.map((c, i) => c.n ?? i + 1)
@@ -306,7 +316,14 @@ export function syncEdition(ed: Edition, book: VnBook): Edition {
   const pick = <T>(rec: Record<string, T>, keep: (k: string) => boolean): Record<string, T> => Object.fromEntries(Object.entries(rec).filter(([k]) => keep(k)))
   const chapter = (k: string) => book.chapters.find((c) => c.n === Number(k))
   const characterNames: Record<string, string> = {}
-  for (const c of book.characters) characterNames[c.key] = ed.characterNames[c.key] ?? c.name
+  for (const c of book.characters) {
+    characterNames[c.key] = ed.characterNames[c.key] ?? c.name
+    // the translated name of an alias is kept while the alias is there
+    for (const i of (c.aliases ?? []).keys()) {
+      const k = `${c.key}#${i + 1}`
+      if (ed.characterNames[k] !== undefined) characterNames[k] = ed.characterNames[k]
+    }
+  }
   return {
     ...ed,
     beats: pick(ed.beats, (id) => beatIds.has(id)),
@@ -334,7 +351,14 @@ export const storyOpSchema = z.discriminatedUnion('op', [
     coverBrief: nullableText.describe('null clears it'),
     format: z.string().optional()
   }),
-  z.object({ op: z.literal('character.set'), key: z.string().optional().describe('An existing key to change, or the key of a new character'), name: z.string().optional(), looks: z.string().optional(), voice: z.string().optional() }),
+  z.object({
+    op: z.literal('character.set'),
+    key: z.string().optional().describe('An existing key to change, or the key of a new character'),
+    name: z.string().optional(),
+    looks: z.string().optional(),
+    voice: z.string().optional(),
+    aliases: z.array(z.string()).nullable().optional().describe('Other names the story calls the character by; replaces the list, null clears it')
+  }),
   z.object({ op: z.literal('character.remove'), key: z.string(), force: z.boolean().optional().describe('Also remove its cast entries and make its lines speakerless') }),
   z.object({ op: z.literal('place.set'), key: z.string().optional().describe('An existing key to change, or the key of a new place'), name: z.string().optional(), looks: z.string().optional() }),
   z.object({ op: z.literal('place.remove'), key: z.string(), force: z.boolean().optional().describe('The scenes keep the place text but lose the place') }),
@@ -482,15 +506,23 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
               }
             })
           } else if (op.name !== undefined && op.name.trim() && op.name.trim() !== c.name) {
+            const was = { name: c.name, aliases: c.aliases }
             c.name = op.name.trim()
             eachBeat(book, (b) => {
-              if (b.type === 'line' && b.speakerKey === c!.key) b.speakerLabel = c!.name
+              // a line spoken under an alias keeps the alias
+              if (b.type === 'line' && b.speakerKey === c!.key && aliasIndex(was, b.speakerLabel) === 0) b.speakerLabel = c!.name
             })
           }
           if (op.looks !== undefined) c.looks = op.looks.trim()
           if (op.voice !== undefined) {
             if (op.voice.trim()) c.voice = op.voice.trim()
             else delete c.voice
+          }
+          if (op.aliases !== undefined) {
+            const own = normText(c.name)
+            const list = [...new Set((op.aliases ?? []).map((a) => a.trim()).filter((a) => a && normText(a) !== own))]
+            if (list.length) c.aliases = list
+            else delete c.aliases
           }
           changed.add('characters')
           break
@@ -630,7 +662,7 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
             if (op.speaker !== undefined) {
               const who = findChar(book.characters, op.speaker)
               beat.speakerKey = who?.key ?? null
-              beat.speakerLabel = who?.name ?? op.speaker.trim()
+              beat.speakerLabel = speakerLabelFor(who, op.speaker)
             }
             if (op.expression !== undefined) {
               const m = mapExpression(op.expression)

@@ -1,6 +1,8 @@
 import { basename } from 'node:path'
 import { vnBookSchema } from '../../shared/vn'
 import type { Edition, Lang, VnBook, VnChapter } from '../../shared/vn'
+import { mergeBibleAliases } from './aliases'
+import type { AliasMerge } from './aliases'
 import { parseBible } from './bible'
 import type { Bible } from './bible'
 import { detectLanguage } from './lang'
@@ -21,15 +23,19 @@ export interface ParsedFolder {
   chapters: VnChapter[]
   uncertain: Uncertain[]
   warnings: string[]
+  /** Bible entries that were the same person under another name and were merged into one character. */
+  aliases: AliasMerge[]
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
 
 /** Parses the raw parts of a book folder: bible, chapter map, scripts. Never throws on bad content. */
 export function parseRawBook(raw: RawBook): ParsedFolder {
-  const bible = parseBible(raw.bible)
-  const warnings: string[] = []
-  const uncertain: Uncertain[] = []
+  const merged = mergeBibleAliases(parseBible(raw.bible))
+  const bible = merged.bible
+  const warnings: string[] = merged.merged.map((m) => `aliases merged: ${m.alias} -> ${m.into} (${m.reason})`)
+  // entries that only look alike are left to the script-analyst: it says whether one is another name of the other
+  const uncertain: Uncertain[] = merged.suspects.map((s) => ({ kind: 'alias', chapter: 0, sceneId: '', text: s.alias.name, reason: s.reason, charKey: s.of.key }))
   if (!raw.chapters.length) warnings.push('the book has no chapter files')
   if (!bible.characters.length) warnings.push('the bible lists no characters (## Characters / ## Likovi)')
   if (!bible.places.length) warnings.push('the bible lists no places (## Places / ## Mjesta)')
@@ -52,7 +58,7 @@ export function parseRawBook(raw: RawBook): ParsedFolder {
   if (unknown.length) warnings.push(`speakers not in the bible (no sprite): ${unknown.join(', ')}`)
   const noPlace = uncertain.filter((u) => u.kind === 'place').length
   if (noPlace) warnings.push(`${noPlace} scene(s) have a place that matches no bible place`)
-  return { raw, bible, map, chapters, uncertain, warnings }
+  return { raw, bible, map, chapters, uncertain, warnings, aliases: merged.merged }
 }
 
 /** The text used to detect the language: chapter titles and every spoken or narrated line. */
@@ -87,8 +93,10 @@ export interface ImportResult {
   /** The primary-language edition. */
   edition: Edition
   detected: LangDetection
-  /** Places, times, speakers, cast entries and expressions the parser could not settle (for the script-analyst). */
+  /** Places, times, speakers, cast entries, expressions and look-alike bible entries the parser could not settle (for the script-analyst). */
   uncertain: Uncertain[]
+  /** The bible entries merged as aliases (also in `book.warnings`). */
+  aliases: AliasMerge[]
 }
 
 /** Imports a book folder from anywhere (Scriptorium layout). `lang` overrides the detected language. */
@@ -115,5 +123,5 @@ export async function importBook(folderPath: string, opts: { lang?: Lang } = {})
     warnings: parsed.warnings
   })
   const edition = buildEdition(lang, title, book.chapters, book.characters)
-  return { book, edition, detected, uncertain: parsed.uncertain }
+  return { book, edition, detected, uncertain: parsed.uncertain, aliases: parsed.aliases }
 }

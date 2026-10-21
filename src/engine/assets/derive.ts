@@ -126,6 +126,11 @@ export function resolveStylePrompt(book: Pick<VnBook, 'format' | 'genre'>, setti
 
 const VISUAL_WORDS =
   /\b(hair|braid|eyes?|wears?|wearing|dress|coat|raincoat|jacket|hat|cap|boots?|shoes?|jeans|shirt|onesie|skirt|cloak|robe|scarf|tall|small|tiny|big|chubby|wiry|round|skin|scales?|wings?|tail|horns?|claws?|beard|glasses|bow tie|freckles?|face|smile|fur|satchel|belt|years old|red|orange|green|blue|yellow|purple|brown|grey|gray|black|white|pink|golden|blonde|amber|silver)\b/i
+/** The words of a text that name something visible (hair, colours, clothes ...): lower case, without repeats. */
+export function visualWords(text: string | undefined): Set<string> {
+  return new Set([...(text ?? '').matchAll(new RegExp(VISUAL_WORDS.source, 'gi'))].map((m) => m[0].toLowerCase()))
+}
+
 const PERSONALITY_WORDS =
   /\b(brave|quick to|loves?|likes?|hates?|fears?|afraid|favou?rite|friendly|curious|grumpy|kind|helpful|precise|shy|clever|noisy|giggly|funny|collector|guards|runs the|always|never|story|voice|says)\b/i
 

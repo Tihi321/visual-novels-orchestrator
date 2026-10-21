@@ -266,7 +266,7 @@ export class VnService {
       await this.store.saveBook(slug, book)
       await this.store.saveEdition(slug, { ...r.edition, lang: book.primaryLang })
       await this.store.saveUncertain(slug, r.uncertain)
-      await this.store.writeJson(slug, 'import.json', { at: nowIso(), source: folder, detected: r.detected, uncertain: r.uncertain.length })
+      await this.store.writeJson(slug, 'import.json', { at: nowIso(), source: folder, detected: r.detected, uncertain: r.uncertain.length, ...(r.aliases.length ? { aliases: r.aliases } : {}) })
     })
     const preview: ImportPreview = {
       source,
@@ -859,7 +859,8 @@ export class VnService {
       const chapters = new Set(book.chapters.map((c) => String(c.n)))
       const choices = new Set(book.chapters.flatMap((c) => c.choices.map((_, i) => `${c.n}:${i}`)))
       const endings = new Set(book.chapters.filter((c) => c.ending).map((c) => String(c.n)))
-      const chars = new Set(book.characters.map((c) => c.key))
+      // a character's name, and the name of each alias under `<key>#<n>`
+      const chars = new Set(book.characters.flatMap((c) => [c.key, ...(c.aliases ?? []).map((_, i) => `${c.key}#${i + 1}`)]))
       const errors: string[] = []
       const check = (what: string, keys: string[] | undefined, known: Set<string>) => {
         const bad = (keys ?? []).filter((k) => !known.has(k))

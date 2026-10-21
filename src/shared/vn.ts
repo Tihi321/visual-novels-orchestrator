@@ -94,7 +94,16 @@ export const vnBookSchema = z.object({
   primaryLang: langSchema,
   /** The art style from the bible's Style section. */
   style: z.string(),
-  characters: z.array(z.object({ key: z.string(), name: z.string(), looks: z.string(), voice: z.string().optional() })),
+  characters: z.array(
+    z.object({
+      key: z.string(),
+      name: z.string(),
+      looks: z.string(),
+      voice: z.string().optional(),
+      /** Other names the story calls the character by (`the bald man`). A line spoken under one shows that name, so the reader is not told early. */
+      aliases: z.array(z.string()).optional()
+    })
+  ),
   places: z.array(z.object({ key: z.string(), name: z.string(), looks: z.string() })),
   coverBrief: z.string().optional(),
   chapters: z.array(vnChapterSchema),

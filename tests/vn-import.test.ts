@@ -6,7 +6,8 @@ import { parseBible } from '../src/engine/vn/bible'
 import { checkBranches } from '../src/engine/vn/branches'
 import { importBook } from '../src/engine/vn/import'
 import { listBooks, readBookFolder } from '../src/engine/vn/reader'
-import { matchCharacter, matchPlace, parseChapterScript, parseSceneLine } from '../src/engine/vn/script'
+import { projectSlug } from '../src/engine/vn/project'
+import { classifyOnScreen, matchCharacter, matchPlace, parseChapterScript, parseSceneLine } from '../src/engine/vn/script'
 import { vnBookSchema } from '../src/shared/vn'
 import type { VnBeat } from '../src/shared/vn'
 
@@ -241,5 +242,90 @@ describe('reader', () => {
     expect(raw.chapters[0]!.title).toBe('Zakašnjela lađa')
     expect(raw.bible).toMatch(/## Likovi/)
     expect(raw.book.title).toBe('Pisma sa svjetionika')
+  })
+})
+
+describe('a Russian book (V4)', () => {
+  it('imports with every speaker matched, transliterated keys and an ASCII project slug', async () => {
+    const r = await importBook(join(books, 'linear-ru'))
+    expect(vnBookSchema.safeParse(r.book).success).toBe(true)
+    expect(r.detected.lang).toBe('ru')
+    expect(r.book.characters.map((c) => c.key)).toEqual(['natasha', 'per'])
+    expect(r.book.places.map((p) => p.key)).toEqual(['prichal', 'kukhnya_mayaka'])
+    // every speaker and cast entry matches the bible, and so does every place
+    expect(r.uncertain.filter((u) => u.kind === 'speaker' || u.kind === 'cast' || u.kind === 'place')).toEqual([])
+    const lines = beatsOf(r.book).filter((b) => b.type === 'line')
+    expect(lines.length).toBeGreaterThan(5)
+    expect(lines.every((b) => b.type === 'line' && (b.speakerKey === 'natasha' || b.speakerKey === 'per'))).toBe(true)
+    expect(r.book.chapters[0]!.scenes.map((s) => s.placeKey)).toEqual(['prichal', 'kukhnya_mayaka'])
+    // the asset ids that follow are ASCII (Ren'Py identifiers)
+    expect(r.book.chapters.flatMap((c) => c.scenes.map((s) => s.backgroundId)).every((id) => /^[a-z0-9_]+$/.test(id))).toBe(true)
+    expect(r.book.slug).toBe('Маяк писем')
+    expect(projectSlug(r.book.slug)).toBe('mayak-pisem')
+  })
+})
+
+describe('ON SCREEN props and loose names (V7)', () => {
+  it('a ledger or a list of names is narration, not a cast; a real list casts its people and flags the rest', async () => {
+    const r = await importBook(join(books, 'quirks-cast-en'))
+    const scene = r.book.chapters[0]!.scenes[0]!
+    const narration = scene.beats.filter((b) => b.type === 'narration').map((b) => (b.type === 'narration' ? b.text : ''))
+    expect(narration).toEqual(['A cramped room full of clocks.', 'The ledger page, headed DÉBITEURS: Delorme, Marc / Roux, Anselme, horloger', 'Lassalle, Gérard, notaire. Mars. Remis.'])
+    expect(scene.description).toContain('Also on screen: The ledger page')
+    const casts = scene.beats.filter((b) => b.type === 'cast')
+    expect(casts).toHaveLength(2)
+    expect(casts[0]).toMatchObject({ cast: [{ charKey: 'dec', look: 'grey coat' }, { charKey: 'ines', look: 'red scarf' }] })
+    // Roux and Lassalle are not cast: they are only named inside a prop
+    expect(JSON.stringify(casts)).not.toMatch(/roux|lassalle/)
+    const unknown = r.uncertain.filter((u) => u.kind === 'cast').map((u) => u.text)
+    expect(unknown).toEqual(['the silver-haired man (grey suit)', 'Madame Ferré (black shawl)'])
+  })
+
+  it('matches names ignoring articles and titles, and an alias exactly', () => {
+    const bible = parseBible('## Characters\n- **Madame Jobin**: An old woman in a black shawl.\n- **The Baron**: A tall man.\n- **Mr Brown**: Round.\n- **Petra Novak**: A girl. Narration calls her "the girl in yellow".\n')
+    const c = bible.characters
+    expect(matchCharacter('Madame Ferré', c)).toBeNull()
+    expect(matchCharacter('Madame Jobin', c)).toBe('madame_jobin')
+    expect(matchCharacter('JOBIN', c)).toBe('madame_jobin')
+    expect(matchCharacter('the silver-haired man', c)).toBeNull()
+    expect(matchCharacter('Mr Smith', c)).toBeNull()
+    expect(matchCharacter('the baron', c)).toBe('the_baron')
+    expect(matchCharacter('The girl in yellow', c)).toBe('petra_novak')
+    // the overlap rule is for speaker labels only
+    expect(matchCharacter('NOVAK', c)).toBe('petra_novak')
+    expect(matchCharacter('Novak the elder', c, { entry: true })).toBeNull()
+  })
+
+  const bible = parseBible('## Characters\n- **Aldric Vane**: A tall man.\n- **Mara**: A girl.\n- **Tomas**: A boy.\n- **Ivo**: A man.\n\n## Places\n- **Hall**: A hall.\n')
+  const castOf = (p: ReturnType<typeof parseChapterScript>) => p.scenes[0]!.beats.find((b) => b.type === 'cast')
+  const script = (extra: string) => parseChapterScript(`SCENE: The hall, night\nA quiet hall.\n${extra}\n`, { chapter: 1, bible })
+
+  it('a character put on screen by a loose match, who neither speaks nor is named, is taken off and flagged', () => {
+    const p = script('ON SCREEN: Aldric the Younger (cloak), Mara (coat)\nMARA: Hello.')
+    expect(castOf(p)).toMatchObject({ type: 'cast', cast: [{ charKey: 'mara' }] })
+    expect(p.uncertain).toEqual([expect.objectContaining({ kind: 'cast', text: 'Aldric the Younger (cloak)', reason: 'named only: on screen?', charKey: 'aldric_vane' })])
+  })
+  it('it stays when the character speaks, or when the narration names it', () => {
+    const speaks = script('ON SCREEN: Aldric the Younger (cloak)\nALDRIC: Good evening.')
+    expect(castOf(speaks)).toMatchObject({ cast: [{ charKey: 'aldric_vane' }] })
+    expect(speaks.uncertain).toEqual([])
+    const named = script('ON SCREEN: Aldric the Younger (cloak)\nAldric lifts the lamp.')
+    expect(castOf(named)).toMatchObject({ cast: [{ charKey: 'aldric_vane' }] })
+    expect(named.uncertain).toEqual([])
+  })
+  it('an exact name needs no second look, and a cast of more than 3 is flagged', () => {
+    const exact = script('ON SCREEN: Mara, Tomas')
+    expect(castOf(exact)).toMatchObject({ cast: [{ charKey: 'mara' }, { charKey: 'tomas' }] })
+    expect(exact.uncertain).toEqual([])
+    const four = script('ON SCREEN: Mara, Tomas, Ivo, Aldric Vane')
+    expect(castOf(four)).toMatchObject({ cast: [{ charKey: 'mara' }, { charKey: 'tomas' }, { charKey: 'ivo' }, { charKey: 'aldric_vane' }] })
+    expect(four.uncertain).toEqual([expect.objectContaining({ kind: 'cast', text: 'Aldric Vane', reason: 'more than 3 on screen', charKey: 'aldric_vane' })])
+  })
+  it('an ON SCREEN line that starts with an article is a prop unless its first entry is a character', () => {
+    expect(classifyOnScreen('The ledger page, open', bible)).toBe('prop')
+    expect(classifyOnScreen('A sign: CLOSED', bible)).toBe('prop')
+    expect(classifyOnScreen('Mara (coat), Tomas', bible)).toBe('cast')
+    expect(classifyOnScreen('Mara (worried: really), the lamp', bible)).toBe('cast')
+    expect(classifyOnScreen('Mara, A very long entry that goes on and on forever', bible)).toBe('prop')
   })
 })

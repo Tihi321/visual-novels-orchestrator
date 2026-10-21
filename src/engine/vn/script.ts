@@ -101,21 +101,83 @@ export function matchPlace(placeText: string, places: BiblePlace[]): string | nu
   return null
 }
 
-/** Matches a speaker or ON SCREEN name against the bible characters (case and diacritics ignored). */
-export function matchCharacter(label: string, chars: BibleCharacter[]): string | null {
+/**
+ * Words that say what someone is rather than who: articles, titles, relations, ages. They are left out when a name is matched loosely, so
+ * "the silver-haired man" is not the first bible name that starts with "The", and "Madame Ferré" is not "Madame Jobin".
+ */
+const NOT_NAMES = new Set([
+  'the', 'a', 'an', 'of', 'man', 'woman', 'lady', 'girl', 'boy', 'old', 'young', 'brother', 'sister', 'mother', 'father', 'mr', 'mrs', 'ms',
+  'madame', 'monsieur', 'mademoiselle', 'maitre', 'frere', 'mere', 'dr', 'doctor', 'sir',
+  // Croatian
+  'gospodin', 'gospoda', 'gospodica', 'doktor', 'doktorica', 'brat', 'sestra', 'majka', 'otac', 'stari', 'stara', 'mladi', 'mlada', 'covjek', 'zena', 'djevojka', 'djecak'
+])
+
+/** A name token counts from 3 letters in a Latin script, from 2 in the others (a Chinese or Cyrillic name can be short). */
+const minLength = (t: string): number => (/^[\p{Script=Latin}\p{N}]+$/u.test(t) ? 3 : 2)
+const significantTokens = (s: string): string[] => normText(s).split(' ').filter((t) => t.length >= minLength(t) && !NOT_NAMES.has(t))
+
+export interface CharacterMatch {
+  key: string
+  /** The name, key or an alias, or a bare first name: nothing to double-check. False for a looser match (a partial overlap). */
+  exact: boolean
+}
+
+/** The character whose name, key or alias is exactly this text (case, diacritics and punctuation ignored). */
+export function exactCharacter(label: string, chars: BibleCharacter[]): string | null {
   const l = normText(label)
-  if (!l || !chars.length) return null
+  if (!l) return null
   const lk = slugKey(label)
-  const norm = chars.map((c) => ({ c, n: normText(c.name) }))
-  const exact = norm.find((x) => x.n === l || x.c.key === lk)
-  if (exact) return exact.c.key
-  const lTok = l.split(' ')
-  const first = norm.find((x) => x.n.split(' ')[0] === lTok[0])
-  if (first) return first.c.key
-  const starts = norm.find((x) => x.n.startsWith(l + ' ') || l.startsWith(x.n + ' '))
-  if (starts) return starts.c.key
-  const overlap = norm.filter((x) => x.n.split(' ').some((t) => t.length >= 3 && lTok.includes(t)))
-  return overlap.length === 1 ? overlap[0]!.c.key : null
+  return chars.find((c) => normText(c.name) === l || c.key === lk || (c.aliases ?? []).some((a) => normText(a) === l))?.key ?? null
+}
+
+/**
+ * Matches a speaker label or an ON SCREEN entry against the bible characters. The name, key or an alias first; then, ignoring articles and
+ * titles, the first name word, then a name that starts the text or is started by it; for a speaker label (not for an ON SCREEN `entry`), a
+ * single character that shares a name word. Only names of three words or fewer are matched loosely.
+ */
+export function matchCharacterDetail(label: string, chars: BibleCharacter[], o: { entry?: boolean } = {}): CharacterMatch | null {
+  if (!normText(label) || !chars.length) return null
+  const key = exactCharacter(label, chars)
+  if (key) return { key, exact: true }
+  const lTok = significantTokens(label)
+  if (!lTok.length) return null
+  const cands = chars.map((c) => ({ c, tok: significantTokens(c.name) })).filter((x) => x.tok.length && normText(x.c.name).split(' ').length <= 3)
+  const first = cands.find((x) => x.tok[0] === lTok[0])
+  if (first) return { key: first.c.key, exact: lTok.length === 1 }
+  const l = lTok.join(' ')
+  const starts = cands.find((x) => x.tok.join(' ').startsWith(l + ' ') || l.startsWith(x.tok.join(' ') + ' '))
+  if (starts) return { key: starts.c.key, exact: false }
+  if (!o.entry) {
+    const overlap = cands.filter((x) => x.tok.some((t) => lTok.includes(t)))
+    if (overlap.length === 1) return { key: overlap[0]!.c.key, exact: false }
+  }
+  return null
+}
+
+export function matchCharacter(label: string, chars: BibleCharacter[], o: { entry?: boolean } = {}): string | null {
+  return matchCharacterDetail(label, chars, o)?.key ?? null
+}
+
+const PROP_START = /^(?:a|an|the|over|on|in|at|under|beside|na|u|iznad)\s/i
+const withoutBrackets = (s: string): string => s.replace(/\([^)]*\)/g, ' ').replace(/\*+/g, '').replace(/\s+/g, ' ').trim()
+
+/**
+ * Is an ON SCREEN line a prop (a ledger page, a sign, a letter) and not a list of people? It is when, outside the brackets, it has a colon or
+ * a slash between parts; or an entry has more than five words or a sentence inside it; or it starts with an article or a preposition and its
+ * first entry is not a character by name, key or alias.
+ */
+export function classifyOnScreen(text: string, bible: Pick<Bible, 'characters'>): 'prop' | 'cast' {
+  const flat = withoutBrackets(text)
+  if (flat.includes(':') || flat.includes(' / ')) return 'prop'
+  const entries = splitTopLevel(text).map(withoutBrackets)
+  for (const e of entries) {
+    // a long entry is a sentence, not a name; a leading article does not count ("the soother spinning in the sky" is a hint, not a sentence)
+    const bare = e.replace(/[.!;]+$/, '').replace(/^(?:a|an|the)\s+/i, '').trim()
+    if (bare.split(' ').filter(Boolean).length > 5 || /[.;!]/.test(bare)) return 'prop'
+  }
+  const first = entries[0] ?? ''
+  if (PROP_START.test(first) && !exactCharacter(first, bible.characters)) return 'prop'
+  return 'cast'
 }
 
 /** Splits on commas outside brackets. */
@@ -135,7 +197,7 @@ export function splitTopLevel(text: string): string[] {
   return out.map((s) => s.trim()).filter(Boolean)
 }
 
-export type UncertainKind = 'place' | 'time' | 'speaker' | 'cast' | 'expression'
+export type UncertainKind = 'place' | 'time' | 'speaker' | 'cast' | 'expression' | 'alias'
 
 /** Something the deterministic parser could not settle; the script-analyst agent looks at these later. */
 export interface Uncertain {
@@ -145,6 +207,8 @@ export interface Uncertain {
   beatId?: string
   text: string
   reason: string
+  /** A character the item is about: the one a loose ON SCREEN match pointed at, or the entry that may be the same person (kind alias). */
+  charKey?: string
 }
 
 export interface ParsedChapterScript {
@@ -158,6 +222,8 @@ type BeatBody = DistributiveOmit<VnBeat, 'id'>
 
 interface BeatDraft {
   body: BeatBody
+  /** Cast entries matched by a loose rule: char key -> the entry as written. They need a second look (`checkCasts`). */
+  loose?: Map<string, string>
 }
 interface SceneDraft {
   placeText: string
@@ -173,6 +239,37 @@ interface UncertainDraft {
   beat?: BeatDraft
   text: string
   reason: string
+}
+
+/**
+ * A second look at the cast of every scene. A character put on screen by a loose name match who neither speaks in the scene nor is named
+ * in its narration (by name or alias) is taken off the cast and flagged for the script-analyst (`named only: on screen?`): an entry that only
+ * reads, lists or remembers someone is not a person who is there. A cast of more than three is flagged too. `loose`: beat id -> char key ->
+ * the entry as written. Edits the scenes and returns the flagged items.
+ */
+export function checkCasts(scenes: VnScene[], bible: Pick<Bible, 'characters'>, loose: Map<string, Map<string, string>>, chapter: number): Uncertain[] {
+  const out: Uncertain[] = []
+  const chars = new Map(bible.characters.map((c) => [c.key, c]))
+  for (const scene of scenes) {
+    const speakers = new Set(scene.beats.flatMap((b) => (b.type === 'line' && b.speakerKey ? [b.speakerKey] : [])))
+    const narrated = ` ${normText([scene.description, ...scene.beats.map((b) => (b.type === 'narration' ? b.text : ''))].join(' '))} `
+    const named = (key: string): boolean => {
+      const c = chars.get(key)
+      if (!c) return false
+      const forms = [normText(c.name), ...significantTokens(c.name), ...(c.aliases ?? []).map(normText)].filter(Boolean)
+      return forms.some((f) => narrated.includes(` ${f} `))
+    }
+    for (const beat of scene.beats) {
+      if (beat.type !== 'cast') continue
+      for (const [key, entry] of loose.get(beat.id) ?? []) {
+        if (!beat.cast.some((c) => c.charKey === key) || speakers.has(key) || named(key)) continue
+        beat.cast = beat.cast.filter((c) => c.charKey !== key)
+        out.push({ kind: 'cast', chapter, sceneId: scene.id, beatId: beat.id, text: entry, reason: 'named only: on screen?', charKey: key })
+      }
+      beat.cast.slice(3).forEach((c) => out.push({ kind: 'cast', chapter, sceneId: scene.id, beatId: beat.id, text: chars.get(c.charKey)?.name ?? c.charKey, reason: 'more than 3 on screen', charKey: c.charKey }))
+    }
+  }
+  return out
 }
 
 /** Parses one chapter's script, leniently. Never throws. */
@@ -238,6 +335,14 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
       continue
     }
     const cm = CAST_RE.exec(line)
+    if (cm && classifyOnScreen(cm[1]!, bible) === 'prop') {
+      // a ledger page, a sign, a letter: the reader is shown it as narration, and the scene keeps it as a hint. Nobody is cast.
+      const s = scene()
+      const text = cm[1]!.replace(/\*+/g, '').trim()
+      s.beats.push({ body: { type: 'narration', text } })
+      s.description.push(`Also on screen: ${text}.`)
+      continue
+    }
     if (cm) {
       const s = scene()
       const cast: { charKey: string; look?: string }[] = []
@@ -247,9 +352,11 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
         const em = /^(.*?)\s*\(([^)]*)\)\s*$/.exec(entry)
         const name = (em ? em[1]! : entry).replace(/\*+/g, '').trim()
         const look = em ? em[2]!.trim() : ''
-        const key = matchCharacter(name, bible.characters)
-        if (key) {
+        const m = matchCharacterDetail(name, bible.characters, { entry: true })
+        if (m) {
+          const key = m.key
           if (!cast.some((c) => c.charKey === key)) cast.push({ charKey: key, ...(look ? { look } : {}) })
+          if (!m.exact) (beat.loose ??= new Map()).set(key, entry.replace(/\*+/g, '').trim())
         } else {
           hints.push(entry.replace(/\*+/g, '').trim())
           flag({ kind: 'cast', scene: s, beat, text: entry, reason: 'not a bible character: kept as a scene hint' })
@@ -341,5 +448,8 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
     const bid = u.beat ? beatIds.get(u.beat) : undefined
     uncertain.push({ kind: u.kind, chapter, sceneId: sid, ...(bid ? { beatId: bid } : {}), text: u.text, reason: u.reason })
   }
+  const loose = new Map<string, Map<string, string>>()
+  for (const [draft, id] of beatIds) if (draft.loose) loose.set(id, draft.loose)
+  uncertain.push(...checkCasts(scenes, bible, loose, chapter))
   return { scenes, uncertain, warnings }
 }

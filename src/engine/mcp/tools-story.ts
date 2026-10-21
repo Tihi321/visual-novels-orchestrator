@@ -73,7 +73,7 @@ export function storyTools(svc: VnService, def: ToolDef): Tool[] {
       async (a) => edit(a.slug, a.ops)
     ),
     one('vno_book_update', 'book.update', 'Change the title, author, genre, style, cover brief or format of the book.'),
-    one('vno_character_set', 'character.set', 'Add a character or change one: key (an existing one to change, or the key of a new one), name, looks (what the sprites look like), voice (a note). A new character without a key gets one made from the name. Renaming updates the speaker labels of its lines.'),
+    one('vno_character_set', 'character.set', 'Add a character or change one: key (an existing one to change, or the key of a new one), name, looks (what the sprites look like), voice (a note), aliases (other names the story calls the character by, such as "the bald man": a line spoken under one belongs to the character and shows that name in the game; replaces the list, null clears it). A new character without a key gets one made from the name. Renaming updates the speaker labels of its lines, except the ones under an alias.'),
     one('vno_character_remove', 'character.remove', 'Remove a character. Refused while it is in a cast or speaks a line, unless force: then its cast entries are removed and its lines lose the speaker.'),
     one('vno_place_set', 'place.set', 'Add a place or change one: key (an existing one to change, or the key of a new one), name, looks (what the background looks like). Scenes written with that place name are connected to it.'),
     one('vno_place_remove', 'place.remove', 'Remove a place. Refused while a scene uses it, unless force: then those scenes keep the place text without the place.'),

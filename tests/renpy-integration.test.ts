@@ -3,6 +3,8 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { buildGame, type BuildGameResult } from '../src/engine/renpy/build'
 import { DEFAULT_SDK_PATH, lint, sdkExists } from '../src/engine/renpy/run'
+import { buildEdition, importBook } from '../src/engine/vn/import'
+import { buildBook, storyInputSchema } from '../src/engine/vn/story'
 import type { Edition, VnBook } from '../src/shared/vn'
 import { loadBook, loadEdition, loadSettings, type FixtureName } from './fixtures/vn/load'
 
@@ -145,6 +147,56 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     expect(rtl).toContain('translate arabic python:\n    gui.name_xpos = 1560')
     expect(rtl).toContain('translate None python:\n    gui.name_xpos = 360')
     expect(rtl).toContain('translate japanese python:\n    gui.name_xpos = 360')
+    const l = await lint(r.gameDir, { sdkPath })
+    expect(l.messages).toEqual([])
+    expect(l.ok).toBe(true)
+  })
+
+  it('a Russian book (Cyrillic names, ASCII keys) builds and lints clean', { timeout: T }, async () => {
+    const r0 = await importBook(path.join(__dirname, 'fixtures', 'books', 'linear-ru'))
+    const edition = buildEdition('ru', r0.book.title, r0.book.chapters, r0.book.characters)
+    const r = await buildGame({
+      projectDir: path.join(root, 'linear-ru'),
+      book: r0.book,
+      editions: [edition],
+      settings: loadSettings(r0.book, { primaryLang: 'ru', editions: ['ru'] }),
+      resolveAsset: () => null,
+      sdkPath
+    })
+    const game = path.join(r.gameDir, 'game')
+    const characters = fs.readFileSync(path.join(game, 'characters.rpy'), 'utf8')
+    expect(characters).toContain('define natasha = Character(_("Наташа")')
+    expect(characters).toContain('define per = Character(_("Пьер")')
+    expect(fs.existsSync(path.join(game, 'images', 'natasha neutral.webp'))).toBe(true)
+    expect(fs.readFileSync(path.join(game, 'ch01.rpy'), 'utf8')).toContain('natasha "Ты опоздал."')
+    expect(fs.readFileSync(path.join(game, 'tl', 'russian', 'ui.rpy'), 'utf8')).toContain('new "Начать"')
+    const l = await lint(r.gameDir, { sdkPath })
+    expect(l.messages).toEqual([])
+    expect(l.ok).toBe(true)
+  })
+
+  it('a character with an alias: the alias Character, its translated name and a lint-clean build', { timeout: T }, async () => {
+    const book = buildBook(
+      storyInputSchema.parse({
+        title: 'The Clock',
+        characters: [{ name: 'Kessler', looks: 'a heavy bald man in a dark overcoat', aliases: ['the bald man'] }, { name: 'Roux', looks: 'a clockmaker with spectacles' }],
+        places: [{ name: 'Workshop', looks: 'a room full of clocks' }],
+        chapters: [
+          {
+            title: 'Night',
+            scenes: [{ place: 'workshop', time: 'night', beats: [{ cast: ['kessler', 'roux'] }, { speaker: 'the bald man', text: 'Where is the key?' }, { speaker: 'Roux', text: 'Mr Kessler, please.' }, { speaker: 'Kessler', text: 'Now you know.' }] }]
+          }
+        ]
+      }),
+      { slug: 'clock', lang: 'en' }
+    ).book
+    const en = buildEdition('en', book.title, book.chapters, book.characters)
+    const fr = { ...en, lang: 'fr', title: "L'Horloge", chapterTitles: { 1: 'Nuit' }, characterNames: { kessler: 'Kessler', roux: 'Roux', 'kessler#1': "l'homme chauve" }, beats: { 'ch01.s01.b002': 'Où est la clé ?', 'ch01.s01.b003': 'Monsieur Kessler, je vous en prie.', 'ch01.s01.b004': 'Maintenant vous savez.' } }
+    const r = await buildGame({ projectDir: path.join(root, 'alias'), book, editions: [en, fr], settings: loadSettings(book, { editions: ['en', 'fr'] }), resolveAsset: () => null, sdkPath })
+    const game = path.join(r.gameDir, 'game')
+    expect(fs.readFileSync(path.join(game, 'characters.rpy'), 'utf8')).toContain('define kessler__a1 = Character(_("the bald man"), kind=kessler)')
+    expect(fs.readFileSync(path.join(game, 'ch01.rpy'), 'utf8')).toContain('kessler__a1 "Where is the key?"')
+    expect(fs.readFileSync(path.join(game, 'tl', 'french', 'characters.rpy'), 'utf8')).toContain('old "the bald man"\n    new "l\'homme chauve"')
     const l = await lint(r.gameDir, { sdkPath })
     expect(l.messages).toEqual([])
     expect(l.ok).toBe(true)

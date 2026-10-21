@@ -19,7 +19,7 @@ afterEach(async () => {
   env = undefined
 })
 
-const nullDecision = (index: number): Decision => ({ index, placeKey: null, newPlace: null, time: null, charKey: null, newCharacter: null, expression: null, isDirection: false })
+const nullDecision = (index: number): Decision => ({ index, placeKey: null, newPlace: null, time: null, charKey: null, newCharacter: null, expression: null, isDirection: false, aliasOf: null })
 
 /** What a sensible script-analyst answers for the items of the prompt. */
 function analystMock(env: VnEnv): void {

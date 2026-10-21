@@ -3,6 +3,9 @@
  * Keys are Ren'Py-safe identifiers: lowercase ascii, digits and underscores, starting with a letter.
  */
 
+import { createHash } from 'node:crypto'
+import { transliterate } from '../../shared/translit'
+
 const pad = (n: number, width: number) => String(n).padStart(width, '0')
 export const pad2 = (n: number) => pad(n, 2)
 export const pad3 = (n: number) => pad(n, 3)
@@ -16,21 +19,40 @@ export function stripDiacritics(s: string): string {
     .replace(/[̀-ͯ]/g, '')
 }
 
-/** Text for loose comparison: no diacritics, lowercase, words separated by single spaces. */
+/**
+ * Text for loose comparison: no diacritics, lowercase, words separated by single spaces. Letters and digits of every script are kept (a
+ * Cyrillic or Japanese name matches itself), so only punctuation and symbols separate words.
+ */
 export function normText(s: string): string {
   return stripDiacritics(s)
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
+    .normalize('NFC')
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ')
     .trim()
 }
 
-/** A Ren'Py-safe key from a name: `Petra's House` -> `petra_s_house`, `Šime` -> `sime`. */
-export function slugKey(name: string): string {
-  const s = stripDiacritics(name)
+/**
+ * An ASCII slug of any text: transliterated (Cyrillic, Greek, kana, hangul ...), diacritics stripped, lower case, runs of other characters
+ * turned into `sep`. When letters had no Latin form (Han, Thai ...) a short hash of the text is added (`red-1a2b3c`), so two different titles
+ * never share a slug. `fallback` is the slug when nothing is left. `max` cuts the readable part.
+ */
+export function asciiSlug(text: string, o: { sep: '-' | '_'; fallback: string; max?: number }): string {
+  const { latin, dropped } = transliterate(text.normalize('NFKC'))
+  const trim = new RegExp(`^${o.sep}+|${o.sep}+$`, 'g')
+  let base = stripDiacritics(latin)
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-  if (!s) return 'x'
+    .replace(/[^a-z0-9]+/g, o.sep)
+    .replace(trim, '')
+  const cut = o.max ? (dropped ? o.max - 7 : o.max) : 0 // room for the hash
+  if (cut) base = base.slice(0, cut).replace(trim, '')
+  if (dropped === 0) return base || o.fallback
+  const hash = createHash('sha1').update(text).digest('hex').slice(0, 6)
+  return `${base || o.fallback}${o.sep}${hash}`
+}
+
+/** A Ren'Py-safe key from a name: `Petra's House` -> `petra_s_house`, `Šime` -> `sime`, `Наташа` -> `natasha`. */
+export function slugKey(name: string): string {
+  const s = asciiSlug(name, { sep: '_', fallback: 'x' })
   return /^[a-z]/.test(s) ? s : `x_${s}`
 }
 

@@ -31,6 +31,7 @@ import { planSummary } from '../studios/chip-plan'
 import { summarizeRun } from './agents/director'
 import { resolveAlignment } from './agents/edition-aligner'
 import { resolveUncertain } from './agents/script-analyst'
+import type { ExistingArt } from './agents/script-analyst'
 import { mergeChapterCues, stageChapter } from './agents/stage-director'
 import { planVoices, speakerOf } from './agents/voice-director'
 import { describeVoices, voiceLangsOf } from '../voice/catalog'
@@ -172,7 +173,18 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const items = await store.loadUncertain(slug)
     if (!items.length) return 'nothing for the script-analyst to settle'
     const book = await store.loadBook(slug)
-    const r = await tryAgent(ctx, 'script-analyst', () => resolveUncertain(call(ctx), book, items))
+    // what already has art: the analysis picks a time or an expression from it instead of asking for a new image
+    const manifest = await store.loadAssets(slug)
+    const dir = store.dir(slug)
+    const withFile = new Set(manifest.assets.filter((a) => resolveFile(dir, a)).map((a) => a.id))
+    const art: ExistingArt = { backgrounds: {}, sprites: {} }
+    for (const id of withFile) {
+      const bg = /^bg_(.+)_([a-z]+)$/.exec(id)
+      if (bg) (art.backgrounds[bg[1]!] ??= []).push(bg[2]!)
+      const sp = /^sprite_(.+)_([a-z0-9]+)$/.exec(id)
+      if (sp) (art.sprites[sp[1]!] ??= []).push(sp[2]!)
+    }
+    const r = await tryAgent(ctx, 'script-analyst', () => resolveUncertain(call(ctx), book, items, art))
     const decisions = r.ok ? r.value.decisions : []
     const error = r.ok ? r.value.errors.join('; ') : r.error
     if (!decisions.length) return `the script-analyst gave no answer${error ? ` (${error})` : ''}: ${items.length} item(s) keep the parser's defaults`
@@ -180,7 +192,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       const { settings } = await store.loadSettings(slug)
       const cur = await store.loadBook(slug)
       const ed = await store.loadEdition(slug, settings.primaryLang).catch(() => undefined)
-      const res = applyDecisions(cur, ed, items, decisions)
+      const res = applyDecisions(cur, ed, items, decisions, { hasFile: (id) => withFile.has(id) })
       await store.saveBook(slug, res.book)
       if (res.edition) await store.saveEdition(slug, res.edition)
       await store.saveUncertain(slug, res.unresolved)

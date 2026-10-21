@@ -1,7 +1,9 @@
 import { z } from 'zod'
 import { CANONICAL_EXPRESSIONS } from '../../../shared/vn'
 import type { VnBook } from '../../../shared/vn'
+import { visualWords } from '../../assets/derive'
 import { BudgetError, isAbortError } from '../../models/types'
+import { normText } from '../ids'
 import type { Uncertain } from '../script'
 import { asJson, askJson, batches, clip } from './common'
 import type { AgentCall } from './common'
@@ -27,7 +29,9 @@ export const decisionSchema = z.object({
   /** One of the standard expressions (kind expression), or null. */
   expression: z.enum(CANONICAL_EXPRESSIONS).nullable(),
   /** The text is a stage direction or a prop, not a speaker or a character (SMASH CUT TO, a sign). */
-  isDirection: z.boolean()
+  isDirection: z.boolean(),
+  /** The key of the character the text is another name for (kind alias): the entry in the item is merged into it. */
+  aliasOf: z.string().nullable().default(null)
 })
 export type Decision = z.infer<typeof decisionSchema>
 
@@ -35,13 +39,39 @@ export const resolveUncertainSchema = z.object({ decisions: z.array(decisionSche
 
 export const BATCH = 30
 
-/** What the agent sees of one uncertain item: the item and the lines around it. */
+/** The art that exists, so the analysis picks from it: times of day per place, expressions per character. */
+export interface ExistingArt {
+  backgrounds: Record<string, string[]>
+  sprites: Record<string, string[]>
+}
+
+/** What the agent sees of one uncertain item: the item and the lines around it, who is in the scene, and for a cast entry who it could be. */
 export function describeItems(book: VnBook, items: Uncertain[]): Record<string, unknown>[] {
   const scenes = new Map(book.chapters.flatMap((c) => c.scenes).map((s) => [s.id, s]))
   return items.map((u, index) => {
     const scene = scenes.get(u.sceneId)
     const base: Record<string, unknown> = { index, kind: u.kind, text: clip(u.text, 200), reason: u.reason, chapter: u.chapter }
+    if (u.kind === 'alias') {
+      const pick = (key: string | undefined) => {
+        const c = book.characters.find((x) => (key ? x.key === key : normText(x.name) === normText(u.text)))
+        return c ? { key: c.key, name: c.name, looks: clip(c.looks, 160) } : null
+      }
+      base.entry = pick(undefined)
+      base.mayBeSamePersonAs = pick(u.charKey)
+      return base
+    }
     if (!scene) return base
+    // who is really in the scene: the speakers, and the characters its narration names
+    const narrated = ` ${normText([scene.description, ...scene.beats.map((b) => (b.type === 'narration' ? b.text : ''))].join(' '))} `
+    base.present = {
+      speakers: [...new Set(scene.beats.flatMap((b) => (b.type === 'line' && b.speakerKey ? [b.speakerKey] : [])))],
+      named: book.characters.filter((c) => [normText(c.name), ...(c.aliases ?? []).map(normText)].some((f) => f && narrated.includes(` ${f} `))).map((c) => c.key)
+    }
+    if (u.kind === 'cast') {
+      // the characters whose looks share a word with the entry ("the silver-haired man" -> the one with silver hair)
+      const words = new Set(normText(u.text).split(' '))
+      base.candidates = book.characters.filter((c) => [...visualWords(c.looks)].some((w) => words.has(w))).map((c) => ({ key: c.key, name: c.name, looks: clip(c.looks, 100) }))
+    }
     base.scene = { place: scene.placeText, placeKey: scene.placeKey, time: scene.time, description: clip(scene.description, 160) }
     const at = u.beatId ? scene.beats.findIndex((b) => b.id === u.beatId) : -1
     const around = at >= 0 ? scene.beats.slice(Math.max(0, at - 2), at + 3) : scene.beats.slice(0, 3)
@@ -52,7 +82,7 @@ export function describeItems(book: VnBook, items: Uncertain[]): Record<string, 
 
 export function bibleForAnalyst(book: VnBook): { characters: unknown[]; places: unknown[] } {
   return {
-    characters: book.characters.map((c) => ({ key: c.key, name: c.name, looks: clip(c.looks, 100) })),
+    characters: book.characters.map((c) => ({ key: c.key, name: c.name, ...(c.aliases?.length ? { aliases: c.aliases } : {}), looks: clip(c.looks, 100) })),
     places: book.places.map((p) => ({ key: p.key, name: p.name, looks: clip(p.looks, 100) }))
   }
 }
@@ -61,7 +91,7 @@ export function bibleForAnalyst(book: VnBook): { characters: unknown[]; places: 
  * Asks the script-analyst about every item, in batches. Decisions come back with indexes into `items`. A batch the model could
  * not answer is reported in `errors` (its items keep the parser's defaults); the other batches still count.
  */
-export async function resolveUncertain(call: AgentCall, book: VnBook, items: Uncertain[]): Promise<{ decisions: Decision[]; errors: string[] }> {
+export async function resolveUncertain(call: AgentCall, book: VnBook, items: Uncertain[], art: ExistingArt = { backgrounds: {}, sprites: {} }): Promise<{ decisions: Decision[]; errors: string[] }> {
   const out: Decision[] = []
   const errors: string[] = []
   const bible = bibleForAnalyst(book)
@@ -73,7 +103,7 @@ export async function resolveUncertain(call: AgentCall, book: VnBook, items: Unc
         call,
         'script-analyst',
         'resolve_uncertain',
-        { title: book.title, lang: book.primaryLang, characters: asJson(bible.characters), places: asJson(bible.places), items: asJson(described) },
+        { title: book.title, lang: book.primaryLang, characters: asJson(bible.characters), places: asJson(bible.places), art: asJson(art), items: asJson(described) },
         resolveUncertainSchema,
         { maxTokens: 4000 }
       )

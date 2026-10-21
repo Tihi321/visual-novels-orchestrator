@@ -1,8 +1,10 @@
 import { CANONICAL_EXPRESSIONS } from '../../shared/vn'
 import type { CanonicalExpression, Edition, VnBeat, VnBook, VnScene } from '../../shared/vn'
+import { visualWords } from '../assets/derive'
 import type { AlignReport } from './align'
 import type { Decision } from './agents/script-analyst'
-import { backgroundId, normText, slugKey } from './ids'
+import { uniqueNames } from './aliases'
+import { backgroundId, normText, slugKey, spriteId } from './ids'
 import { detectTime } from './script'
 import type { Uncertain } from './script'
 
@@ -24,6 +26,37 @@ function uniqueKey(name: string, used: Set<string>): string {
   for (let i = 2; used.has(key); i++) key = `${base}_${i}`
   used.add(key)
   return key
+}
+
+/** The times of day, in two runs that are close to each other inside a run (the morning light is near the day, the dusk near the night). */
+const TIME_RUNS: string[][] = [['dawn', 'morning', 'day', 'afternoon'], ['evening', 'dusk', 'night']]
+const timeDistance = (a: string, b: string): number => {
+  const ra = TIME_RUNS.findIndex((r) => r.includes(a))
+  const rb = TIME_RUNS.findIndex((r) => r.includes(b))
+  if (ra < 0 || rb < 0) return 50
+  return ra === rb ? Math.abs(TIME_RUNS[ra]!.indexOf(a) - TIME_RUNS[rb]!.indexOf(b)) : 10 + Math.abs(TIME_RUNS[ra]!.indexOf(a) - TIME_RUNS[rb]!.indexOf(b))
+}
+
+/** The expression whose sprite stands in for one that has no art: worried -> scared -> sad -> neutral. */
+const EXPRESSION_FALLBACK: Record<string, string[]> = {
+  worried: ['scared', 'sad', 'neutral'],
+  scared: ['worried', 'sad', 'neutral'],
+  sad: ['worried', 'neutral'],
+  surprised: ['happy', 'neutral'],
+  happy: ['neutral'],
+  thinking: ['neutral'],
+  angry: ['neutral']
+}
+
+/** What the analysis may rely on: whether an asset (a background, a sprite) already has a file. Without it nothing is held back. */
+export interface DecisionOptions {
+  hasFile?: (assetId: string) => boolean
+}
+
+const sceneText = (s: VnScene): string => ` ${normText([s.description, ...s.beats.map((b) => (b.type === 'cast' ? '' : b.text))].join(' '))} `
+
+function eachBeatOf(book: VnBook, fn: (beat: VnBeat) => void): void {
+  for (const c of book.chapters) for (const s of c.scenes) for (const x of s.beats) fn(x)
 }
 
 export interface DecisionResult {
@@ -50,7 +83,7 @@ export function refreshWarnings(book: VnBook, unresolved: Uncertain[]): string[]
  * Applies the script-analyst's decisions. `items[decision.index]` is the item a decision answers. The background ids are
  * recomputed for every scene whose place or time changed, so the asset list follows.
  */
-export function applyDecisions(book: VnBook, edition: Edition | undefined, items: Uncertain[], decisions: Decision[]): DecisionResult {
+export function applyDecisions(book: VnBook, edition: Edition | undefined, items: Uncertain[], decisions: Decision[], opts: DecisionOptions = {}): DecisionResult {
   const b: VnBook = structuredClone(book)
   const ed = edition ? structuredClone(edition) : undefined
   const notes: string[] = []
@@ -81,6 +114,50 @@ export function applyDecisions(book: VnBook, edition: Edition | undefined, items
   const rebackground = (s: VnScene) => {
     s.backgroundId = backgroundId(s.placeKey, s.placeText, s.time)
   }
+  const hasFile = opts.hasFile
+  /**
+   * The analysis must not make a new background that has no art when one exists: if the new background has no file and the old one has, the
+   * old time and background stay; if neither has, the nearest time that has art for the place is used.
+   */
+  const keepArt = (s: VnScene, was: { time: string | null; backgroundId: string }): void => {
+    if (!hasFile || s.backgroundId === was.backgroundId || hasFile(s.backgroundId)) return
+    const wanted = s.backgroundId
+    if (hasFile(was.backgroundId)) {
+      s.time = was.time
+      s.backgroundId = was.backgroundId
+      notes.push(`kept ${was.backgroundId}: no art for ${wanted}`)
+      return
+    }
+    const options = [...CANONICAL_TIMES, 'any'].filter((t) => hasFile(backgroundId(s.placeKey, s.placeText, t === 'any' ? null : t)))
+    if (!options.length) return
+    const want = s.time ?? 'any'
+    const best = [...options].sort((x, y) => timeDistance(want, x) - timeDistance(want, y))[0]!
+    s.time = best === 'any' ? null : best
+    s.backgroundId = backgroundId(s.placeKey, s.placeText, s.time)
+    notes.push(`used ${s.backgroundId} for ${wanted}: no art for it`)
+  }
+  /** The sprite expression that has art, when the wanted one has none. */
+  const keepSprite = (charKey: string | null, expression: string): string => {
+    if (!hasFile || !charKey || hasFile(spriteId(charKey, expression))) return expression
+    for (const e of EXPRESSION_FALLBACK[expression] ?? ['neutral']) {
+      if (hasFile(spriteId(charKey, e))) {
+        notes.push(`used ${spriteId(charKey, e)} for ${expression}: no art for ${spriteId(charKey, expression)}`)
+        return e
+      }
+    }
+    return expression
+  }
+  /** Is this character there? It speaks in the scene or is named in it, or shares a word of its looks with the text. Says why not, or null. */
+  const notThere = (key: string, scene: VnScene, text: string): string | null => {
+    const c = b.characters.find((x) => x.key === key)
+    if (!c) return `no character ${key}`
+    if (scene.beats.some((x) => x.type === 'line' && x.speakerKey === key)) return null
+    const around = sceneText(scene)
+    if ([normText(c.name), ...(c.aliases ?? []).map(normText)].some((f) => f && around.includes(` ${f} `))) return null
+    const mine = visualWords(c.looks)
+    if (normText(text).split(' ').some((t) => mine.has(t))) return null
+    return `rejected ${key} for "${text}": not in the scene and looks do not match`
+  }
   const lineBeats = (match: (beat: Extract<VnBeat, { type: 'line' }>) => boolean) =>
     [...scenes.values()].flatMap((s) => s.beats.filter((x): x is Extract<VnBeat, { type: 'line' }> => x.type === 'line' && match(x)))
   const toNarration = (beat: VnBeat, text: string) => {
@@ -94,11 +171,31 @@ export function applyDecisions(book: VnBook, edition: Edition | undefined, items
   items.forEach((u, i) => {
     const d = byIndex.get(i)
     if (!d) return
+    if (u.kind === 'alias') {
+      // two bible entries that may be one person: merge the entry named in the item into the character the analyst names
+      const target = d.aliasOf ? b.characters.find((c) => c.key === d.aliasOf) : undefined
+      const dup = b.characters.find((c) => normText(c.name) === normText(u.text))
+      if (!target || !dup || target.key === dup.key) return
+      target.aliases = uniqueNames([...(target.aliases ?? []), dup.name, ...(dup.aliases ?? [])], target.name)
+      eachBeatOf(b, (beat) => {
+        if (beat.type === 'line' && beat.speakerKey === dup.key) beat.speakerKey = target.key
+        if (beat.type === 'cast') {
+          beat.cast = beat.cast.map((c) => (c.charKey === dup.key ? { ...c, charKey: target.key } : c)).filter((c, at, all) => all.findIndex((x) => x.charKey === c.charKey) === at)
+        }
+      })
+      b.characters = b.characters.filter((c) => c.key !== dup.key)
+      if (ed) delete ed.characterNames[dup.key]
+      notes.push(`aliases merged: ${dup.name} -> ${target.key} (the script-analyst)`)
+      resolved.add(i)
+      applied++
+      return
+    }
     const scene = scenes.get(u.sceneId)
     if (!scene) return
     let changed = false
     switch (u.kind) {
       case 'place': {
+        const was = { time: scene.time, backgroundId: scene.backgroundId }
         const key = d.placeKey && b.places.some((p) => p.key === d.placeKey) ? d.placeKey : d.newPlace?.name.trim() ? addPlace(d.newPlace.name, d.newPlace.looks) : null
         if (key) {
           scene.placeKey = key
@@ -106,14 +203,19 @@ export function applyDecisions(book: VnBook, edition: Edition | undefined, items
         }
         const time = normaliseTime(d.time)
         if (time && !scene.time) scene.time = time
-        if (changed || time) rebackground(scene)
+        if (changed || time) {
+          rebackground(scene)
+          keepArt(scene, was)
+        }
         break
       }
       case 'time': {
         const time = normaliseTime(d.time)
         if (time) {
+          const was = { time: scene.time, backgroundId: scene.backgroundId }
           scene.time = time
           rebackground(scene)
+          keepArt(scene, was)
           changed = true
         }
         break
@@ -139,7 +241,7 @@ export function applyDecisions(book: VnBook, edition: Edition | undefined, items
         if (beat?.type === 'line' && expr && (CANONICAL_EXPRESSIONS as readonly string[]).includes(expr)) {
           const label = normText(beat.speakerLabel)
           const e: CanonicalExpression = expr
-          for (const x of lineBeats((l) => normText(l.speakerLabel) === label && l.rawExpression === u.text)) x.expression = e
+          for (const x of lineBeats((l) => normText(l.speakerLabel) === label && l.rawExpression === u.text)) x.expression = keepSprite(x.speakerKey, e) as CanonicalExpression
           changed = true
         }
         break
@@ -147,12 +249,26 @@ export function applyDecisions(book: VnBook, edition: Edition | undefined, items
       case 'cast': {
         const beat = u.beatId ? scene.beats.find((x) => x.id === u.beatId) : undefined
         if (beat?.type !== 'cast') break
+        if (u.reason === 'more than 3 on screen' && u.charKey) {
+          // the analyst says who is really there: a direction answer takes the character off the cast, anything else keeps it
+          if (d.isDirection || (d.charKey && d.charKey !== u.charKey)) beat.cast = beat.cast.filter((c) => c.charKey !== u.charKey)
+          changed = true
+          break
+        }
         if (d.isDirection) {
           changed = true // a prop or a sign: it stays a scene hint
           break
         }
         const m = /^(.*?)\s*\(([^)]*)\)\s*$/.exec(u.text)
         const look = m ? m[2]!.trim() : ''
+        if (d.charKey && b.characters.some((c) => c.key === d.charKey)) {
+          // the analyst may only put someone on screen who is in the scene, or whose looks the entry describes
+          const why = notThere(d.charKey, scene, u.text)
+          if (why) {
+            notes.push(why)
+            break
+          }
+        }
         const key = d.charKey && b.characters.some((c) => c.key === d.charKey) ? d.charKey : d.newCharacter?.name.trim() ? addCharacter(d.newCharacter.name, d.newCharacter.looks || look) : null
         if (key) {
           if (!beat.cast.some((c) => c.charKey === key)) beat.cast.push({ charKey: key, ...(look ? { look } : {}) })

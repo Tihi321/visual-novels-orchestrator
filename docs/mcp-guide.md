@@ -49,7 +49,7 @@ Long calls return job ids at once. A client that times out on a long call should
 }
 ```
 
-- **Characters and places**: `key` is made from the name when left out (lowercase ascii and `_`). `looks` is what the images show, so write it out in full.
+- **Characters and places**: `key` is made from the name when left out (lowercase ascii and `_`; a Cyrillic, Greek, Japanese or Korean name is written in Latin letters, a Chinese one gets a short hash, so `Наташа` is `natasha`). `looks` is what the images show, so write it out in full. A character may have `aliases`: other names the story calls it by (`"the bald man"`). A line whose speaker is an alias belongs to the character and shows the alias in the game, so the reader is not told the name early. An edition translates an alias under the character key plus `#<n>` (`characterNames: {"kessler#1": "..."}`, n counted from 1).
 - **Beats**: a cast beat `{ cast: ["mara", "tom"] }` says who is on screen from there on (at most three are shown); a line `{ speaker, expression?, text }`; a narration `{ text }`. `type` may be left out. Speakers and places may be named by key or by name; an unknown one is kept with a warning (no sprite, no place looks).
 - **Expressions**: neutral, happy, sad, angry, surprised, worried, scared, thinking. Other words are mapped to the nearest one. Each character gets a sprite per expression it uses.
 - **Backgrounds**: one per place and time (`bg_<place>_<time>`), shared by every scene with the same pair.
@@ -63,7 +63,7 @@ Long calls return job ids at once. A client that times out on a long call should
 | op | Fields | Notes |
 | --- | --- | --- |
 | `book.update` | title, author, genre, style, coverBrief, format | |
-| `character.set` | key, name, looks, voice | Adds or changes. Renaming updates the speaker labels. |
+| `character.set` | key, name, looks, voice, aliases | Adds or changes. Renaming updates the speaker labels (a line under an alias keeps it). `aliases` replaces the list, null clears it. |
 | `character.remove` | key, force | Refused while it is in a cast or speaks, unless `force`. |
 | `place.set` | key, name, looks | Adds or changes. |
 | `place.remove` | key, force | Refused while a scene uses it, unless `force`. |
