@@ -86,6 +86,8 @@ export interface PixelClientOptions {
   importTimeoutMs?: number
   fetchImpl?: typeof fetch
   mcp?: McpHttpClient
+  /** The bearer token of Pixel Studio's MCP server (`PIXEL_STUDIO_MCP_TOKEN`). */
+  token?: string | null
 }
 
 function need<T>(json: Record<string, unknown> | null, tool: string, key: string): T {
@@ -96,7 +98,7 @@ function need<T>(json: Record<string, unknown> | null, tool: string, key: string
 export function createPixelClient(opts: PixelClientOptions): PixelClient {
   const timeoutMs = opts.timeoutMs ?? 15_000
   const longMs = opts.importTimeoutMs ?? 120_000
-  const mcp = opts.mcp ?? createMcpClient({ url: opts.url, label: 'Pixel Studio', notRunningHint: opts.notRunningHint, timeoutMs, fetchImpl: opts.fetchImpl })
+  const mcp = opts.mcp ?? createMcpClient({ url: opts.url, label: 'Pixel Studio', notRunningHint: opts.notRunningHint, timeoutMs, fetchImpl: opts.fetchImpl, token: opts.token, tokenVar: 'PIXEL_STUDIO_MCP_TOKEN' })
   const call = (tool: string, args: object, ms: number, signal?: AbortSignal) => asStudioError(() => mcp.callTool(tool, args, { timeoutMs: ms, signal }))
   return {
     url: mcp.url,

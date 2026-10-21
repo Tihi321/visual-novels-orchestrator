@@ -1,8 +1,10 @@
 import path from 'node:path'
 import { z } from 'zod'
 import { readMd } from '../store/atomic'
+import type { StoredKeyGetter } from '../models/keys'
 import { createChiptuneClient } from './chiptune'
 import type { ChiptuneClient } from './chiptune'
+import { resolveToken } from './mcp-http'
 import { createPixelClient } from './pixel'
 import type { PixelClient } from './pixel'
 
@@ -20,6 +22,9 @@ export const studiosConfigSchema = z.object({
   /** A packaged app to launch instead of `yarn electron .` from the repo. Empty: use the repo. */
   pixelStudioExe: z.string().default(''),
   chiptuneStudioExe: z.string().default(''),
+  /** Bearer tokens of the apps' MCP servers. `PIXEL_STUDIO_MCP_TOKEN` / `CHIPTUNE_STUDIO_MCP_TOKEN` (environment or credential store) win over these. */
+  pixelStudioToken: z.string().default(''),
+  chiptuneStudioToken: z.string().default(''),
   /** Timeouts in seconds: short calls, an image import and export, a track render. */
   timeoutS: z.number().positive().default(15),
   importTimeoutS: z.number().positive().default(120),
@@ -60,10 +65,15 @@ export function startHint(c: StudiosConfig, id: StudioId): string {
   return `${STUDIO_NAMES[id]} is not running at ${studioUrl(c, id)}. Start it headless: ${how}`
 }
 
+/** The bearer token of a studio: its environment variable, the credential store, then the field in config/studios.md. Null when none is set. */
+export function studioToken(c: StudiosConfig, id: StudioId, env: NodeJS.ProcessEnv = process.env, getKey?: StoredKeyGetter): string | null {
+  return id === 'pixel' ? resolveToken('PIXEL_STUDIO_MCP_TOKEN', c.pixelStudioToken, env, getKey) : resolveToken('CHIPTUNE_STUDIO_MCP_TOKEN', c.chiptuneStudioToken, env, getKey)
+}
+
 export function pixelClientFor(c: StudiosConfig): PixelClient {
-  return createPixelClient({ url: c.pixelStudioUrl, notRunningHint: startHint(c, 'pixel'), timeoutMs: c.timeoutS * 1000, importTimeoutMs: c.importTimeoutS * 1000 })
+  return createPixelClient({ url: c.pixelStudioUrl, token: studioToken(c, 'pixel'), notRunningHint: startHint(c, 'pixel'), timeoutMs: c.timeoutS * 1000, importTimeoutMs: c.importTimeoutS * 1000 })
 }
 
 export function chiptuneClientFor(c: StudiosConfig): ChiptuneClient {
-  return createChiptuneClient({ url: c.chiptuneStudioUrl, notRunningHint: startHint(c, 'chiptune'), timeoutMs: c.timeoutS * 1000, renderTimeoutMs: c.renderTimeoutS * 1000 })
+  return createChiptuneClient({ url: c.chiptuneStudioUrl, token: studioToken(c, 'chiptune'), notRunningHint: startHint(c, 'chiptune'), timeoutMs: c.timeoutS * 1000, renderTimeoutMs: c.renderTimeoutS * 1000 })
 }

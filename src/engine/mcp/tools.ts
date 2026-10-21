@@ -103,9 +103,9 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     def(
       'vno_status',
-      'The pipeline state of a project: each step, the jobs queued, running, done and failed, and the failures. clientTasks: the model calls waiting for you or leased (see vno_get_task).',
+      'The pipeline state of a project: each step, the jobs queued, running, done and failed, and the failures. models: the models set for this project, per role, each with usable (false and a reason when a job would skip it, for example no key). clientTasks: the model calls waiting for you or leased (see vno_get_task).',
       z.object({ slug }),
-      async (a) => ({ ...(await svc.status(a.slug)), clientTasks: queue().counts() })
+      async (a) => ({ ...(await svc.status(a.slug)), models: await svc.projectModels(a.slug), clientTasks: queue().counts() })
     ),
     def(
       'vno_asset_list',
@@ -166,10 +166,10 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
 
     // ---- projects and settings ----
-    def('vno_get_project', 'One project in full: its settings (theme, art, music, voice), editions, assets, pipeline state, build and lint results.', z.object({ slug }), async (a) => ({ project: await svc.detail(a.slug) })),
+    def('vno_get_project', 'One project in full: its settings (theme, art, music, voice), editions, assets, pipeline state, build and lint results.', z.object({ slug }), async (a) => ({ project: { ...(await svc.detail(a.slug)), models: await svc.projectModels(a.slug) } })),
     def(
       'vno_update_settings',
-      'Change the settings of a project: each part is merged into the current one, and the asset list follows. theme: a theme name (vno_themes) or null. art: style (pixel or illustrated), palette, stylePrompt, provider (comfy, pixel-studio-draw, or hand: images are made by you and set with vno_asset_replace, ComfyUI is never called for an image), pixelProvider, pixel {width,height,dither,outline}. music: provider, chip, tracks. voice: provider, englishEngine and the other voice settings (vno_get_project shows them). models: {role: provider/model, ...} the models this project uses for those roles, before the agent and role lists of config/roles.md (the way to have an MCP client do one project: {"art-director": "client/claude-code"}); null for a role clears it. null clears an optional field.',
+      'Change the settings of a project: each part is merged into the current one, and the asset list follows. theme: a theme name (vno_themes) or null. art: style (pixel or illustrated), palette, stylePrompt, provider (comfy, pixel-studio-draw, or hand: images are made by you and set with vno_asset_replace, ComfyUI is never called for an image), pixelProvider, pixel {width,height,dither,outline}. music: provider, chip, tracks. voice: provider, englishEngine and the other voice settings (vno_get_project shows them). models: {role: provider/model, ...} the models this project uses for those roles, before the agent and role lists of config/roles.md (the way to have an MCP client do one project: {"art-director": "client/claude-code"}); null for a role clears it. A model whose provider has no key (or is down) is saved but not used: the answer has warnings, and vno_status shows models with usable and the reason. null clears an optional field.',
       z.object({
         slug,
         theme: z.string().nullable().optional(),
@@ -180,7 +180,8 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
       }),
       async (a) => {
         const patch = { ...(a.theme !== undefined ? { theme: a.theme } : {}), ...(a.art ? { art: a.art } : {}), ...(a.music ? { music: a.music } : {}), ...(a.voice ? { voice: a.voice } : {}), ...(a.models ? { models: a.models } : {}) } as ProjectSettingsPatch
-        return { settings: await svc.updateSettings(a.slug, patch) }
+        const r = await svc.updateSettings(a.slug, patch)
+        return { settings: r.settings, ...(r.warnings.length ? { warnings: r.warnings } : {}) }
       }
     ),
     def(

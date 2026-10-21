@@ -163,6 +163,7 @@ export class Engine {
     await this.loadSettings()
     await loadLanguageConfig(this.opts.dataDir, (m) => this.log(`languages: ${m}`))
     await this.registry.load()
+    for (const p of this.registry.providers.values()) if (p.keyFrom) this.log(`provider ${p.id}: key from ${p.keyFrom}`)
     void this.discoverModels()
     // providers with `concurrency: auto` (Strata) follow the slot count their server reports: asked now and every few seconds,
     // so starting Strata with a "4 at once" or a "one at a time" script needs no change in providers.md

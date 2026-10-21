@@ -11,7 +11,7 @@ import { GeminiClient } from '../src/engine/models/gemini'
 import { z } from 'zod'
 import { jsonSchemaOf } from '../src/engine/pipeline/llm'
 import { ClientProvider, ClientTaskQueue, checkAgainstSchema } from '../src/engine/models/client'
-import { deleteStoredKey, getStoredKey, setStoredKey } from '../src/engine/models/keys'
+import { deleteStoredKey, getStoredKey, lookupKey, resolveKey, setStoredKey } from '../src/engine/models/keys'
 import { MockProvider } from '../src/engine/models/mock'
 import { OpenAiCompatClient } from '../src/engine/models/openaiCompat'
 import { ProviderLimiter } from '../src/engine/models/limiter'
@@ -62,6 +62,10 @@ describe('seed configs', () => {
     expect(registry.roles.roles.director?.models).toEqual(['paid', 'strata', 'lmstudio'])
     expect(registry.roleModelRefs('director')).toEqual(['deepseek/deepseek-flash', 'strata/qwen3.8-flash-next', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
     expect(registry.roleModelRefs('edition-aligner')).toEqual(['strata/qwen3.8-flash-next-low', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic', 'deepseek/deepseek-flash'])
+    // the client provider is on in the seed, with a context, and no role uses it
+    expect(registry.providers.get('client')).toMatchObject({ kind: 'client', local: true, available: true, concurrency: 8 })
+    expect(registry.getModel('client/claude-code')).toMatchObject({ vision: true, context: 200000 })
+    for (const role of Object.keys(registry.roles.roles)) expect(registry.roleModelRefs(role)).not.toContain('client/claude-code')
     expect(registry.providers.get('lmstudio')?.loadModels).toBe(true)
     expect(registry.getModel('lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic')?.context).toBe(131072) // loaded with the settings' window
     // the big Qwen models have their own load settings in providers.md
@@ -996,5 +1000,79 @@ x
     const q = new ClientTaskQueue()
     const { task } = q.add({ messages: [{ role: 'user', content: [{ type: 'text', text: 'look' }, { type: 'image', mime: 'image/png', data: 'AAA' }, { type: 'image', mime: 'image/jpeg', data: 'BBB' }] }] }, { job: 'j' })
     expect(task.images).toEqual([{ type: 'image', mime: 'image/png', data: 'AAA' }, { type: 'image', mime: 'image/jpeg', data: 'BBB' }])
+  })
+})
+
+describe('why a model is not usable (V12)', () => {
+  const PROVIDERS = `---
+kind: providers
+providers:
+  - id: nokey
+    kind: openai-compat
+    base_url: http://127.0.0.1:9/v1
+    api_key_env: NOKEY_TEST_KEY
+    models:
+      - id: m
+      - id: emb
+        embedding: true
+  - id: srv
+    kind: openai-compat
+    local: true
+    base_url: http://127.0.0.1:9/v1
+    concurrency: auto
+    rpd: 1
+    models:
+      - id: chat
+      - id: seeing
+        vision: true
+---
+test
+`
+  async function setup() {
+    await writeFile(path.join(dir, 'config', 'providers.md'), PROVIDERS)
+    const registry = new ModelRegistry(dir, { keys: () => undefined })
+    await registry.load()
+    return { registry, router: new ModelRouter(registry, undefined) }
+  }
+
+  it('says no key, down, embedding, not vision, day limit and unknown', async () => {
+    const { registry, router } = await setup()
+    expect(router.whyUnusable('nokey/m')).toMatch(/provider nokey is not available \(no key \(set NOKEY_TEST_KEY/)
+    expect(router.whyUnusable('nope/m')).toMatch(/unknown model/)
+    expect(router.whyUnusable('srv/chat')).toBeNull()
+    expect(router.whyUnusable('srv/chat', { visionOnly: true })).toMatch(/not a vision model/)
+    expect(router.whyUnusable('srv/seeing', { visionOnly: true })).toBeNull()
+    registry.markDown(registry.providers.get('srv')!)
+    expect(router.whyUnusable('srv/chat')).toMatch(/server .* is down/)
+    registry.providers.get('srv')!.down = false
+    router.limiter.noteRequest(registry.providers.get('srv')!)
+    expect(router.whyUnusable('srv/chat')).toMatch(/daily limit/)
+  })
+
+  it('a provider with a key but an embedding model is refused', async () => {
+    await writeFile(path.join(dir, 'config', 'providers.md'), PROVIDERS.replace('NOKEY_TEST_KEY', 'HAS_KEY'))
+    const registry = new ModelRegistry(dir, { keys: (n) => (n === 'HAS_KEY' ? 'k' : undefined) })
+    await registry.load()
+    const router = new ModelRouter(registry, undefined)
+    expect(router.whyUnusable('nokey/m')).toBeNull()
+    expect(router.whyUnusable('nokey/emb')).toMatch(/embedding/)
+  })
+})
+
+describe('shared credential stores', () => {
+  const store = (entries: Record<string, string>) => (account: string, service?: string) => entries[`${service}:${account}`]
+  it('falls back to the scriptorium and book-translator services after vn-studio, and says where the key came from', () => {
+    expect(resolveKey('K', store({ 'scriptorium:K': 'from-scriptorium' }), {})).toBe('from-scriptorium')
+    expect(lookupKey('K', store({ 'book-translator:K': 'bt' }), {})).toEqual({ value: 'bt', from: 'the book-translator credential store' })
+    expect(lookupKey('K', store({ 'scriptorium:K': 's', 'book-translator:K': 'bt' }), {})?.value).toBe('s')
+    expect(lookupKey('K', store({ 'vn-studio:K': 'own', 'scriptorium:K': 's' }), {})).toEqual({ value: 'own', from: 'the vn-studio credential store' })
+    expect(lookupKey('K', store({ 'vn-studio:K': 'own' }), { K: 'env' })).toEqual({ value: 'env', from: 'the environment' })
+    expect(resolveKey('K', store({}), {})).toBeUndefined()
+  })
+
+  it('VNO_SHARED_KEYS=0 turns the fallback off', () => {
+    const get = store({ 'scriptorium:K': 's', 'vn-studio:OWN': 'mine' })
+    expect(resolveKey('K', get, { VNO_SHARED_KEYS: '0' })).toBeUndefined()
+    expect(resolveKey('OWN', get, { VNO_SHARED_KEYS: '0' })).toBe('mine')
   })
 })

@@ -8,7 +8,7 @@ import { promises as fs } from 'node:fs'
 import { AnthropicClient } from './anthropic'
 import { ClientProvider, ClientTaskQueue } from './client'
 import { GeminiClient } from './gemini'
-import { resolveKey } from './keys'
+import { lookupKey, resolveKey } from './keys'
 import type { KeyResolver } from './keys'
 import { MockProvider } from './mock'
 import { OpenAiCompatClient } from './openaiCompat'
@@ -44,6 +44,8 @@ export interface ProviderInfo {
   /** Enabled and (local, mock or has a key). */
   available: boolean
   unavailableReason?: string
+  /** The key was found in another tool's credential store (`the scriptorium credential store`). Not set for the environment or `vn-studio`. */
+  keyFrom?: string
   client?: ProviderClient
 }
 
@@ -296,6 +298,10 @@ export class ModelRegistry {
     let apiKey: string | undefined
     if (info.apiKeyEnv) {
       apiKey = keys(info.apiKeyEnv)
+      if (apiKey && !this.opts.keys) {
+        const from = lookupKey(info.apiKeyEnv)?.from
+        if (from && from !== 'the environment' && !from.startsWith('the vn-studio')) info.keyFrom = from
+      }
       if (!apiKey && !info.local) {
         info.unavailableReason = `no key (set ${info.apiKeyEnv} or run: npm run key:set ${info.apiKeyEnv})`
         return

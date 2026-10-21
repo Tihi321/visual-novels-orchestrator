@@ -446,7 +446,9 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
     case 'settings': {
       const [slug] = need(p, 1, 'settings <slug> [--music-provider ...] [--pixel-provider ...] ...')
       const patch = settingsPatchFromFlags(p)
-      const next = Object.keys(patch).length ? await svc.updateSettings(slug!, patch) : (await svc.store.loadSettings(slug!)).settings
+      const changed = Object.keys(patch).length ? await svc.updateSettings(slug!, patch) : undefined
+      const next = changed ? changed.settings : (await svc.store.loadSettings(slug!)).settings
+      for (const w of changed?.warnings ?? []) out(`warning: ${w}`)
       const px = resolvePixel(next.art)
       out(`${slug}: art ${next.art.style}${next.art.palette ? ` (palette ${next.art.palette})` : ''}, sprites by ${resolveArtProvider(next.art)}, pixel art by ${resolvePixelProvider(next.art)} at ${px.width}x${px.height}, dither ${px.dither}, outline ${px.outline ? 'on' : 'off'}`)
       out(`${slug}: music by ${resolveMusicProvider(next)}${next.music.provider ? '' : ' (auto)'}, chip ${next.music.chip ?? 'auto'}, ${next.music.tracks} track(s)`)

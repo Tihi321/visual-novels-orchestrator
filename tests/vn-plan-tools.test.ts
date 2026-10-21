@@ -233,3 +233,25 @@ describe('vno_set_library', () => {
     expect(env.engine.settingsSummary().lmstudioParallel).toBe(3)
   })
 })
+
+describe('vno_update_settings with a model nobody can use', () => {
+  it('saves the model, warns with the key variable, and vno_status shows it as not usable', async () => {
+    const loc = env.engine.registry.providers.get('loc')!
+    loc.available = false
+    loc.unavailableReason = 'no key (set NOKEY_API_KEY or run: npm run key:set NOKEY_API_KEY)'
+    const r = await ok('vno_update_settings', { slug, models: { 'script-analyst': 'loc/m1' } })
+    expect(r.settings.models).toEqual({ 'script-analyst': 'loc/m1' })
+    expect(r.warnings).toHaveLength(1)
+    expect(r.warnings[0]).toMatch(/loc\/m1: provider loc is not available \(no key \(set NOKEY_API_KEY.*jobs of script-analyst will use the role's list/)
+    const st = await ok('vno_status', { slug })
+    expect(st.models['script-analyst']).toMatchObject({ ref: 'loc/m1', usable: false })
+    expect(st.models['script-analyst'].reason).toMatch(/NOKEY_API_KEY/)
+    const proj = await ok('vno_get_project', { slug })
+    expect(proj.project.models['script-analyst'].usable).toBe(false)
+    // a usable model has no warning
+    loc.available = true
+    const again = await ok('vno_update_settings', { slug, models: { 'script-analyst': 'loc/m1' } })
+    expect(again.warnings).toBeUndefined()
+    expect((await ok('vno_status', { slug })).models['script-analyst']).toEqual({ ref: 'loc/m1', usable: true })
+  })
+})

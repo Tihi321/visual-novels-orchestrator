@@ -55,6 +55,7 @@ export function providerSummaries(registry: ModelRegistry, limiter: ProviderLimi
       local: p.local,
       available: p.available,
       reason: p.available ? undefined : p.unavailableReason,
+      keyFrom: p.keyFrom,
       canList: p.kind === 'openai-compat',
       concurrency: p.concurrency,
       concurrencyAuto: p.concurrencyAuto,

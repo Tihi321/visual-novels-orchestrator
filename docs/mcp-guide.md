@@ -98,7 +98,7 @@ Draw the images yourself (for example with the pixel-studio MCP) and VN Studio n
 
 Eight pipeline steps ask a model: `analyse` (script-analyst), `art plan` (art-director), `music plan` (composer), `stage` (stage-director), `voice plan` (voice-director), `edition align` (edition-aligner), `art review` (art-critic) and the run `summary` (director). Instead of LM Studio, Strata or a paid API, you can answer them yourself, with nothing spent. Set a role (or one agent) to the model `client/claude-code`; its jobs then wait until you take them over MCP.
 
-**Setting it up.** The `client` provider has to be enabled in `config/providers.md` (the seed has a commented example):
+**Setting it up.** The `client` provider is on in the seed's `config/providers.md` and nothing uses it until you pick it. An older data folder gets the entry once, at the next start (a one-time migration; delete it later and it stays gone). It looks like this:
 
 ```yaml
 - id: client
@@ -108,16 +108,18 @@ Eight pipeline steps ask a model: `analyse` (script-analyst), `art plan` (art-di
   models:
     - id: claude-code
       vision: true     # the art-critic sends images
+      context: 200000  # recorded only: VN Studio sizes nothing by it
 ```
 
 **Choosing what the client does.**
 - **One project (the way to do it):** `vno_update_settings {slug, models: {"art-director": "client/claude-code", "stage-director": "client/claude-code"}}`. These models go first for the jobs of that project, before the agent's own model and the role's list, which stay as the fallback; other projects are not touched. The refs are checked (an unknown role or model is refused); `null` for a role clears it (`models: {"art-director": null}`). They are saved as `models` in the project's `project.md`.
 - **Every project (global alternative):** edit the data folder, there is no `set_model` tool. In `config/roles.md` put `client/claude-code` first in the role's `models` list, for example `stage-director: {models: [client/claude-code, strata]}`; it is reloaded at once, and a request that is already waiting is asked again on the new model. The roles are `script-analyst`, `art-director`, `composer`, `stage-director`, `voice-director`, `edition-aligner`, `art-critic` and `director`. One agent: `model: client/claude-code` in `agents/<agent>.md`.
+- The models of a project are saved even when jobs cannot use them (no key, server down): `vno_update_settings` then returns `warnings`, and `vno_status` / `vno_get_project` show `models: {role: {ref, usable, reason?}}`. The job log says `project model <ref> not used: <reason>`.
 - Put things back when you are done: a role left on `client` with nobody answering stalls every job that uses it. The Models page shows `client` as local and free.
 
 **The loop.**
 1. Start the work: `vno_run_pipeline {slug, from}` (or `vno_plan`, `vno_add_edition`, ...), then `vno_wait {slug}`. It returns as soon as nothing runs except jobs that wait for you, with `clientTasks: n` and a hint (it does not block until the timeout). `vno_status` shows `clientTasks: {waiting, leased}` too, and `vno_client_tasks` lists the tasks (id, role, task, project, age).
-2. `vno_get_task {role?, book?, task?}` leases the oldest matching task to you for 30 minutes. You get `{taskId, meta: {job, call, role, task, book, agent, unit}, system, user, schema?, maxTokens?, output, leaseMinutes}`, or `{none: true, waiting}`. With more than one message there is also `messages: [{role, content}]`.
+2. `vno_get_task {role?, book?, task?}` leases the oldest matching task to you for 30 minutes. You get `{taskId, meta: {job, call, role, task, book, agent, unit}, turns, system, user, schema?, maxTokens?, output, leaseMinutes}`, or `{none: true, waiting}`. Each text is sent once. `turns: "single"` (nearly every task) has `system` and `user`. `turns: "multi"` (a repair round, the draw loop) has `system` and `messages: [{role, content}]`, the turns after the system text in order, and no `user`: answer the last user turn.
 3. Write the answer as `output` says: one JSON object that matches `schema` (no prose, no code fence), or the text only.
 4. `vno_submit_task {taskId, text}`. When the task has a schema the text is checked first: `{accepted: false, problems}` means fix it and submit again (the task stays yours, so the engine does not spend a repair round). `{accepted: true}` lets the job go on as if a model had answered. `vno_release_task {taskId}` gives a task back.
 5. Repeat until `vno_get_task` says `none`, then `vno_wait` again, until the steps are done. A lease that runs out (30 minutes) puts the task back in the queue, so several clients, or subagents with one task each, can work in parallel.

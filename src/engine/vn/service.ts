@@ -506,8 +506,23 @@ export class VnService {
     }
   }
 
-  /** Merges a settings patch (theme, art, music, voice) into project.md and brings the asset list in line with it. */
-  async updateSettings(slug: string, patch: ProjectSettingsPatch): Promise<ProjectSettings> {
+  /** The project's own models per role, and whether jobs can use each now (`router.whyUnusable`). A model that is not usable is skipped: the role's list answers instead. */
+  async projectModels(slug: string): Promise<Record<string, { ref: string; usable: boolean; reason?: string }>> {
+    const { settings } = await this.store.loadSettings(slug)
+    return Object.fromEntries(
+      Object.entries(settings.models).map(([role, ref]) => {
+        const reason = this.deps.router.whyUnusable(ref, { visionOnly: role === 'art-critic' })
+        return [role, reason ? { ref, usable: false, reason } : { ref, usable: true }]
+      })
+    )
+  }
+
+  /**
+   * Merges a settings patch (theme, art, music, voice) into project.md and brings the asset list in line with it. `warnings`: a model that was
+   * saved but is not usable now (no key, server down ...), so its jobs use the role's list.
+   */
+  async updateSettings(slug: string, patch: ProjectSettingsPatch): Promise<{ settings: ProjectSettings; warnings: string[] }> {
+    const warnings: string[] = []
     const { settings: cur } = await this.store.loadSettings(slug)
     const art: Record<string, unknown> = clearNulls({ ...cur.art, ...(patch.art ?? {}) })
     // the pixel settings are merged field by field (a patch with only the dither keeps the size)
@@ -522,6 +537,8 @@ export class VnService {
         if (!m) throw new Error(`no model "${ref}" (see config/providers.md; a client model is client/claude-code, with the client provider enabled)`)
         if (m.embedding) throw new Error(`"${ref}" is an embedding model`)
         models[role] = full
+        const why = this.deps.router.whyUnusable(full, { visionOnly: role === 'art-critic' })
+        if (why) warnings.push(`${full}: ${why}; jobs of ${role} will use the role's list`)
       }
     }
     const next = projectSettingsSchema.parse({
@@ -536,7 +553,7 @@ export class VnService {
     if (patch.art || patch.music || patch.voice) await this.reconcileAssets(slug)
     if (patch.models) this.deps.kick?.()
     await this.emitProject(slug)
-    return next
+    return { settings: next, warnings }
   }
 
   /** Book ids of the assets the book no longer needs (kept in the manifest, never deleted). */

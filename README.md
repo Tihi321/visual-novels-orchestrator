@@ -4,7 +4,7 @@ An Electron + TypeScript desktop app that takes a visual-novel book written in [
 
 - A book can be in any of 37 languages (the 31 that VibeTTS Supertonic reads plus Book Translator's; more in `config/languages.md`), and the language is detected. A translated edition (a translated book folder, or text written over MCP) reuses every asset and only replaces the text. There is no machine translation inside VN Studio.
 - A story can also be written straight into VN Studio over MCP (`vno_create_project` and the story tools), with no Scriptorium folder.
-- Models: local ones (LM Studio, Strata) plus every Scriptorium provider (DeepSeek, Anthropic, Gemini, OpenRouter, other OpenAI-compatible APIs), and the `client` provider: set a role to `client/claude-code` and an MCP client (Claude Code) answers its model calls itself, for free (`vno_get_task` / `vno_submit_task`). Pick the models on the Models page and a model per agent on the Agents page.
+- Models: local ones (LM Studio, Strata) plus every Scriptorium provider (DeepSeek, Anthropic, Gemini, OpenRouter, other OpenAI-compatible APIs), and the `client` provider (on by default, used only when you pick it): set a role to `client/claude-code` and an MCP client (Claude Code) answers its model calls itself, for free (`vno_get_task` / `vno_submit_task`). Pick the models on the Models page and a model per agent on the Agents page.
 - The engine core (model router, job queue, agents) is a plain copy of Scriptorium's. The plan is in `.claude/tickets/VNO-01-visual-novel-studio-scriptorium-book-ren/plan.md`.
 
 Status: working end to end (VNO-01 to VNO-04): import a Scriptorium book or write the story over MCP, the agent pipeline, ComfyUI / Pixel Studio / Chiptune Studio assets, editions, VibeTTS voices, the Ren'Py and Android build, and an MCP server (HTTP, or headless with no window).
@@ -31,7 +31,7 @@ yarn install
 | `yarn typecheck` | `tsc` for the node and web projects |
 | `yarn lint` | ESLint |
 
-API keys come from environment variables or the Windows credential store (service `vn-studio`), never from files.
+API keys come from environment variables or the Windows credential store (service `vn-studio`), never from files. A key that is not found there is also looked for under the services `scriptorium` and `book-translator`, so the keys of those tools work here; `VNO_SHARED_KEYS=0` turns that off. The Models page says when a key comes from another store. Studio tokens (`PIXEL_STUDIO_MCP_TOKEN`, `CHIPTUNE_STUDIO_MCP_TOKEN`, `VIBETTS_MCP_TOKEN`) are looked up the same way.
 
 ## Command line and MCP
 

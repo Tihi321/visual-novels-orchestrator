@@ -15,18 +15,22 @@ function textOf(m: ChatMessage, seen: { n: number }): string {
   return m.content.map((p) => (p.type === 'text' ? p.text : `[image ${++seen.n}]`)).join('\n')
 }
 
-/** What `vno_get_task` shows of a leased task: the prompt split into system and user, how to answer, and the images. */
+/**
+ * What `vno_get_task` shows of a leased task. Every text goes out once. A single turn (one user message) is `system` + `user`; a task with
+ * several turns (a repair round, the draw loop) is `system` + `messages` (the turns after the system text, in order) and no `user`.
+ */
 export function taskView(t: ClientTask): { view: Record<string, unknown>; images: { mime: string; data: string }[] } {
   const seen = { n: 0 }
   const texts = t.messages.map((m) => ({ role: m.role, content: textOf(m, seen) }))
   const system = texts.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
-  const user = texts.filter((m) => m.role !== 'system').map((m) => m.content).join('\n\n')
+  const turns = texts.filter((m) => m.role !== 'system')
+  const multi = turns.filter((m) => m.role === 'user').length > 1 || turns.some((m) => m.role === 'assistant')
   const view: Record<string, unknown> = {
     taskId: t.id,
     meta: { job: t.job, call: t.call, role: t.role, task: t.task, book: t.book, agent: t.agent, unit: t.unit },
+    turns: multi ? 'multi' : 'single',
     system,
-    user,
-    ...(t.messages.length > 1 ? { messages: texts } : {}),
+    ...(multi ? { messages: turns } : { user: turns.map((m) => m.content).join('\n\n') }),
     ...(t.schema ? { schema: t.schema } : {}),
     ...(t.maxTokens ? { maxTokens: t.maxTokens } : {}),
     output: t.schema ? JSON_OUTPUT : TEXT_OUTPUT,
@@ -48,7 +52,7 @@ export function clientTools(svc: VnService, def: ToolDef, opts: McpOptions): Too
     ),
     def(
       'vno_get_task',
-      'Take the oldest waiting model call (leased to you for 30 minutes). Returns the prompt (system, user), the JSON schema if the answer must be JSON, and how to answer. Write the answer and send it with vno_submit_task. Vision tasks (art-critic) also return the images. {none: true} when nothing waits.',
+      'Take the oldest waiting model call (leased to you for 30 minutes). Returns the prompt, each text once (`turns: single` gives system and user; `turns: multi`, a repair round or the draw loop, gives system and messages, the turns in order, and no user), the JSON schema if the answer must be JSON, and how to answer. Write the answer and send it with vno_submit_task. Vision tasks (art-critic) also return the images. {none: true} when nothing waits.',
       z.object({
         role: z.string().optional().describe('Only a task of this role, for example art-director or stage-director'),
         book: z.string().optional().describe('Only a task of this project (slug)'),
