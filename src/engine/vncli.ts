@@ -30,8 +30,9 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   generate <slug> [--kind k] [--only id] [--force]   generate the assets that have no file (k: background, sheet, sprite, cover, music)
   asset replace <slug> <id> <file>       use your own file (custom, locked)
   asset pick <slug> <id> <version>       use another version
-  asset regen <slug> <id> [--prompt text] [--engine id] [--seed n]
+  asset regen <slug> <id> [--prompt text] [--engine id] [--seed n] [--sprites]   (--sprites: a sheet, also make its sprites again after it)
   asset lock|unlock <slug> <id>
+  clear-queue [slug]                     delete the queued jobs (of a project, or all) and mark their pipeline steps skipped
   build <slug>                           build the Ren'Py game
   lint <slug>                            run Ren'Py lint on the built game
   play <slug>                            start the built game
@@ -51,9 +52,9 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
 `
 
 /** The commands the VN CLI handles (the rest of index.ts handles `probe`, `key-set` and the plain engine). */
-export const CLI_COMMANDS = new Set(['books', 'import', 'projects', 'run', 'edition', 'analyse', 'plan', 'assets', 'generate', 'asset', 'build', 'lint', 'play', 'android', 'voice', 'comfy', 'settings', 'studios', 'studio', 'themes', 'help'])
+export const CLI_COMMANDS = new Set(['books', 'import', 'projects', 'run', 'edition', 'analyse', 'plan', 'assets', 'generate', 'asset', 'clear-queue', 'build', 'lint', 'play', 'android', 'voice', 'comfy', 'settings', 'studios', 'studio', 'themes', 'help'])
 
-const BOOL_FLAGS = new Set(['force', 'preflight', 'bundle', 'run', 'verbose', 'json', 'no-build', 'refresh-prompts', 'help', 'outline', 'wait'])
+const BOOL_FLAGS = new Set(['force', 'preflight', 'bundle', 'run', 'verbose', 'json', 'no-build', 'refresh-prompts', 'help', 'outline', 'wait', 'sprites'])
 
 export interface ParsedCli {
   command: string
@@ -293,8 +294,8 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
       const [slug] = need(p, 1, 'plan <slug> [--refresh-prompts]')
       const refresh = !!(p.flags.force || p.flags['refresh-prompts'])
       const run = await svc.nextRun(slug!)
-      const art = await svc.enqueue(slug!, TASKS.artPlan, 'all', run, { body: { force: refresh, explicit: true } })
-      await svc.enqueue(slug!, TASKS.musicPlan, 'all', run, { depends_on: [art], body: { force: refresh } })
+      const art = await svc.enqueue(slug!, TASKS.artPlan, 'all', run, { body: { force: refresh, explicit: true }, priority: 1 })
+      await svc.enqueue(slug!, TASKS.musicPlan, 'all', run, { depends_on: [art], body: { force: refresh }, priority: 1 })
       return waitAndReport(svc, slug!)
     }
     case 'generate': {
@@ -309,7 +310,7 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
         if (!ids.length) throw new Error(`no asset matches ${only ? `--only ${only}` : ''} ${kind ? `--kind ${kind}` : ''}`.trim())
       }
       const run = await svc.nextRun(slug!)
-      await svc.enqueue(slug!, TASKS.generate, 'all', run, { body: { dispatch: true, force: !!p.flags.force, ids, tail: false } })
+      await svc.enqueue(slug!, TASKS.generate, 'all', run, { body: { dispatch: true, force: !!p.flags.force, ids, tail: false }, priority: 1 })
       const code = await waitAndReport(svc, slug!)
       printAssets((await svc.listAssets(slug!)).filter((a) => !ids || ids.includes(a.id)))
       return code
@@ -335,7 +336,8 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
         }
         case 'regen': {
           const seed = flag(p, 'seed')
-          await svc.regenerateAsset(slug, id, { prompt: flag(p, 'prompt'), engine: flag(p, 'engine'), seed: seed === undefined ? undefined : Number(seed), rebuild })
+          const r = await svc.regenerateAsset(slug, id, { prompt: flag(p, 'prompt'), engine: flag(p, 'engine'), seed: seed === undefined ? undefined : Number(seed), rebuild, sprites: !!p.flags.sprites })
+          if (r.staleSprites.length) out(`these sprites were made from the old sheet: ${r.staleSprites.join(', ')} (asset regen ${id} --sprites makes them again)`)
           const code = await waitAndReport(svc, slug)
           printAssets((await svc.listAssets(slug)).filter((a) => a.id === id))
           return code
@@ -348,6 +350,11 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
         default:
           throw new Error('usage: asset replace|pick|regen|lock|unlock <slug> <id> ...')
       }
+    }
+    case 'clear-queue': {
+      const r = await svc.clearQueue(p.args[0] ?? null)
+      out(`${r.dropped} queued job(s) dropped${r.projects.length ? `; steps skipped in ${r.projects.join(', ')}` : ''}`)
+      return 0
     }
     case 'build': {
       const [slug] = need(p, 1, 'build <slug>')

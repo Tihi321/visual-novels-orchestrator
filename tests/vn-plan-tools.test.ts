@@ -7,6 +7,7 @@ import type { MusicPlan } from '../src/engine/vn/agents/composer'
 import { TASKS } from '../src/engine/vn/pipeline'
 import type { StageCues } from '../src/engine/renpy/stage'
 import type { VnBook } from '../src/shared/vn'
+import { resolveStylePrompt } from '../src/engine/assets/derive'
 import { book, makeVnEnv, waitIdle } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
 
@@ -253,5 +254,54 @@ describe('vno_update_settings with a model nobody can use', () => {
     const again = await ok('vno_update_settings', { slug, models: { 'script-analyst': 'loc/m1' } })
     expect(again.warnings).toBeUndefined()
     expect((await ok('vno_status', { slug })).models['script-analyst']).toEqual({ ref: 'loc/m1', usable: true })
+  })
+})
+
+describe('a new style prefix reaches the prompts that are not generated yet (V11)', () => {
+  it('rewrites unversioned prompts, reports the generated ones, leaves sprites, and a queued job uses the new prompt', async () => {
+    const STYLE = 'ink wash, high contrast'
+    await ok('vno_plan', { slug, wait: true })
+    const assets = await svc().store.loadAssets(slug)
+    const bgs = assets.assets.filter((a) => a.kind === 'background')
+    expect(bgs.length).toBeGreaterThanOrEqual(2)
+    const [generated, queued] = [bgs[0]!, bgs[1]!]
+    const defaultStyle = resolveStylePrompt(await svc().store.loadBook(slug), (await svc().store.loadSettings(slug)).settings)
+    expect(queued.prompt.startsWith(defaultStyle)).toBe(true)
+    // one background already has an image
+    await ok('vno_asset_generate', { slug, only: [generated.id], wait: true })
+    const spritesBefore = assets.assets.filter((a) => a.kind === 'sprite').map((a) => [a.id, a.prompt])
+    // a prompt the art-director wrote with other words
+    const odd = bgs[2]
+    if (odd) await svc().setAssetPlan(slug, odd.id, { prompt: 'a lighthouse at dusk' })
+
+    // a generate job waits in the queue (the queue is paused), then the style changes
+    await env.engine.setPaused(true)
+    await svc().enqueue(slug, TASKS.generate, queued.id, await svc().nextRun(slug), { body: { force: false } })
+    const r = await ok('vno_update_settings', { slug, art: { stylePrompt: STYLE } })
+    expect(r.restyle.generated).toContain(generated.id)
+    expect(r.restyle.restyled).toContain(queued.id)
+    expect(r.restyle.restyled).not.toContain(generated.id)
+    if (odd) expect(r.restyle.kept).toContain(odd.id)
+    expect(r.restyle.hint).toMatch(/vno_asset_regen/)
+
+    const after = (await svc().store.loadAssets(slug)).assets
+    const prompt = (id: string) => after.find((a) => a.id === id)!.prompt
+    expect(prompt(queued.id).startsWith(`${STYLE}, `)).toBe(true)
+    expect(prompt(queued.id)).not.toContain(defaultStyle)
+    expect(prompt(queued.id).slice(STYLE.length)).toBe(assets.assets.find((a) => a.id === queued.id)!.prompt.slice(defaultStyle.length))
+    expect(prompt(generated.id)).toBe(assets.assets.find((a) => a.id === generated.id)!.prompt) // already generated: still the old style
+    if (odd) expect(prompt(odd.id)).toBe('a lighthouse at dusk')
+    expect(after.filter((a) => a.kind === 'sprite').map((a) => [a.id, a.prompt])).toEqual(spritesBefore)
+
+    // the queued job reads the prompt when it runs
+    const before = env.comfy.requests.length
+    await env.engine.setPaused(false)
+    await waitIdle(env, slug)
+    const sent = env.comfy.requests.slice(before).find((q) => q.prompt?.startsWith(STYLE))
+    expect(sent).toBeTruthy()
+
+    // changing nothing about the style restyles nothing
+    const again = await ok('vno_update_settings', { slug, art: { stylePrompt: STYLE } })
+    expect(again.restyle).toBeUndefined()
   })
 })

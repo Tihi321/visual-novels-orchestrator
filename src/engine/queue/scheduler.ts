@@ -28,6 +28,8 @@ export interface ChatResult {
 
 export interface JobContext {
   job: JobFrontmatter
+  /** The model the job was leased: its first one (a fallback may answer later). Undefined for a job that needs no model, until a lazy job's first `chat`. */
+  readonly model?: ModelInfo
   jobBody: string
   agent: { id: string; role: string; name: string; persona: string }
   signal: AbortSignal
@@ -57,6 +59,12 @@ export interface HandlerOptions {
    * and `ctx.chat` throws. Used for the VN pipeline's deterministic jobs.
    */
   noModel?: boolean
+  /**
+   * A cheap check that says the job will need no model this time (analyse with nothing to settle, stage with every cue by hand, ...). Such a
+   * job starts at once, without waiting for a model or a provider slot. If it calls `ctx.chat` after all (the files changed since the check),
+   * `chat` takes a slot first, so the job is then a normal one. An error in the check counts as false.
+   */
+  skipModel?: (job: JobFile) => Promise<boolean>
 }
 
 type AbortReason = 'stop' | 'fire' | 'stopNow' | 'shutdown'
@@ -77,6 +85,10 @@ interface RunningJob {
   first?: string
   /** The agent's or role's model changed: the job's next request builds its model list again. */
   modelChanged?: boolean
+  /** The model the job holds a slot for: the first one's, set at launch, or by the first `chat` of a lazy job. */
+  leased?: ModelInfo
+  /** Launched without a slot because `skipModel` said it needs no model: `ctx.chat` leases one itself. */
+  lazy: boolean
 }
 
 interface AgentRuntime {
@@ -285,7 +297,8 @@ export class Scheduler {
     if (!factory.paused) {
       const queued = await jobs.list('queued')
       const doneIds = new Set(await jobs.ids('done'))
-      queued.sort((a, b) => (a.data.created ?? '').localeCompare(b.data.created ?? '') || a.id.localeCompare(b.id))
+      // explicit requests (priority 1) go before the pipeline's own jobs (0); then oldest first
+      queued.sort((a, b) => (b.data.priority ?? 0) - (a.data.priority ?? 0) || (a.data.created ?? '').localeCompare(b.data.created ?? '') || a.id.localeCompare(b.id))
       const t = this.now()
       for (const job of queued) {
         if (this.stopped) break
@@ -300,11 +313,19 @@ export class Scheduler {
         const agent = this.pickAgent(j, defs)
         if (!agent) continue
         const rt = this.runtimeFor(agent.id)
-        if (this.handlers.get(j.task)?.opts.noModel) {
+        const handlerOpts = this.handlers.get(j.task)?.opts
+        if (handlerOpts?.noModel) {
           const claimedLocal = await jobs.claim(job.id)
           if (!claimedLocal) continue
           for (const l of j.locks) this.locks.add(l)
           this.launch(claimedLocal, agent, [], undefined)
+          continue
+        }
+        if (handlerOpts?.skipModel && (await handlerOpts.skipModel(job).catch(() => false))) {
+          const claimedLazy = await jobs.claim(job.id)
+          if (!claimedLazy) continue
+          for (const l of j.locks) this.locks.add(l)
+          this.launch(claimedLazy, agent, [], undefined, true)
           continue
         }
         const models = router.candidates(j.role, { agentModel: agent.data.model, avoidFamily: j.avoid_family, visionOnly: j.vision, projectModel: j.book ? this.d.projectModel?.(j.book, j.role) : undefined })
@@ -356,9 +377,10 @@ export class Scheduler {
       const rt = this.runtimes.get(def.id)
       if (!rt || rt.retiring || def.data.paused) continue
       if (def.data.role !== j.role) continue
-      if (rt.running.size >= def.data.max_parallel) continue
+      const load = this.occupying(rt)
+      if (load >= def.data.max_parallel) continue
       if (def.data.pin && def.data.pin !== j.book) continue
-      options.push({ def, focus: !!j.book && def.data.focus.includes(j.book), hint: j.agent_hint === def.id, load: rt.running.size })
+      options.push({ def, focus: !!j.book && def.data.focus.includes(j.book), hint: j.agent_hint === def.id, load })
     }
     // the hinted agent (same writer for a book) is busy finishing the job before this one: wait a little for it
     if (j.agent_hint && !options.some((o) => o.hint)) {
@@ -368,6 +390,16 @@ export class Scheduler {
     }
     options.sort((a, b) => Number(b.hint) - Number(a.hint) || Number(b.focus) - Number(a.focus) || a.load - b.load || a.def.id.localeCompare(b.def.id))
     return options[0]?.def
+  }
+
+  /**
+   * The jobs of an agent that keep it busy: every running job except the ones parked on a `client` model, which wait for an MCP client and
+   * take nothing from the agent. The client provider's `concurrency` is the cap on those.
+   */
+  private occupying(rt: AgentRuntime): number {
+    let n = 0
+    for (const rj of rt.running.values()) if (this.d.router.registry.getModel(rj.model)?.provider.kind !== 'client') n++
+    return n
   }
 
   private setState(rt: AgentRuntime, def: AgentDef, state: AgentState, task?: string, job?: JobFrontmatter): void {
@@ -390,16 +422,16 @@ export class Scheduler {
 
   // ---- running a job ----
 
-  private launch(job: JobFile, agent: AgentDef, models: ModelInfo[], leased: ModelInfo | undefined): void {
+  private launch(job: JobFile, agent: AgentDef, models: ModelInfo[], leased: ModelInfo | undefined, lazy = false): void {
     const rt = this.runtimeFor(agent.id)
     const controller = new AbortController()
-    const rj: RunningJob = { job, agentId: agent.id, controller, done: Promise.resolve(), held: new Set(leased ? [leased.provider.id] : []), model: leased?.ref ?? 'none' }
+    const rj: RunningJob = { job, agentId: agent.id, controller, done: Promise.resolve(), held: new Set(leased ? [leased.provider.id] : []), model: leased?.ref ?? 'none', leased, lazy }
     this.running.set(job.id, rj)
     rt.running.set(job.id, rj)
-    rj.done = this.run(rj, agent, models, leased).catch((err) => { console.error('[engine] job runner failed:', err) }).finally(() => {
+    rj.done = this.run(rj, agent, models).catch((err) => { console.error('[engine] job runner failed:', err) }).finally(() => {
       this.running.delete(job.id)
       rt.running.delete(job.id)
-      if (leased && rj.held.delete(leased.provider.id)) this.d.router.limiter.release(leased.provider)
+      if (rj.leased && rj.held.delete(rj.leased.provider.id)) this.d.router.limiter.release(rj.leased.provider)
       for (const l of job.data.locks) this.locks.delete(l)
       void this.afterJob(rt, agent).finally(() => this.kick())
     })
@@ -418,8 +450,9 @@ export class Scheduler {
     }
   }
 
-  private async run(rj: RunningJob, agent: AgentDef, startModels: ModelInfo[], leased: ModelInfo | undefined): Promise<void> {
+  private async run(rj: RunningJob, agent: AgentDef, startModels: ModelInfo[]): Promise<void> {
     let models = startModels
+    let leased = rj.leased
     const { jobs, logs, emit } = this.d
     const { job } = rj
     const j = job.data
@@ -441,12 +474,65 @@ export class Scheduler {
     logAll(
       `\n## ${localIso(new Date())} job \`${j.id}\`\n\n` +
         `- requested by: ${j.requested_by}\n- task: ${j.task} (role ${j.role})${j.book ? `, book ${j.book}` : ''}${j.unit ? `, unit ${j.unit}` : ''}, round ${j.round}\n` +
-        `- agent: ${agent.id}, first model: ${leased?.ref ?? 'none (no model needed)'}, prompt version ${promptVersion}, attempt ${j.attempts + 1}\n`
+        `- agent: ${agent.id}, first model: ${leased?.ref ?? (rj.lazy ? 'none yet (a model only if the job turns out to need one)' : 'none (no model needed)')}, prompt version ${promptVersion}, attempt ${j.attempts + 1}\n`
     )
+    // a model the project or the agent asked for that this job did not get: say why, so a dropped setting is not silent
+    if (leased) {
+      const notUsed = (label: string, ref: string | undefined | null): void => {
+        const full = ref ? this.d.router.registry.resolve(ref) : undefined
+        if (!full || full === leased?.ref) return
+        logAll(`- ${label} model ${full} not used: ${this.d.router.whyUnusable(full, { visionOnly: j.vision }) ?? 'over the budget cap'}\n`)
+      }
+      notUsed('project', j.book ? this.d.projectModel?.(j.book, j.role) : undefined)
+      notUsed('agent', agent.data.model)
+    }
     await jobs.update('running', j.id, { paid: leased ? isPaidModel(leased) : false, prompt_version: promptVersion, agent: agent.id, model: leased?.ref ?? null } as Partial<JobFrontmatter>)
+
+    /**
+     * A lazy job (`skipModel` said it needs no model) that calls `chat` after all: waits for a slot like a job that was never lazy would have,
+     * the first model that has room, and holds it until the job ends.
+     */
+    const leaseNow = async (): Promise<ModelInfo> => {
+      const { router, budget } = this.d
+      for (;;) {
+        if (rj.controller.signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+        const list = this.modelsFor(rj)
+        if (list.length === 0) throw new Error('no model available for this role')
+        let chosen: ModelInfo | undefined
+        for (const m of list) {
+          if (isPaidModel(m) && !budget.isExhausted(j.book).ok) continue
+          if (!router.limiter.hasCapacity(m.provider)) break // wait for the preferred provider
+          router.limiter.tryAcquire(m.provider)
+          chosen = m
+          break
+        }
+        if (chosen) {
+          leased = rj.leased = chosen
+          rj.held.add(chosen.provider.id)
+          rj.model = chosen.ref
+          models = list.slice(list.indexOf(chosen))
+          logAll(`_the job needs a model after all: ${chosen.ref}_\n`)
+          await jobs.update('running', j.id, { paid: isPaidModel(chosen), model: chosen.ref } as Partial<JobFrontmatter>)
+          return chosen
+        }
+        if (list.every((m) => isPaidModel(m))) throw new BudgetError('every model is paid and the budget cap is reached')
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            clearTimeout(t)
+            rj.controller.signal.removeEventListener('abort', done)
+            resolve()
+          }
+          const t = setTimeout(done, 500)
+          rj.controller.signal.addEventListener('abort', done, { once: true })
+        })
+      }
+    }
 
     const ctx: JobContext = {
       job: j,
+      get model() {
+        return rj.leased
+      },
       jobBody: job.body,
       agent: { id: agent.id, role: agent.data.role, name: agent.data.name, persona: agent.body },
       signal: rj.controller.signal,
@@ -457,7 +543,8 @@ export class Scheduler {
       log: (text) => logAll(text.endsWith('\n') ? text : text + '\n'),
       enqueue: (nj, body) => jobs.enqueue({ requested_by: agent.id, ...nj }, body),
       chat: async (o) => {
-        if (!leased) throw new Error(`the ${j.task} job needs no model, so it cannot call one`)
+        if (!leased && !rj.lazy) throw new Error(`the ${j.task} job needs no model, so it cannot call one`)
+        const first = leased ?? (await leaseNow())
         requests.push(o.messages.map((m) => `[${m.role}]\n${contentText(m.content)}`).join('\n\n'))
         let text = ''
         let result: ChatResult | undefined
@@ -490,12 +577,12 @@ export class Scheduler {
             )) {
               if (ev.type === 'attempt') {
                 text = ''
-                if (ev.model.ref !== (usedModels[usedModels.length - 1] ?? leased.ref)) {
+                if (ev.model.ref !== (usedModels[usedModels.length - 1] ?? first.ref)) {
                   emit({ type: 'job.model', jobId: j.id, agent: agent.id, model: ev.model.ref })
                 }
                 // fell back to another provider: give the first one's slot back, so other agents don't wait for a server this job no longer uses
-                if (ev.model.provider.id !== leased.provider.id && rj.held.delete(leased.provider.id)) {
-                  this.d.router.limiter.release(leased.provider)
+                if (ev.model.provider.id !== first.provider.id && rj.held.delete(first.provider.id)) {
+                  this.d.router.limiter.release(first.provider)
                   this.kick()
                 }
                 usedModels.push(ev.model.ref)
@@ -539,7 +626,7 @@ export class Scheduler {
           }
         }
         logAll('\n')
-        return result ?? { text, usage: emptyUsage(), model: leased, costUsd: 0 }
+        return result ?? { text, usage: emptyUsage(), model: first, costUsd: 0 }
       }
     }
 

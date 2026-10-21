@@ -12,6 +12,7 @@ import { pickVersion, resolveFile, setCustom } from '../assets/manifest'
 import { lanesOf } from '../comfy/client'
 import { loadCustomWorkflow } from '../comfy/custom-workflow'
 import { BudgetError, isAbortError } from '../models/types'
+import type { JobFile } from '../queue/jobs'
 import type { HandlerOptions, JobContext } from '../queue/scheduler'
 import type { Scheduler } from '../queue/scheduler'
 import { buildGame } from '../renpy/build'
@@ -86,11 +87,41 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
   const call = (ctx: JobContext): AgentCall => ({ ctx, dataDir: deps.dataDir })
 
   /**
+   * For the agent jobs: a cheap look at the project's files that says this job will not ask a model this time, because its handler would return
+   * before the call (see `HandlerOptions.skipModel`). Such a job starts at once instead of waiting for a model slot, which a down server or a
+   * full client queue would hold back. Each check mirrors an early return of its handler.
+   */
+  const noModelThisTime: Partial<Record<VnTask, (slug: string, job: JobFile) => Promise<boolean>>> = {
+    [TASKS.analyse]: async (slug) => (await store.loadUncertain(slug)).length === 0,
+    [TASKS.editionAlign]: async (slug, job) => {
+      const lang = (bodyOf<{ lang: Lang }>(job.body).lang ?? job.data.unit) as Lang
+      const report = await store.loadAlignReport(slug, lang)
+      return !report || (!report.missing.length && !report.extra.length)
+    },
+    [TASKS.artPlan]: async (slug, job) => isHandArt((await store.loadSettings(slug)).settings.art) && !bodyOf<{ explicit: boolean }>(job.body).explicit,
+    [TASKS.musicPlan]: async (slug) => (await store.loadSettings(slug)).settings.music.tracks <= 0,
+    [TASKS.stage]: async (slug) => !!(await store.readJson<StageCues>(slug, 'cues.json'))?.byHand,
+    [TASKS.voicePlan]: async (slug) => !(await store.loadSettings(slug)).settings.voice.enabled,
+    [TASKS.review]: async (slug, job) => {
+      const entry = job.data.unit ? (await store.loadAssets(slug)).assets.find((a) => a.id === job.data.unit) : undefined
+      return !!entry && (entry.locked || entry.source === 'custom' || !resolveFile(store.dir(slug), entry))
+    },
+    [TASKS.draw]: async (slug, job) => {
+      const entry = job.data.unit ? (await store.loadAssets(slug)).assets.find((a) => a.id === job.data.unit) : undefined
+      if (!entry) return false
+      if (IMAGE_KINDS.has(entry.kind) && isHandArt((await store.loadSettings(slug)).settings.art)) return true
+      return !bodyOf<{ force: boolean }>(job.body).force && !!resolveFile(store.dir(slug), entry)
+    }
+  }
+
+  /**
    * Registers a handler that works on a project (`ctx.job.book`). `step` is the pipeline step it reports on: it is shown running,
    * then done with the handler's message, or failed with the error (not when the job was only stopped).
    */
   const reg = (task: VnTask, fn: (ctx: JobContext, slug: string) => Promise<string>, opts: HandlerOptions & { step?: PipelineStep | false } = {}): void => {
-    const { step: stepOpt, ...hopts } = opts
+    const { step: stepOpt, ...rest } = opts
+    const check = noModelThisTime[task]
+    const hopts: HandlerOptions = { ...rest, ...(check ? { skipModel: async (job: JobFile) => (job.data.book ? check(job.data.book, job) : false) } : {}) }
     const step = stepOpt === false ? undefined : (stepOpt ?? STEP_OF_TASK[task])
     sched.register(
       task,
@@ -420,14 +451,17 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     if (settings.art.review && !reviewOn) ctx.log('art review is on but no vision model is available: the images are not reviewed')
     const generated = new Map<string, string>()
     const all: string[] = []
+    const priority = ctx.job.priority ?? 0 // an explicit request (vno_asset_generate) keeps its priority for the jobs it fans out
     for (const a of todo) {
       const sheet = a.kind === 'sprite' ? generated.get(a.refs?.[0] ?? '') : undefined
-      const id = await svc.enqueue(slug, svc.generateTask(settings, a), a.id, run, { depends_on: sheet ? [sheet] : [], body: { force: !!body.force }, label: `generate ${a.id}` })
+      // a sprite also waits for a sheet job of another run that is still queued or running (a regenerated sheet)
+      const otherSheet = a.kind === 'sprite' && a.refs?.[0] ? (await svc.activeGenerateJobs(slug, [a.refs[0]])).filter((j) => j.data.round !== run).map((j) => j.id) : []
+      const id = await svc.enqueue(slug, svc.generateTask(settings, a), a.id, run, { depends_on: [...(sheet ? [sheet] : []), ...otherSheet], body: { force: !!body.force }, label: `generate ${a.id}`, priority })
       generated.set(a.id, id)
       all.push(id)
-      if (reviewOn && IMAGE_KINDS.has(a.kind)) all.push(await svc.enqueue(slug, TASKS.review, a.id, run, { depends_on: [id], vision: true, label: `review ${a.id}` }))
+      if (reviewOn && IMAGE_KINDS.has(a.kind)) all.push(await svc.enqueue(slug, TASKS.review, a.id, run, { depends_on: [id], vision: true, label: `review ${a.id}`, priority }))
     }
-    if (body.tail !== false) await svc.enqueueTail(slug, run, 'voice', all)
+    if (body.tail !== false) await svc.enqueueTail(slug, run, 'voice', all, priority)
     return `${todo.length} asset job(s) queued${reviewOn ? ' with reviews' : ''}${waiting}`
   }
 

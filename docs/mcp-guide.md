@@ -129,10 +129,18 @@ Eight pipeline steps ask a model: `analyse` (script-analyst), `art plan` (art-di
 **Batching.** `analyse` asks in batches of 30 items, `art plan` in batches of 10 assets and `edition align` in batches of 25 beats. One job makes several tasks in a row: the next one appears after you answer the previous one (the ids are `<job>#1`, `<job>#2`, ...). So take tasks until `none` and `vno_wait` returns with no `clientTasks`, not just one per step.
 
 **Good to know.**
-- A job that waits for you still holds its agent: an agent takes `max_parallel` jobs at a time (1 by default, `agents/<agent>.md`). Raise it, or hire more agents of the role, so several tasks wait at once; the provider's `concurrency` (8) is the other limit.
+- A job that waits for you does not hold its agent: only jobs on other models count against an agent's `max_parallel` (1 by default, `agents/<agent>.md`), so one agent has several tasks waiting at once. The client provider's `concurrency` (8) is the limit: that many jobs wait, the next ones queue behind them.
 - No timeout, and the provider is never marked down: a waiting job just waits. A job you stop (`vno_stop_now`, a model change) drops its task, and a later submit gets "task not found (it was aborted, answered, or the engine restarted)". The queue lives in memory: an engine restart loses the tasks, and the running jobs ask again.
 - Out of scope: the Pixel Studio draw loop (the `pixel-studio-draw` mode, task `vn.assets.draw`, which asks the art-director role) is multi-turn and bounded by `drawTimeoutS` (240), so it would time out with `client`. For a project in that mode keep the art-director on a real model (or pin only the art plan by agent), or draw the sprites yourself with the pixel-studio MCP and `vno_asset_replace`. Images and music still come from ComfyUI and Chiptune Studio.
 - Jobs that never call a model (analyse with nothing to settle, stage with every cue set by hand, build, lint) run as usual.
+
+## The queue
+
+- Order. Jobs have a priority: what you ask for with a tool (`vno_plan`, `vno_asset_regen`, `vno_asset_generate`, `vno_build`, `vno_lint`, the voice tools, `vno_add_edition`) has priority 1 and goes before the jobs of the pipeline's own chain (0), oldest first inside each. A job still waits for the jobs it depends on.
+- Jobs that need no model (analyse with nothing to settle, stage with every cue set by hand, an art plan in hand mode, and the like) start at once, without waiting for a model slot, even when Strata is down or the client queue is full.
+- `vno_stop_now` stops the running jobs and pauses; they and everything queued run again after `vno_resume_all`, oldest first (a `vno_plan` asked for in between goes first, by its priority). `vno_stop_now {drop: true, slug?}` also deletes the queued jobs (of that project, or all) and marks their pipeline steps skipped, so a resume starts nothing old. `vno_clear_queue {slug?, confirm: true}` drops the queued jobs without stopping the running ones.
+- A sheet and its sprites. `vno_asset_regen` on a character sheet is made before the sprite jobs already queued for that sheet (they wait for it). The sprites already made from the old sheet are returned as `staleSprites`; `sprites: true` makes them again after the sheet. A regenerated sprite waits for a sheet job that is queued or running.
+- A new `art.stylePrompt` (`vno_update_settings`) is written into the prompts that have no image yet. The answer's `restyle` lists `kept` (prompts written with other words: `vno_plan {refreshPrompts: true}` writes them again) and `generated` (assets that already have an image: `vno_asset_regen` makes them again). Sprites have no style words.
 
 ## Languages
 
@@ -150,7 +158,7 @@ Eight pipeline steps ask a model: `analyse` (script-analyst), `art plan` (art-di
 | Library and projects | `vno_list_books`, `vno_set_library`, `vno_import`, `vno_list_projects`, `vno_get_project`, `vno_update_settings`, `vno_delete_project`, `vno_languages` |
 | Story | `vno_create_project`, `vno_get_story`, `vno_story_edit`, `vno_book_update`, `vno_character_set`, `vno_character_remove`, `vno_place_set`, `vno_place_remove`, `vno_chapter_add`, `vno_chapter_update`, `vno_chapter_remove`, `vno_scene_add`, `vno_scene_update`, `vno_scene_remove`, `vno_beat_add`, `vno_beat_update`, `vno_beat_remove` |
 | Languages and fonts | `vno_languages`, `vno_fonts_fetch` |
-| Pipeline | `vno_run_pipeline`, `vno_plan`, `vno_status`, `vno_wait`, `vno_pause_all`, `vno_resume_all`, `vno_stop_now` |
+| Pipeline | `vno_run_pipeline`, `vno_plan`, `vno_status`, `vno_wait`, `vno_pause_all`, `vno_resume_all`, `vno_stop_now`, `vno_clear_queue` |
 | Model work by you (`client/claude-code`) | `vno_client_tasks`, `vno_get_task`, `vno_submit_task`, `vno_release_task` |
 | Editions | `vno_add_edition`, `vno_edition_set`, `vno_get_edition`, `vno_update_beat`, `vno_align_report` |
 | Assets, music, staging | `vno_asset_list`, `vno_asset_set`, `vno_asset_replace`, `vno_asset_regen`, `vno_asset_pick`, `vno_asset_lock`, `vno_asset_unlock`, `vno_asset_generate`, `vno_set_music`, `vno_set_cues` |
