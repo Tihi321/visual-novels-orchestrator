@@ -1,4 +1,6 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
+import path from 'node:path'
+import sharp from 'sharp'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parseCliArgs, settingsPatchFromFlags } from '../src/engine/vncli'
 import { buildTools, callTool } from '../src/engine/mcp/tools'
@@ -78,6 +80,21 @@ describe('hand-made art (art.provider: hand)', () => {
     expect(env.comfy.requests.length).toBeGreaterThan(0)
     expect(env.comfy.requests.every((r) => r.engine.startsWith('ace-step'))).toBe(true)
     expect((await svc().store.loadAssets(slug)).assets.find((a) => a.id === 'music_01')!.versions.length).toBeGreaterThan(0)
+  }, 60_000)
+
+  it('a CG is a hand-made image: generate and regen are refused, import fills it without ComfyUI', async () => {
+    await ok('vno_image_set', { slug, key: 'ledger', description: 'an open ledger', display: 'insert' })
+    const id = 'cg_ledger'
+    const beatId = (await svc().store.loadBook(slug)).chapters[0]!.scenes[0]!.beats.find((b) => b.type !== 'cast')!.id
+    await ok('vno_beat_update', { slug, beatId, image: 'ledger' })
+    expect((await svc().listAssets(slug)).find((a) => a.id === id)).toBeTruthy()
+    expect(await error('vno_asset_regen', { slug, id })).toMatch(/hand-made art/)
+    expect(await error('vno_asset_generate', { slug, only: [id] })).toMatch(/vno_asset_replace/)
+    const src = path.join(env.dir, 'ledger.png')
+    await writeFile(src, await sharp({ create: { width: 300, height: 300, channels: 3, background: '#cccccc' } }).png().toBuffer())
+    await ok('vno_asset_import', { slug, id, file: src })
+    expect((await svc().store.loadAssets(slug)).assets.find((a) => a.id === id)!.versions.length).toBe(1)
+    expect(env.comfy.requests).toHaveLength(0)
   }, 60_000)
 
   it('the art step asks no model, vno_plan still plans the prompts and the music', async () => {
