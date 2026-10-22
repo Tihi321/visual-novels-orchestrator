@@ -21,7 +21,7 @@ import type {
   VnCommand
 } from '../../shared/protocol'
 import { assertKnownLang } from '../../shared/languages'
-import { CHIPTUNE_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, FLOW_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
 import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
 import { importAssetFile } from '../assets/import'
@@ -126,6 +126,7 @@ const SLOTS: Slot[] = ['left', 'center', 'right']
 export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings, refs?: string[]): string | null {
   switch (kind) {
     case 'cg':
+      if (settings.art.provider === 'flow') return FLOW_ENGINE
       // a picture with characters is made from their sheets by the edit engine, one without by the generator
       return refs?.length ? settings.art.editor : settings.art.generator
     case 'ambience':
@@ -135,9 +136,9 @@ export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings, r
     case 'background':
     case 'sheet':
     case 'cover':
-      return settings.art.generator
+      return settings.art.provider === 'flow' ? FLOW_ENGINE : settings.art.generator
     case 'sprite':
-      return settings.art.editor
+      return settings.art.provider === 'flow' ? FLOW_ENGINE : settings.art.editor
     case 'music':
       return resolveMusicProvider(settings) === 'chiptune' ? CHIPTUNE_ENGINE : settings.music.engine
     default:

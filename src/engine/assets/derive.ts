@@ -1,3 +1,4 @@
+import { FLOW_ENGINE } from '../../shared/vn'
 import type { AssetEntry, AssetKind, ImageEntry, ProjectSettings, SoundEntry, VnBook, VnScene } from '../../shared/vn'
 import { ambId, cgId, coverId, musicId, normText, sfxId, sheetId, spriteId, voiceRefId } from '../vn/ids'
 
@@ -103,19 +104,22 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
   for (const img of imageEntries) for (const c of (img.characters ?? []).slice(0, 3)) if (book.characters.some((x) => x.key === c)) note(appearing, c)
 
   const art = settings.art
-  for (const id of backgrounds) out.push(stub({ id, kind: 'background', engine: art.generator, size: { ...LANDSCAPE } }))
-  for (const key of appearing) out.push(stub({ id: assetIds.sheet(key), kind: 'sheet', engine: art.generator, size: { ...PORTRAIT } }))
+  // a Flow project makes every image with Flow, whatever the ComfyUI engines are
+  const gen = art.provider === 'flow' ? FLOW_ENGINE : art.generator
+  const edit = art.provider === 'flow' ? FLOW_ENGINE : art.editor
+  for (const id of backgrounds) out.push(stub({ id, kind: 'background', engine: gen, size: { ...LANDSCAPE } }))
+  for (const key of appearing) out.push(stub({ id: assetIds.sheet(key), kind: 'sheet', engine: gen, size: { ...PORTRAIT } }))
   for (const key of appearing) {
     for (const expression of spriteKeys.get(key) ?? []) {
-      out.push(stub({ id: assetIds.sprite(key, expression), kind: 'sprite', engine: art.editor, size: { ...PORTRAIT }, refs: [assetIds.sheet(key)] }))
+      out.push(stub({ id: assetIds.sprite(key, expression), kind: 'sprite', engine: edit, size: { ...PORTRAIT }, refs: [assetIds.sheet(key)] }))
     }
   }
   for (const img of imageEntries) {
     const refs = (img.characters ?? []).filter((c) => book.characters.some((x) => x.key === c)).slice(0, 3).map((c) => assetIds.sheet(c))
     // a picture with characters is made by the edit engine from their sheets, one without by the generator
-    out.push(stub({ id: assetIds.cg(img.key), kind: 'cg', engine: refs.length ? art.editor : art.generator, size: { ...(img.display === 'insert' ? SQUARE : LANDSCAPE) }, ...(refs.length ? { refs } : {}) }))
+    out.push(stub({ id: assetIds.cg(img.key), kind: 'cg', engine: refs.length ? edit : gen, size: { ...(img.display === 'insert' ? SQUARE : LANDSCAPE) }, ...(refs.length ? { refs } : {}) }))
   }
-  out.push(stub({ id: assetIds.cover(), kind: 'cover', engine: art.generator, size: { ...LANDSCAPE } }))
+  out.push(stub({ id: assetIds.cover(), kind: 'cover', engine: gen, size: { ...LANDSCAPE } }))
   for (let n = 1; n <= settings.music.tracks; n++) out.push(stub({ id: assetIds.music(n), kind: 'music', engine: settings.music.engine, size: null }))
   for (const k of effects) if (book.sounds?.some((s) => s.key === k && s.kind === 'sfx')) out.push(stub({ id: assetIds.sfx(k), kind: 'sfx', engine: settings.sound.sfxEngine ?? '', size: null }))
   for (const k of ambiences) if (book.sounds?.some((s) => s.key === k && s.kind === 'ambience')) out.push(stub({ id: assetIds.amb(k), kind: 'ambience', engine: settings.sound.ambienceEngine, size: null }))

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
-import { CHIPTUNE_ENGINE, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, FLOW_ENGINE, IMAGE_KINDS, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../shared/vn'
 import type { AssetEntry, AssetManifest, AssetVersion, ProjectSettings, VnBook } from '../../shared/vn'
 import type { ComfyClient, ComfyProgress, ComfyResult } from '../comfy/client'
 import { randomSeed } from '../comfy/graphs'
@@ -18,6 +18,9 @@ import type { ChiptuneClient } from '../studios/chiptune'
 import { pickChipSound } from '../studios/chip-sound'
 import { makeChiptuneSound, makeChiptuneTrack } from '../studios/music'
 import { pixelateWithStudio } from '../studios/pixelate'
+import type { FlowClient } from '../studios/flow'
+import { DEFAULT_FLOW_OPTIONS, flowReferences, makeFlowImage } from './flow-image'
+import type { FlowOptions } from './flow-image'
 import type { PixelClient } from '../studios/pixel'
 
 export interface GenerateOptions {
@@ -79,6 +82,12 @@ export interface GenerateContext {
   now?: () => Date
   /** Pixel Studio, for `pixelProvider: pixel-studio` and `provider: pixel-studio-draw`. Without it the built-in pixelate runs. */
   pixel?: PixelClient
+  /** flow-music-mcp, for image assets of a project whose `art.provider` is `flow` (and music with `music.provider: flow`). */
+  flow?: FlowClient
+  /** Quality, timeouts and the song cap of the Flow calls (`config/studios.md`). Default: `DEFAULT_FLOW_OPTIONS`. */
+  flowOptions?: FlowOptions
+  /** The manifest entry of a referenced asset (its selected version tells a Flow media id). */
+  resolveRefEntry?: (id: string) => AssetEntry | null
   /** Chiptune Studio, for music assets with the `chiptune` engine. */
   chiptune?: ChiptuneClient
   /** The composer's plan of this track; default: the deterministic plan. */
@@ -342,6 +351,13 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
   if (edited.kind === 'music' && opts.engine === undefined && !edited.locked && edited.source === 'generated') {
     edited.engine = resolveMusicProvider(ctx.settings) === 'chiptune' ? CHIPTUNE_ENGINE : edited.engine === CHIPTUNE_ENGINE ? ctx.settings.music.engine : edited.engine
   }
+  // Images follow the project's art provider the same way: a generated, unlocked image is made by Flow or by the configured ComfyUI engine,
+  // whatever made its earlier versions. An engine given for this run, a locked image and a custom file keep theirs.
+  if (IMAGE_KINDS.has(edited.kind) && opts.engine === undefined && !edited.locked && edited.source === 'generated') {
+    if (resolveArtProvider(ctx.settings.art) === 'flow') edited.engine = FLOW_ENGINE
+    else if (edited.engine === FLOW_ENGINE) edited.engine = edited.kind === 'sprite' || (edited.kind === 'cg' && (edited.refs?.length ?? 0) > 0) ? ctx.settings.art.editor : ctx.settings.art.generator
+  }
+  const viaFlow = IMAGE_KINDS.has(edited.kind) && edited.engine === FLOW_ENGINE
   try {
     progress('start', `${entry.kind} with ${edited.engine}`)
     const pixel = ctx.settings.art.style === 'pixel'
@@ -371,6 +387,8 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     let out: { bytes: Buffer; ext: string }
     let rawOut: { bytes: Buffer; ext: string } | undefined
     let chiptune: Awaited<ReturnType<typeof makeChiptuneTrack>> | undefined
+    /** Made by Google Flow: the media id, kept on the version so a later image can use it as a reference. */
+    let remote: AssetVersion['remote']
     /** A sound effect or an ambience made by Chiptune Studio's `compose_sfx`: the sound is picked from the key and the description. */
     const chipSound = async (kind: 'sfx' | 'ambience', seconds: number | undefined) => {
       if (!ctx.chiptune) throw new Error('Chiptune Studio is not configured')
@@ -382,7 +400,43 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
       for (const w of track.warnings) warn(w)
       return track
     }
-    switch (edited.kind) {
+    switch (viaFlow ? 'flow' : edited.kind) {
+      case 'flow': {
+        if (!ctx.flow) throw new Error('Google Flow (flow-music-mcp) is not configured')
+        let raw: { bytes: Buffer; ext: string }
+        if (edited.kind === 'sprite' && opts.reprocess) {
+          const found = await findRaw(ctx.projectDir, edited)
+          if (!found) throw new Error(`${edited.id} has no raw output to reprocess: generate it first`)
+          raw = found
+        } else {
+          const refs = edited.kind === 'sprite' || edited.kind === 'cg' ? flowReferences(edited, { entryOf: ctx.resolveRefEntry, fileOf: ctx.resolveRef }) : undefined
+          const run = await makeFlowImage(ctx.flow, {
+            entry: edited,
+            prompt,
+            display,
+            project: ctx.settings.art.flowProject ?? `vno-${ctx.settings.slug}`,
+            projectDir: ctx.projectDir,
+            model: ctx.settings.art.flowModel,
+            options: ctx.flowOptions ?? DEFAULT_FLOW_OPTIONS,
+            refs,
+            signal: ctx.signal,
+            progress: (m) => progress('comfy', m)
+          })
+          raw = { bytes: run.bytes, ext: run.ext }
+          remote = run.remote
+          for (const w of run.warnings) warn(w)
+        }
+        if (edited.kind === 'sprite') rawOut = raw
+        if (edited.kind === 'sheet') {
+          out = raw // the identity reference, kept as it came
+        } else {
+          const fin = await finishImage(ctx, edited, raw.bytes, { ...finishOpts, ext: raw.ext })
+          warnings.push(...fin.warnings)
+          native = fin.native
+          out = { bytes: fin.bytes, ext: fin.ext }
+        }
+        break
+      }
       case 'background': {
         const r = await ctx.comfy.generate({ ...base, width: size.w, height: size.h })
         const fin = await finishImage(ctx, edited, r.bytes, finishOpts)
@@ -500,7 +554,8 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
       n,
       file,
       createdAt: (ctx.now?.() ?? new Date()).toISOString(),
-      seed: chiptune ? chiptune.seed : seed,
+      seed: chiptune ? chiptune.seed : remote ? null : seed,
+      ...(remote ? { remote } : {}),
       engine: edited.engine,
       prompt,
       ...(chiptune ? { loopStartSec: chiptune.loopStartSec, loopEndSec: chiptune.loopEndSec, ...(chiptune.songFile ? { songFile: chiptune.songFile } : {}) } : {}),

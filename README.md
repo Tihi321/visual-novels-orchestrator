@@ -35,6 +35,8 @@ API keys come from environment variables or the Windows credential store (servic
 
 A job that needs Pixel Studio, Chiptune Studio or ComfyUI starts it when it is down (from the creative hub's `services.json`; `config/autostart.md`, `VNO_AUTOSTART=0` turns it off). VibeTTS, Scriptorium and Strata are never started.
 
+Google Flow (through the hub's `flow-music-mcp`) can make a project's images (`art.provider: flow`, free), voices and music: see `docs/mcp-guide.md`, "Google Flow".
+
 ## Command line and MCP
 
 The same engine runs headless: `yarn engine -- <command>` (`yarn engine -- help` lists everything). It starts the scheduler and the agents, enqueues the jobs, prints the progress and exits when the project has nothing left to run. Exit codes: 0 ok, 1 a job failed or lint found problems, 3 lint could not run (no Ren'Py SDK, not built).

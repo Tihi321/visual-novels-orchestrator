@@ -6,6 +6,8 @@ import type { BuildResult, PipelineStep } from '../../shared/protocol'
 import { IMAGE_KINDS, isHandArt } from '../../shared/vn'
 import type { AssetEntry, Lang, ProjectSettings } from '../../shared/vn'
 import { fallbackNegative, fallbackPrompt } from '../assets/derive'
+import { runsOnFlow } from '../assets/flow-image'
+import type { FlowOptions } from '../assets/flow-image'
 import { generateAsset } from '../assets/generate'
 import type { GenerateOptions } from '../assets/generate'
 import { pickVersion, resolveFile, setCustom } from '../assets/manifest'
@@ -88,6 +90,9 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
   const svc = new VnService(deps)
   const store = svc.store
   const comfySem = new Semaphore(1)
+  /** One Flow job at a time from VN Studio, so a job's timeout measures its own work and not a queue it filled itself. */
+  const flowSem = new Semaphore(1)
+  const flowOptionsOf = (c: StudiosConfig): FlowOptions => ({ quality: c.flowImageQuality, jobTimeoutMs: c.flowJobTimeoutS * 1000, musicTimeoutMs: c.flowMusicTimeoutS * 1000, maxSongs: c.flowMusicMaxSongs })
   const call = (ctx: JobContext): AgentCall => ({ ctx, dataDir: deps.dataDir })
 
   /**
@@ -371,7 +376,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const studios = await svc.studios({ autoStart: true, log: ctx.log })
     const res = renpy.resolution
     const projectDir = store.dir(slug)
-    const r = await comfySem.run(
+    const r = await (runsOnFlow(entry, settings, o.engine) ? flowSem : comfySem).run(
       () =>
         generateAsset(
           {
@@ -379,6 +384,9 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
             settings,
             projectDir,
             comfy,
+            flow: studios.flow,
+            flowOptions: flowOptionsOf(studios.config),
+            resolveRefEntry: (rid) => manifest.assets.find((a) => a.id === rid) ?? null,
             palettesDir: dataFolders(deps.dataDir).palettes,
             pixel: studios.pixel,
             chiptune: studios.chiptune,
@@ -471,6 +479,12 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       .filter((a) => a.kind !== 'voiceRef' && !(hand && IMAGE_KINDS.has(a.kind)) && !orphans.has(a.id) && (!body.ids || body.ids.includes(a.id)))
       .filter((a) => !a.locked && a.source === 'generated' && (body.force || !resolveFile(store.dir(slug), a)))
       .sort((a, b) => (a.kind === 'sheet' ? 0 : 1) - (b.kind === 'sheet' ? 0 : 1))
+    // Flow is checked once, before the fan-out: not running or not signed in fails the step at once with the hint, not every asset one by one
+    if (todo.some((a) => runsOnFlow(a, settings))) {
+      const { flow } = await svc.studios()
+      const s = await flow.status().catch((e: Error) => ({ up: false, signedIn: null, uploadRights: false, hint: e.message }))
+      if (!s.up || s.signedIn === false) throw new Error(`Google Flow is not ready: ${s.hint ?? 'flow-music-mcp does not answer'}`)
+    }
     const waiting = await handWaiting(slug)
     await svc.setStep(slug, 'generate', todo.length ? 'running' : 'done', todo.length ? `${todo.length} asset(s) to generate${waiting}` : `${hand ? 'hand-made art: nothing to generate' : 'every asset already has a file'}${waiting}`, { done: 0, total: todo.length })
     const reviewOn = settings.art.review && deps.router.candidates('art-critic', { visionOnly: true }).length > 0
