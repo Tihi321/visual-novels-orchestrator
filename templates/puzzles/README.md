@@ -22,6 +22,7 @@ poc/puzzle_poc_test.rpy             a Ren'Py test case (scripts/puzzle-poc.ts --
 
 - `knights`: Knights and Knaves, 2 to 5 speakers. `{speakers, statements: [{id, speaker, claim}], solution}`; claims: `knight`, `knave`, `same`, `diff`, `some_knave`, `all_knight`, `exactly`, `not`, `and`, `or`. Proofs: one of the 2**n assignments fits, and `direct` inference plus `split` (a case that ends in a contradiction) finds it; the band is the number of splits. The screen has the statements on the left and a Knight / Knave choice per speaker on the right.
 - `testimony`: an Ace Attorney cross-examination. `{keys, statements: [{id, claims, press?}], evidence: [{id, facts}], solution: {statement, evidence, press}}`. A claim and a fact clash when they are about the same key with different values. Proof: exactly one clash, the pair of the solution. The band: easy (the clash is in the first words), medium (only after Press), hard (after Press, and four or more claims agree with evidence). The screen shows one statement at a time with Press, the court record and a penalty bar.
+- `logic`: Puzzle Baron logic grids, 3 to 5 items in 4 categories, the first ordinal (`ordinal: {category, unit}`, each category may have a `ref` for the prose). Clue types `is`, `not`, `either`, `neither`, `oneof`, `before`, `after`, `apart` (`n`). Same proofs as Murdle; easy has no either or transitive step, medium needs an either or oneof clue, hard has `hardTrans` or more transitive steps. The screen is the Murdle grid with no accusation (Submit checks the grid).
 
 ## What a puzzle is
 

@@ -6,7 +6,7 @@ import { buildGame, type BuildGameResult } from '../src/engine/renpy/build'
 import { DEFAULT_SDK_PATH, lint, sdkExists } from '../src/engine/renpy/run'
 import { buildEdition, importBook } from '../src/engine/vn/import'
 import { buildBook, storyInputSchema } from '../src/engine/vn/story'
-import { knightsCoreSchema, puzzleCoreSchema, puzzleEntrySchema, testimonyCoreSchema } from '../src/shared/puzzle'
+import { knightsCoreSchema, logicCoreSchema, puzzleCoreSchema, puzzleEntrySchema, testimonyCoreSchema } from '../src/shared/puzzle'
 import { hasText } from '../src/shared/vn'
 import type { Edition, VnBook } from '../src/shared/vn'
 import { loadBook, loadEdition, loadSettings, type FixtureName } from './fixtures/vn/load'
@@ -331,6 +331,36 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     const q = (t: string) => t.replace(/"/g, '\\"')
     expect(tl).toContain(`old "${q(tm.text.t1!)}"\n    new "${q(hrText.t1!)}"`)
     expect(tl).toContain(`old "${tm.names.e1}"\n    new "${hrNames.e1}"`)
+    const l = await lint(r.gameDir, { sdkPath })
+    expect(l.messages).toEqual([])
+    expect(l.ok).toBe(true)
+  })
+
+  it('a logic grid with an HR edition with translated clues: the data, the tl strings, the 4-category staircase screen, lint clean', { timeout: T }, async () => {
+    const lg = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'logic-4-medium-5.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+    const base = buildBook(
+      storyInputSchema.parse({
+        title: 'The Bakery',
+        characters: [{ name: 'Hartley', looks: 'a baker' }],
+        places: [{ name: 'Shop', looks: 'a bakery' }],
+        chapters: [{ title: 'Orders', scenes: [{ place: 'shop', beats: [{ cast: ['hartley'] }, { text: 'The orders lay on the counter.' }, { puzzle: 'bakery' }, { text: 'The van left.' }] }] }]
+      }),
+      { slug: 'bakery', lang: 'en' }
+    ).book
+    const book = { ...base, puzzles: [puzzleEntrySchema.parse({ key: 'bakery', kind: 'logic', data: logicCoreSchema.parse(lg), names: lg.names, text: lg.text, clueAt: { c1: 'ch01.s01.b002' }, verified: { unique: true, deducible: true, score: 5, textChecked: true, by: 'test' } })] }
+    const en = buildEdition('en', book.title, book.chapters, book.characters)
+    const hrNames = Object.fromEntries(Object.entries(lg.names).map(([k, v]) => [k, `${v} (hr)`]))
+    const hrText = Object.fromEntries(Object.entries(lg.text).map(([k, v]) => [k, `${v} Na hrvatskom.`]))
+    const hr = { ...en, lang: 'hr', title: 'Pekara', chapterTitles: { 1: 'Narudzbe' }, beats: { 'ch01.s01.b002': 'Narudzbe su lezale na pultu.', 'ch01.s01.b004': 'Kombi je otisao.' }, puzzles: { bakery: { names: hrNames, text: hrText } } }
+    const r = await buildGame({ projectDir: path.join(root, 'puzzle-logic'), book, editions: [en, hr], settings: loadSettings(book, { editions: ['en', 'hr'] }), resolveAsset: () => null, sdkPath })
+    const game = path.join(r.gameDir, 'game')
+    const data = fs.readFileSync(path.join(game, 'vno_puzzles_data.rpy'), 'utf8')
+    expect(data).toContain('"kind": "logic"')
+    expect(data).toContain('"ordinal": {"category": "day", "unit": "days"}')
+    const tl = fs.readdirSync(path.join(game, 'tl', 'croatian')).map((f) => fs.readFileSync(path.join(game, 'tl', 'croatian', f), 'utf8')).join('\n')
+    const q = (t: string) => t.replace(/"/g, '\\"')
+    expect(tl).toContain(`old "${q(lg.text.c1!)}"\n    new "${q(hrText.c1!)}"`)
+    expect(tl).toContain(`old "${lg.names.d1}"\n    new "${hrNames.d1}"`)
     const l = await lint(r.gameDir, { sdkPath })
     expect(l.messages).toEqual([])
     expect(l.ok).toBe(true)

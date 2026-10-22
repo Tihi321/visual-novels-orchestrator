@@ -4,11 +4,11 @@ import { z } from 'zod'
  * The puzzle data (format 1), shared by the engine and the renderer. It is what `templates/puzzles/game/python-packages/vno_puzzles` makes
  * and reads (see its README): plain JSON-shaped data, no classes. The puzzle core is kept apart from the flavour (`names`, `text`), which a
  * model may rewrite without touching the logic. A core has a `kind`: `murdle` (a grid of who, with what, where and why), `knights`
- * (Knights and Knaves), `testimony` (a cross-examination: press, then present the evidence that proves a statement false), and the kinds the later commits of VNO-14 add.
+ * (Knights and Knaves), `logic` (a Puzzle Baron logic grid with an ordinal category), `testimony` (a cross-examination: press, then present the evidence that proves a statement false), and the kinds the later commits of VNO-14 add.
  */
 
 export const PUZZLE_FORMAT = 1
-export const PUZZLE_KINDS = ['murdle', 'knights', 'testimony'] as const
+export const PUZZLE_KINDS = ['murdle', 'knights', 'testimony', 'logic'] as const
 export type PuzzleKind = (typeof PUZZLE_KINDS)[number]
 export const PUZZLE_BANDS = ['easy', 'medium', 'hard'] as const
 
@@ -109,11 +109,39 @@ export const testimonyCoreSchema = z.object({
   solution: z.object({ statement: z.string(), evidence: z.string(), press: z.boolean().optional() })
 })
 
-export const puzzleCoreSchema = z.discriminatedUnion('kind', [murdleCoreSchema, knightsCoreSchema, testimonyCoreSchema])
+/** A clue of a logic grid: the Murdle types, and neither, one of (two with two) and the order types (`n` for apart: exactly n places). */
+export const logicClueSchema = z.object({
+  id: z.string().regex(/^c\d+$/, 'a clue id such as c1'),
+  type: z.enum(['is', 'not', 'either', 'neither', 'oneof', 'before', 'after', 'apart']),
+  a: z.union([itemId, z.tuple([itemId, itemId])]),
+  b: z.union([itemId, z.tuple([itemId, itemId])]),
+  n: z.number().int().min(1).optional()
+})
+export type LogicClue = z.infer<typeof logicClueSchema>
+
+/**
+ * A logic grid (Puzzle Baron): categories of equal size, the first of them ordinal (days, ages: the items have an order), clues about what goes
+ * with what and about order. The player fills in the grid; there is no accusation.
+ */
+export const logicCoreSchema = z.object({
+  ...common,
+  kind: z.literal('logic'),
+  size: z.number().int().min(3).max(5),
+  /** `ref` says how a clue refers to an item of the category ("the {n} delivery", {n} being the item's name). */
+  categories: z.array(z.object({ key: z.string(), items: z.array(itemId).min(3), ref: z.string().optional() })).min(3).max(5),
+  /** The category whose items have an order, and the unit of "exactly n apart". */
+  ordinal: z.object({ category: z.string(), unit: z.string().optional() }),
+  hardTrans: z.number().int().optional(),
+  solution: z.record(z.string(), z.record(z.string(), itemId)),
+  clues: z.array(logicClueSchema).min(1)
+})
+
+export const puzzleCoreSchema = z.discriminatedUnion('kind', [murdleCoreSchema, knightsCoreSchema, testimonyCoreSchema, logicCoreSchema])
 export type PuzzleCore = z.infer<typeof puzzleCoreSchema>
 export type MurdleCore = z.infer<typeof murdleCoreSchema>
 export type KnightsCore = z.infer<typeof knightsCoreSchema>
 export type TestimonyCore = z.infer<typeof testimonyCoreSchema>
+export type LogicCore = z.infer<typeof logicCoreSchema>
 
 /** Every id of a core that needs a name: the items of a grid, the speakers of Knights and Knaves, the witness and the evidence of a testimony. */
 export const puzzleEntityIds = (core: PuzzleCore): string[] =>
@@ -125,10 +153,12 @@ export const puzzleTextIds = (core: PuzzleCore): string[] =>
     ? [...core.statements.map((s) => s.id), 'intro']
     : core.kind === 'testimony'
       ? [...core.statements.flatMap((s) => (s.press ? [s.id, `${s.id}.press`] : [s.id])), ...core.evidence.map((e) => e.id), 'intro']
-      : [...core.clues.map((c) => c.id), 'murder']
+      : core.kind === 'logic'
+        ? [...core.clues.map((c) => c.id), 'intro']
+        : [...core.clues.map((c) => c.id), 'murder']
 
 /** The ids of the things the player finds in the story (`clueAt`): a grid puzzle's clues, and a testimony's evidence (the statements of Knights and Knaves and of a testimony are all there from the start). */
-export const puzzleFindableIds = (core: PuzzleCore): string[] => (core.kind === 'murdle' ? core.clues.map((c) => c.id) : core.kind === 'testimony' ? core.evidence.map((e) => e.id) : [])
+export const puzzleFindableIds = (core: PuzzleCore): string[] => (core.kind === 'murdle' || core.kind === 'logic' ? core.clues.map((c) => c.id) : core.kind === 'testimony' ? core.evidence.map((e) => e.id) : [])
 
 /** What the python CLI returns: the core plus the canonical English flavour. */
 export const puzzleGeneratedSchema = z.intersection(
@@ -190,9 +220,10 @@ export type EditionPuzzle = z.infer<typeof editionPuzzleSchema>
 export const readBackClueSchema = z.union([
   z.object({
     id: z.string(),
-    type: z.enum(['is', 'not', 'either']),
-    a: z.string(),
-    b: z.union([z.string(), z.array(z.string()).length(2)])
+    type: z.enum(['is', 'not', 'either', 'neither', 'oneof', 'before', 'after', 'apart']),
+    a: z.union([z.string(), z.array(z.string()).length(2)]),
+    b: z.union([z.string(), z.array(z.string()).length(2)]),
+    n: z.number().int().optional()
   }),
   z.object({ id: z.string(), speaker: z.string(), claim: z.record(z.string(), z.unknown()) }),
   /** Testimony: the claims of a statement (`t1`, `t1.press`) or the facts of a piece of evidence (`e1`). */

@@ -35,6 +35,10 @@ def default_names(p):
         from .knights import default_names as knights_names
 
         return knights_names(p)
+    if p.get("kind") == "logic":
+        from .logic import default_names as logic_names
+
+        return logic_names(p)
     have = p.get("names") or {}
     names = {}
     for c in p["categories"]:
@@ -212,6 +216,10 @@ def fill(p, names=None):
         from .knights import fill_knights
 
         return fill_knights(p, names)
+    if p.get("kind") == "logic":
+        from .logic import fill_logic
+
+        return fill_logic(p, names)
     if p.get("kind") == "testimony":
         from .testimony import fill_testimony
 

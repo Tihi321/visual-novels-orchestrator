@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { deriveAssets } from '../src/engine/assets/derive'
-import { knightsCoreSchema, murdleCoreSchema, testimonyCoreSchema, puzzleCoreSchema, puzzleEntityIds, puzzleEntrySchema, puzzleFindableIds, puzzleTextIds } from '../src/shared/puzzle'
+import { knightsCoreSchema, logicCoreSchema, murdleCoreSchema, testimonyCoreSchema, puzzleCoreSchema, puzzleEntityIds, puzzleEntrySchema, puzzleFindableIds, puzzleTextIds } from '../src/shared/puzzle'
 import type { PuzzleEntry } from '../src/shared/puzzle'
 import { applyStoryOps, buildBook, storyInputSchema, syncEdition, validateBook } from '../src/engine/vn/story'
 import type { StoryOp } from '../src/engine/vn/story'
@@ -247,5 +247,35 @@ describe('a testimony in a book', () => {
     delete noPress[pressId]
     expect(validateBook(vnBookSchema.parse({ ...b, puzzles: [entryTm({ text: noPress })] })).errors.join(' ')).toContain(`clue ${pressId} has no text`)
     expect(validateBook(vnBookSchema.parse({ ...b, puzzles: [entryTm({ clueAt: { t1: 'ch01.s01.b003' } })] })).errors.join(' ')).toMatch(/unknown clue t1/)
+  })
+})
+
+describe('a logic grid in a book', () => {
+  const lg = JSON.parse(readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'logic-4-medium-5.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+  const lgCore = logicCoreSchema.parse(lg)
+  const entryLg = (over: Partial<PuzzleEntry> = {}): PuzzleEntry =>
+    puzzleEntrySchema.parse({ key: 'bakery', kind: 'logic', data: lgCore, names: lg.names, text: lg.text, verified: { unique: true, deducible: true, score: lgCore.difficulty.score, textChecked: true, by: 'test' }, ...over })
+
+  it('the core parses: four categories, the first ordinal, clues with the new types; the ids that need names and prose', () => {
+    expect(lgCore.kind).toBe('logic')
+    expect(lgCore.categories).toHaveLength(4)
+    expect(lgCore.ordinal.category).toBe(lgCore.categories[0]!.key)
+    expect(lgCore.clues.some((c) => c.type === 'before' || c.type === 'apart' || c.type === 'neither' || c.type === 'oneof')).toBe(true)
+    expect(puzzleEntityIds(lgCore)).toHaveLength(16)
+    expect(puzzleTextIds(lgCore)).toEqual([...lgCore.clues.map((c) => c.id), 'intro'])
+    expect(puzzleFindableIds(lgCore)).toEqual(lgCore.clues.map((c) => c.id))
+    expect(() => logicCoreSchema.parse({ ...lg, clues: [{ id: 'c1', type: 'sideways', a: 'd1', b: 'c1' }] })).toThrow()
+    expect(() => logicCoreSchema.parse({ ...lg, ordinal: undefined })).toThrow()
+    expect(puzzleCoreSchema.parse(lg).kind).toBe('logic')
+  })
+
+  it('a book accepts it, wants the intro and every clue, and lets a clue be found at a beat before the puzzle', () => {
+    const { book } = story()
+    const b = vnBookSchema.parse({ ...book, puzzles: [entryLg({ clueAt: { c1: 'ch01.s01.b003' } })] })
+    b.chapters[0]!.scenes[1]!.beats[0] = { id: 'ch01.s02.b001', type: 'puzzle', puzzle: 'bakery' }
+    expect(validateBook(b).errors).toEqual([])
+    const noIntro = { ...lg.text }
+    delete noIntro.intro
+    expect(validateBook(vnBookSchema.parse({ ...b, puzzles: [entryLg({ text: noIntro })] })).errors.join(' ')).toMatch(/clue intro has no text/)
   })
 })

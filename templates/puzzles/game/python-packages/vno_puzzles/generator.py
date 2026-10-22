@@ -167,6 +167,10 @@ def verify(p):
         from .knights import verify_knights
 
         return verify_knights(p)
+    if kind == "logic":
+        from .logic import verify_logic
+
+        return verify_logic(p)
     if kind == "testimony":
         from .testimony import verify_testimony
 

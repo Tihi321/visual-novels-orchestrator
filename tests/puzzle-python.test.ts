@@ -5,7 +5,7 @@ import type { ToolResult } from '../src/engine/mcp/tools'
 import { checkPuzzleText, generatePuzzle, packagesDirOf, renderPuzzleText, solvePuzzle } from '../src/engine/puzzles/python'
 import type { PuzzlePython } from '../src/engine/puzzles/python'
 import { DEFAULT_SDK_PATH, sdkPython } from '../src/engine/renpy/run'
-import { knightsCoreSchema, murdleCoreSchema, puzzleCoreSchema, puzzleGeneratedSchema, testimonyCoreSchema } from '../src/shared/puzzle'
+import { knightsCoreSchema, murdleCoreSchema, puzzleCoreSchema, puzzleGeneratedSchema, testimonyCoreSchema, logicCoreSchema } from '../src/shared/puzzle'
 import type { KnightsClaim, MurdleCore, PuzzleEntry, PuzzleGenerated } from '../src/shared/puzzle'
 import { makeVnEnv } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
@@ -382,5 +382,55 @@ describe.skipIf(!sdkPython(sdkPath))('a testimony through the bridge and the too
     const hrText = Object.fromEntries(Object.entries(p.text).map(([k, v]) => [k, `${v} (hr)`]))
     await call('vno_edition_set', { slug, lang: 'hr', puzzles: { court: { names: hrNames, text: hrText } } })
     expect(await call('vno_puzzle_check_text', { slug, key: 'court', lang: 'hr', readBack: rb })).toMatchObject({ ok: true, lang: 'hr' })
+  })
+})
+
+describe.skipIf(!sdkPython(sdkPath))('a logic grid through the bridge and the tools', () => {
+  let env: VnEnv
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type Data = Record<string, any>
+  const call = async (name: string, args: object): Promise<Data> => {
+    const r: ToolResult = await callTool(buildTools(env.engine.vn), name, args)
+    if (r.isError) throw new Error(r.content[0]?.text)
+    return r.structuredContent as Data
+  }
+  beforeEach(async () => {
+    env = await makeVnEnv({ sdk: undefined })
+  })
+  afterEach(async () => {
+    await env.cleanup()
+  })
+
+  it('generate in under 2 s in every band; solve proves it; the ordinal and the order clues are there', async () => {
+    for (const band of ['easy', 'medium', 'hard']) {
+      const t0 = Date.now()
+      const g = await call('vno_puzzle_generate', { kind: 'logic', size: 4, band, seed: 8 })
+      expect(Date.now() - t0).toBeLessThan(2000)
+      const core = logicCoreSchema.parse(g.core)
+      expect(core.categories).toHaveLength(4)
+      expect(Object.keys(g.text).sort()).toEqual([...core.clues.map((c) => c.id), 'intro'].sort())
+      expect(await solvePuzzle(py, core)).toMatchObject({ unique: true, deducible: true, band })
+    }
+  })
+
+  it('vno_puzzle_set with generate, the read-back task, a faithful read-back, a flipped order clue and an edition', async () => {
+    const r = await call('vno_create_project', { book: { title: 'Bakery', characters: [{ name: 'Hartley', looks: 'a baker' }], places: [{ name: 'Shop', looks: 'a bakery' }], chapters: [{ title: 'c', scenes: [{ place: 'shop', beats: [{ text: 'Hi.' }] }] }] } })
+    const slug = r.slug as string
+    await call('vno_beat_add', { slug, sceneId: 'ch01.s01', beats: [{ puzzle: 'bakery' }] })
+    const set = await call('vno_puzzle_set', { slug, key: 'bakery', generate: { kind: 'logic', size: 4, band: 'easy', seed: 3 } })
+    expect(set.verified).toMatchObject({ unique: true, deducible: true, textChecked: true })
+    const got = await call('vno_puzzle_get', { slug, key: 'bakery' })
+    expect(got.readBackTask).toMatch(/logic grid puzzle/)
+    expect(got.readBackTask).toContain('Monday, Tuesday')
+    const p = (await env.engine.vn.store.loadBook(slug)).puzzles![0]!
+    const core = logicCoreSchema.parse(p.data)
+    const nm = (v: string | readonly string[]) => (typeof v === 'string' ? p.names[v]! : v.map((x) => p.names[x]!))
+    const rb = core.clues.map((c) => ({ id: c.id, type: c.type, a: nm(c.a), b: nm(c.b), ...(c.n ? { n: c.n } : {}) }))
+    expect(await call('vno_puzzle_check_text', { slug, key: 'bakery', readBack: rb })).toMatchObject({ ok: true, textChecked: true })
+    const before = core.clues.find((c) => c.type === 'before')!
+    const bad = rb.map((x) => (x.id === before.id ? { ...x, type: 'after' } : x))
+    const failed = await call('vno_puzzle_check_text', { slug, key: 'bakery', readBack: bad })
+    expect(failed.ok).toBe(false)
+    expect(failed.differing).toEqual([before.id])
   })
 })

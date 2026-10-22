@@ -71,3 +71,19 @@ testcase puzzle_smoke_testimony:
     pause 0.5
     advance until screen "vno_testimony"
     assert eval vno_puzzle_state["poc"]["tries"] == 1
+
+testcase puzzle_smoke_logic:
+    pause 1.0
+    click "Start"
+    advance until screen "vno_murdle"
+    run Jump("puzzle_poc_logic")
+    pause 1.0
+    advance until screen "vno_murdle"
+    assert eval vno_poc["kind"] == "logic"
+    assert eval len(vno_poc["categories"]) == 4
+    click "Hint"
+    advance until screen "vno_murdle"
+    assert eval vno_puzzle_state["poc"]["hints"] == 1
+    click "Submit"
+    advance until screen "vno_murdle"
+    assert eval vno_puzzle_state["poc"]["tries"] == 1

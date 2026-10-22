@@ -323,7 +323,7 @@ def band_of(p, result=None, clues=None):
     """The band of a solved grid puzzle from the rules its steps used.
 
     Murdle: easy has no either, order or trans step; hard has at least 3 trans steps and no `is` clue; the rest is medium.
-    Logic grids (they have an ordinal category): easy needs no either or trans step; hard has many trans steps; the rest is medium.
+    Logic grids (they have an ordinal category): easy needs no either or trans step and has no either or oneof clue; hard has many trans steps (`hardTrans`); the rest is medium.
     """
     use = p["clues"] if clues is None else clues
     r = result if result is not None else deduce(p, use)
@@ -332,7 +332,7 @@ def band_of(p, result=None, clues=None):
     if p.get("ordinal"):
         if trans >= p.get("hardTrans", 8):
             return "hard"
-        return "medium" if trans or rules.get("either", 0) else "easy"
+        return "medium" if trans or rules.get("either", 0) or any(c["type"] in ("either", "oneof") for c in use) else "easy"
     has_is = any(c["type"] == "is" for c in use)
     if trans >= 3 and not has_is:
         return "hard"

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { emitScripts, translatableStrings } from '../src/engine/renpy/emit'
 import { emitPuzzleData, playedPuzzles, puzzlePics } from '../src/engine/renpy/puzzles'
 import { defaultCues } from '../src/engine/renpy/stage'
-import { knightsCoreSchema, puzzleCoreSchema, puzzleEntrySchema, testimonyCoreSchema } from '../src/shared/puzzle'
+import { knightsCoreSchema, logicCoreSchema, puzzleCoreSchema, puzzleEntrySchema, testimonyCoreSchema } from '../src/shared/puzzle'
 import type { PuzzleEntry } from '../src/shared/puzzle'
 import { buildBook, storyInputSchema } from '../src/engine/vn/story'
 import { editionSchema, vnBookSchema } from '../src/shared/vn'
@@ -168,5 +168,25 @@ describe('a testimony in the script', () => {
     expect(data).toContain('"pics": {"wit": "hartley neutral"}')
     const strings = translatableStrings(withTm()).filter((s) => s.what.startsWith('puzzle dinner'))
     expect(strings.length).toBe(Object.keys(tm.names).length + Object.keys(tm.text).length)
+  })
+})
+
+describe('a logic grid in the script', () => {
+  const lg = JSON.parse(readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'logic-4-medium-5.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+
+  it('is plain data with the ordinal, the order clues and the refs; a clue found earlier has at; the call is the same', () => {
+    const b = book()
+    b.puzzles = [puzzleEntrySchema.parse({ key: 'dinner', kind: 'logic', data: logicCoreSchema.parse(lg), names: lg.names, text: lg.text, clueAt: { c1: 'ch01.s01.b002' }, verified: { unique: true, deducible: true, score: 5, textChecked: true, by: 'test' } })]
+    const r = emit(b)
+    expect(r.files['ch01.rpy']).toContain('call vno_puzzle_play("dinner", vno_puzzle_data["dinner"])')
+    const data = r.files['vno_puzzles_data.rpy']!
+    expect(data).toContain('"kind": "logic"')
+    expect(data).toContain('"ordinal": {"category": "day", "unit": "days"}')
+    expect(data).toContain('"ref": "the {n} delivery"')
+    expect(data).toMatch(/"id": "c1"[^}]*"at": "ch01.s01.b002"/)
+    expect(data).toContain(`"intro": _("${lg.text.intro}")`)
+    expect(data).not.toContain('"seed"')
+    const strings = translatableStrings(b).filter((s) => s.what.startsWith('puzzle dinner'))
+    expect(strings.length).toBe(Object.keys(lg.names).length + Object.keys(lg.text).length)
   })
 })

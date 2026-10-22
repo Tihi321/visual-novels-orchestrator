@@ -26,6 +26,16 @@ export function readBackTask(p: Pick<PuzzleEntry, 'data'>, words: { names: Recor
       'Answer with JSON: [{"id": "t1", "claims": [{"key": "<key>", "value": "<value>"}]}, {"id": "e1", "facts": [{"key": "<key>", "value": "<value>"}]}]: "claims" for a witness line (t1 and t1.press), "facts" for a piece of evidence. One entry per id above. A line may state more than one fact.'
     ].join('\n')
   }
+  if (d.kind === 'logic') {
+    const unit = d.ordinal.unit ?? 'places'
+    const order = d.categories.find((c) => c.key === d.ordinal.category)
+    return [
+      `Read these clues of a logic grid puzzle and write each one back as structured data. Use only the names in the list; do not guess what is not said. The items of the category "${order?.key ?? ''}" come in this order: ${(order?.items ?? []).map((i) => words.names[i]).join(', ')}.`,
+      names,
+      ...d.clues.map((c) => `${c.id}: ${words.text[c.id] ?? '(missing)'}`),
+      `Answer with JSON: [{"id": "c1", "type": <type>, "a": ..., "b": ..., "n": <number, apart only>}] where type is one of: is (a and b go together), not (they do not), either (a goes with one of the two names in b), neither (a goes with neither of the two names in b), oneof (a is two names, b is two names: one of a goes with one of b and the other with the other), before (a comes before b in the order), after (a comes after b), apart (a and b are exactly n ${unit} apart). a and b are names; where the type needs two names, they are lists of two.`
+    ].join('\n')
+  }
   const traits = Object.entries(d.descr ?? {}).filter(([it]) => d.clues.some((c) => (c.descr ?? []).includes(it)))
   return [
     'Read these clues of a logic puzzle and write each one back as structured data. Use only the names in the list; do not guess what is not said.',
