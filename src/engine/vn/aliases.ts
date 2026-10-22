@@ -36,6 +36,11 @@ export function extractAliases(text: string, name = ''): string[] {
   return out
 }
 
+/** The `Aliases: a, b.` sentence (the form Scriptorium writes) taken out of a description: the names are kept as `aliases`, the looks stay clean for the image prompts. */
+export function stripAliasSentence(text: string): string {
+  return text.replace(/(?:^|\s)(?:aliases|alias|nadimci|nadimak)\s*:\s*[^.\n]+\.?/iu, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([.,;])/g, '$1').trim()
+}
+
 export interface AliasMerge {
   /** The name that became an alias. */
   alias: string

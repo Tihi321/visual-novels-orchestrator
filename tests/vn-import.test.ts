@@ -330,6 +330,21 @@ describe('ON SCREEN props and loose names (V7)', () => {
   })
 })
 
+describe('the Aliases sentence of a bible entry', () => {
+  it('fills aliases and is taken out of the looks (and out of the sheet and sprite prompts)', () => {
+    const bible = parseBible('## Characters\n- **Kessler**: A bald man in a grey coat, scarred hands. Aliases: the bald man, Brother Kessler. Voice: low and slow\n- **Mara**: A girl with red braids.\n- **Ivo**: Tall, tired. Nadimci: Stari, Brko.\n\n## Places\n- **Hall**: A hall.\n')
+    const k = bible.characters.find((c) => c.name === 'Kessler')!
+    expect(k.aliases).toEqual(['the bald man', 'Brother Kessler'])
+    expect(k.looks).toBe('A bald man in a grey coat, scarred hands.')
+    expect(k.voice).toBe('low and slow')
+    expect(bible.characters.find((c) => c.name === 'Mara')!.looks).toBe('A girl with red braids.')
+    const ivo = bible.characters.find((c) => c.name === 'Ivo')!
+    expect(ivo.aliases).toEqual(['Stari', 'Brko'])
+    expect(ivo.looks).toBe('Tall, tired.')
+    expect(bible.characters.every((c) => !/aliases|nadimci/i.test(c.looks))).toBe(true)
+  })
+})
+
 describe('media cue lines', () => {
   const bible = parseBible('## Characters\n- **Mara**: A girl.\n\n## Places\n- **Hall**: A hall.\n')
   const parse = (body: string) => parseChapterScript(`SCENE: The hall, night\nA quiet hall.\n${body}\n`, { chapter: 1, bible })

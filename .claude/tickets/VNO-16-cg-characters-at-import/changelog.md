@@ -15,3 +15,7 @@ A `CG:`, `SLIKA:` or `INSERT:` image from an imported script now gets `character
 ## Verification
 
 `yarn test`: 56 files, 742 tests pass (741 before). `yarn typecheck` and `yarn lint`: clean. Not run: a live import into the hub (the hub runs master).
+
+## Follow-up (2026-10-22): the Aliases sentence stays out of the looks
+
+The hub H1 check showed that a bible bullet `- **Kessler**: <looks>. Aliases: the bald man, Brother Kessler. Voice: <voice>` (the form Scriptorium SCP-16 writes) filled `aliases` correctly but left the `Aliases: ...` sentence inside `looks`, so sheet and sprite prompts carried it. `parseBible` now takes the explicit list sentence (`Aliases:`, `Alias:`, `Nadimci:`, `Nadimak:`) out of the looks and keeps the names as `aliases` (`stripAliasSentence` in `src/engine/vn/aliases.ts`). Quoted aliases in prose ("known as ...") and `Also:` are left where they are. Test in `tests/vn-import.test.ts`.

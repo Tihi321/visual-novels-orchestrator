@@ -1,4 +1,4 @@
-import { extractAliases } from './aliases'
+import { extractAliases, stripAliasSentence } from './aliases'
 import { normText, slugKey } from './ids'
 
 export interface BibleCharacter {
@@ -77,7 +77,7 @@ export function parseBible(body: string): Bible {
   const used = new Set<string>()
   const characters = bullets(text.characters).map((b): BibleCharacter => {
     const v = VOICE.exec(b.text)
-    const looks = (v ? b.text.slice(0, v.index) : b.text).trim()
+    const looks = stripAliasSentence((v ? b.text.slice(0, v.index) : b.text).trim())
     const voice = v ? b.text.slice(v.index + v[0].length).trim() : ''
     const aliases = extractAliases(b.text, b.name)
     return { key: uniqueKey(b.name, used), name: b.name, looks, ...(voice ? { voice } : {}), ...(aliases.length ? { aliases } : {}) }
