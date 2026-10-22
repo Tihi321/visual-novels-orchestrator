@@ -23,6 +23,7 @@ namebox:
   radius: 6
 fonts:
   text: DejaVuSans.ttf
+  scripts: [latin, cyrillic, greek, arabic, hebrew]
 sizes:
   text: 33
   name: 45

@@ -3,8 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { StudioError, createChiptuneClient } from '../src/engine/studios/chiptune'
-import { chiptuneClientFor, loadStudiosConfig, pixelClientFor, startHint, studiosConfigSchema } from '../src/engine/studios/config'
-import { McpHttpError, createMcpClient, parseResultJson } from '../src/engine/studios/mcp-http'
+import { chiptuneClientFor, loadStudiosConfig, pixelClientFor, startHint, studioToken, studiosConfigSchema } from '../src/engine/studios/config'
+import { McpHttpError, createMcpClient, parseResultJson, resolveToken } from '../src/engine/studios/mcp-http'
 import { createPixelClient } from '../src/engine/studios/pixel'
 import { fakeMcpServer, studioResult } from './studio-fakes'
 
@@ -171,5 +171,39 @@ describe('studios config (config/studios.md)', () => {
     await mkdir(path.join(dir, 'config'), { recursive: true })
     await writeFile(path.join(dir, 'config', 'studios.md'), '---\ntimeoutS: -5\n---\n')
     expect(await loadStudiosConfig(dir, {})).toEqual(studiosConfigSchema.parse({}))
+  })
+})
+
+describe('studio tokens (V5)', () => {
+  const tools = { tool_a: () => studioResult('ok', { n: 1 }) }
+
+  it('sends Authorization: Bearer on every request when a token is set, and nothing when not', async () => {
+    const s = await serve({ tools })
+    const withToken = createMcpClient({ url: s.url, label: 'Fake', notRunningHint: 'x', timeoutMs: 2000, token: 'abc123' })
+    await withToken.callTool('tool_a', {})
+    expect(s.seen).toHaveLength(3)
+    expect(s.seen.every((x) => x.headers.authorization === 'Bearer abc123')).toBe(true)
+    const before = s.seen.length
+    await mcp(s.url).callTool('tool_a', {})
+    expect(s.seen.slice(before).every((x) => x.headers.authorization === undefined)).toBe(true)
+  })
+
+  it('a 401 says which variable to set', async () => {
+    const s = await serve({ tools, status: 401 })
+    const pixel = createPixelClient({ url: s.url, notRunningHint: 'x', timeoutMs: 2000, token: 'wrong' })
+    await expect(pixel.listDocuments()).rejects.toThrow('Pixel Studio rejected the token: set PIXEL_STUDIO_MCP_TOKEN to the token shown in its Settings -> MCP')
+    const chip = createChiptuneClient({ url: s.url, notRunningHint: 'x', timeoutMs: 2000 })
+    await expect(chip.listSongs()).rejects.toMatchObject({ name: 'StudioError', kind: 'http', message: expect.stringContaining('CHIPTUNE_STUDIO_MCP_TOKEN') })
+  })
+
+  it('the environment wins over the credential store, which wins over config/studios.md', () => {
+    const c = studiosConfigSchema.parse({ pixelStudioToken: 'from-config', chiptuneStudioToken: 'chip-config' })
+    const store = (account: string) => (account === 'PIXEL_STUDIO_MCP_TOKEN' ? 'from-store' : undefined)
+    expect(studioToken(c, 'pixel', { PIXEL_STUDIO_MCP_TOKEN: 'from-env' }, store)).toBe('from-env')
+    expect(studioToken(c, 'pixel', {}, store)).toBe('from-store')
+    expect(studioToken(c, 'pixel', {}, () => undefined)).toBe('from-config')
+    expect(studioToken(c, 'chiptune', {}, store)).toBe('chip-config')
+    expect(studioToken(studiosConfigSchema.parse({}), 'chiptune', {}, () => undefined)).toBeNull()
+    expect(resolveToken('VIBETTS_MCP_TOKEN', '  spaced  ', {}, () => undefined)).toBe('spaced')
   })
 })

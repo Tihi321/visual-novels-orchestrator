@@ -4,7 +4,7 @@ An Electron + TypeScript desktop app that takes a visual-novel book written in [
 
 - A book can be in any of 37 languages (the 31 that VibeTTS Supertonic reads plus Book Translator's; more in `config/languages.md`), and the language is detected. A translated edition (a translated book folder, or text written over MCP) reuses every asset and only replaces the text. There is no machine translation inside VN Studio.
 - A story can also be written straight into VN Studio over MCP (`vno_create_project` and the story tools), with no Scriptorium folder.
-- Models: local ones (LM Studio, Strata) plus every Scriptorium provider (DeepSeek, Anthropic, Gemini, OpenRouter, other OpenAI-compatible APIs), and the `client` provider: set a role to `client/claude-code` and an MCP client (Claude Code) answers its model calls itself, for free (`vno_get_task` / `vno_submit_task`). Pick the models on the Models page and a model per agent on the Agents page.
+- Models: local ones (LM Studio, Strata) plus every Scriptorium provider (DeepSeek, Anthropic, Gemini, OpenRouter, other OpenAI-compatible APIs), and the `client` provider (on by default, used only when you pick it): set a role to `client/claude-code` and an MCP client (Claude Code) answers its model calls itself, for free (`vno_get_task` / `vno_submit_task`). Pick the models on the Models page and a model per agent on the Agents page.
 - The engine core (model router, job queue, agents) is a plain copy of Scriptorium's. The plan is in `.claude/tickets/VNO-01-visual-novel-studio-scriptorium-book-ren/plan.md`.
 
 Status: working end to end (VNO-01 to VNO-04): import a Scriptorium book or write the story over MCP, the agent pipeline, ComfyUI / Pixel Studio / Chiptune Studio assets, editions, VibeTTS voices, the Ren'Py and Android build, and an MCP server (HTTP, or headless with no window).
@@ -31,7 +31,7 @@ yarn install
 | `yarn typecheck` | `tsc` for the node and web projects |
 | `yarn lint` | ESLint |
 
-API keys come from environment variables or the Windows credential store (service `vn-studio`), never from files.
+API keys come from environment variables or the Windows credential store (service `vn-studio`), never from files. A key that is not found there is also looked for under the services `scriptorium` and `book-translator`, so the keys of those tools work here; `VNO_SHARED_KEYS=0` turns that off. The Models page says when a key comes from another store. Studio tokens (`PIXEL_STUDIO_MCP_TOKEN`, `CHIPTUNE_STUDIO_MCP_TOKEN`, `VIBETTS_MCP_TOKEN`) are looked up the same way.
 
 ## Command line and MCP
 
@@ -62,13 +62,13 @@ claude mcp add --transport http vn-studio http://127.0.0.1:7459/mcp
 - Settings > MCP shows the state and the connection lines, and sets on/off, the port and an optional bearer token. They live in `config/mcp.md` (`enabled`, `port`, `token`), which is reloaded live; `VNO_MCP_PORT` and `VNO_MCP_TOKEN` override the port and the token for one run. 7457, 7458 and 7723 are taken by Pixel Studio, Chiptune Studio and VibeTTS.
 - The server only listens on `127.0.0.1`, checks the Host and Origin headers, and runs every call on its own, so `vno_wait` does not hold up `vno_status`.
 - Tools (`docs/mcp-guide.md` is the guide the server also serves as the resource `vn-studio://guide`):
-  - library and projects: `vno_list_books`, `vno_set_library`, `vno_import`, `vno_list_projects`, `vno_get_project`, `vno_update_settings`, `vno_delete_project`, `vno_languages`
-  - story (no book folder): `vno_create_project`, `vno_get_story`, `vno_story_edit`, `vno_book_update`, `vno_character_set`, `vno_character_remove`, `vno_place_set`, `vno_place_remove`, `vno_chapter_add`, `vno_chapter_update`, `vno_chapter_remove`, `vno_scene_add`, `vno_scene_update`, `vno_scene_remove`, `vno_beat_add`, `vno_beat_update`, `vno_beat_remove`
-  - pipeline and queue: `vno_run_pipeline`, `vno_plan`, `vno_status`, `vno_wait`, `vno_pause_all`, `vno_resume_all`, `vno_stop_now`
+  - library and projects: `vno_list_books`, `vno_set_library`, `vno_import`, `vno_list_projects`, `vno_get_project`, `vno_update_settings`, `vno_delete_project`, `vno_languages`, `vno_fonts_fetch`
+  - story (no book folder): `vno_create_project`, `vno_get_story`, `vno_story_edit`, `vno_book_update`, `vno_character_set`, `vno_character_remove`, `vno_place_set`, `vno_place_remove`, `vno_chapter_add`, `vno_chapter_update`, `vno_chapter_remove`, `vno_scene_add`, `vno_scene_update`, `vno_scene_remove`, `vno_beat_add`, `vno_beat_update`, `vno_beat_remove`, `vno_image_set`, `vno_image_remove`, `vno_sound_set`, `vno_sound_remove`
+  - pipeline and queue: `vno_run_pipeline`, `vno_plan`, `vno_status`, `vno_wait`, `vno_pause_all`, `vno_resume_all`, `vno_stop_now`, `vno_clear_queue`
   - model work done by the client (`client/claude-code`): `vno_client_tasks`, `vno_get_task`, `vno_submit_task`, `vno_release_task`
   - editions: `vno_add_edition`, `vno_edition_set`, `vno_get_edition`, `vno_update_beat`, `vno_align_report`
-  - assets, music and staging: `vno_asset_list`, `vno_asset_set`, `vno_asset_replace`, `vno_asset_regen`, `vno_asset_pick`, `vno_asset_lock`, `vno_asset_unlock`, `vno_asset_generate`, `vno_set_music`, `vno_set_cues`
-  - voice: `vno_voice_status`, `vno_voice_plan`, `vno_voice_set`, `vno_voice_preview`, `vno_voice_generate`
+  - assets, music and staging: `vno_asset_list`, `vno_asset_set`, `vno_asset_replace`, `vno_asset_import`, `vno_asset_regen`, `vno_asset_pick`, `vno_asset_lock`, `vno_asset_unlock`, `vno_asset_generate`, `vno_set_music`, `vno_set_cues`
+  - voice: `vno_voice_status`, `vno_voice_plan`, `vno_voice_set`, `vno_voice_preview`, `vno_voice_generate`, `vno_voice_import`
   - generators and build: `vno_studios_status`, `vno_comfy_status`, `vno_comfy_free`, `vno_themes`, `vno_build`, `vno_lint`, `vno_android_preflight`, `vno_android_build`, `vno_renpy_config_get`, `vno_renpy_config_set`
 - Only one engine can use a data folder: `engine.lock` in it names the running one (its pid and MCP url). A second `yarn engine -- <command>`, `yarn mcp` or app start says "VN Studio is already running on this data folder (pid N). Use its MCP at <url> or close it." and exits with 1. A lock left by a process that died is replaced.
 

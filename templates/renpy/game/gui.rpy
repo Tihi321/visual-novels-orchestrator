@@ -250,6 +250,11 @@ define gui.file_slot_rows = 2
 ## side of the screen.
 define gui.navigation_xpos = 60
 
+## The side of the navigation buttons that gui.navigation_xpos is the position
+## of: 0.0 for the left side, 1.0 for the right side. A right-to-left language
+## sets 1.0 (vno_rtl.rpy, written by the build).
+define gui.navigation_xanchor = 0.0
+
 ## The vertical position of the skip indicator.
 define gui.skip_ypos = 15
 

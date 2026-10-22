@@ -11,7 +11,9 @@ import { resolveFile } from '../src/engine/assets/manifest'
 import { emitScripts, musicFile } from '../src/engine/renpy/emit'
 import { defaultCues } from '../src/engine/renpy/stage'
 import { barsFor, fallbackChipPlan, mergeChipPlan } from '../src/engine/studios/chip-plan'
-import { drawSpriteWithStudio } from '../src/engine/studios/draw'
+import { checkAgainstSchema } from '../src/engine/models/client'
+import { resolveDrawMode, studiosConfigSchema } from '../src/engine/studios/config'
+import { checkRows, drawSpriteFromGrid, drawSpriteWithStudio, quantizeToGrid } from '../src/engine/studios/draw'
 import { validateMusicPlan } from '../src/engine/vn/agents/composer'
 import type { AssetEntry } from '../src/shared/vn'
 import { book, settings } from './assets-fixtures'
@@ -285,5 +287,160 @@ describe('pixel-studio-draw', () => {
     if (r.ok && !r.skipped) {
       expect(r.version.warnings?.filter((w) => /Pixel Studio/.test(w))).toHaveLength(2)
     }
+  })
+})
+
+describe('pixel-studio-draw in grid mode (V13)', () => {
+  const sheetFile = async () => {
+    const f = path.join(dir, 'sheet.png')
+    await writeFile(f, (await new FakeComfy().generate({ engine: 'x', prompt: 'p', references: [] })).bytes)
+    return f
+  }
+  /** What the model of a test answers: the rows it was sent, with the middle painted in colour 1, as `{rows}`. */
+  const cleanedUp = (messages: { content: unknown }[]): string => {
+    const text = messages.map((m) => String(m.content)).join('\n')
+    const [, w, h] = /grid is (\d+) pixels wide and (\d+) high/.exec(text)!
+    const rows = Array.from({ length: Number(h) }, (_, y) => Array.from({ length: Number(w) }, (_, x) => (x > Number(w) / 4 && x < (Number(w) * 3) / 4 && y > Number(h) / 4 && y < (Number(h) * 3) / 4 ? '1' : '.')).join(''))
+    return JSON.stringify({ rows })
+  }
+  const PAL: [number, number, number][] = [[0, 0, 0], [200, 40, 40], [40, 200, 40]]
+
+  it('one model request: its rows become draw_grid calls of at most 64x64, exported at the sprite size', async () => {
+    const px = new FakePixel()
+    const sheet = await sheetFile()
+    let asks = 0
+    const schemas: unknown[] = []
+    const out = path.join(dir, 'tmp')
+    const r = await drawSpriteFromGrid({ client: px, ask: async (m, schema) => (asks++, schemas.push(schema), cleanedUp(m)), reference: sheet, grid: { w: 100, h: 70 }, palette: PAL, expression: 'worried', name: 'sprite_x', out: { w: 200, h: 140 }, tmpRoot: out })
+    expect(asks).toBe(1)
+    expect(r).toMatchObject({ steps: 1, local: false })
+    expect(await sharp(r.png).metadata()).toMatchObject({ width: 200, height: 140 })
+    const draws = px.calls.filter((c) => c.tool === 'draw_grid').map((c) => c.args as { rows: string[]; x: number; y: number })
+    expect(draws.length).toBeGreaterThan(1)
+    for (const d of draws) {
+      expect(d.rows.length).toBeLessThanOrEqual(64)
+      expect(Math.max(...d.rows.map((x) => x.length))).toBeLessThanOrEqual(64)
+      expect(new Set(d.rows.map((x) => x.length)).size).toBe(1) // the rows of a call have one length
+    }
+    expect(draws.map((d) => [d.x, d.y]).sort()).toEqual([[0, 0], [0, 64], [64, 0], [64, 64]].filter(([x, y]) => draws.some((d) => d.x === x && d.y === y)).sort())
+    // the tiles together are the rows that were answered
+    const whole = Array.from({ length: 70 }, () => Array(100).fill('.'))
+    for (const d of draws) d.rows.forEach((row, j) => [...row].forEach((c, i) => (whole[d.y + j]![d.x + i] = c)))
+    expect(whole.flat().filter((c) => c === '1').length).toBeGreaterThan(500)
+    expect(px.calls[0]!.tool).toBe('draw_sprite_from_reference')
+    // the schema of the answer is sent along (a client queue checks it on submit)
+    expect(schemas[0]).toMatchObject({ type: 'object', required: ['rows'], properties: { rows: { minItems: 70, maxItems: 70, items: { minLength: 100, maxLength: 100 } } } })
+    // the palette goes to Pixel Studio in the order of the characters
+    expect((px.calls[0]!.args as { palette: string[] }).palette).toEqual(['#000000', '#c82828', '#28c828'])
+  })
+
+  it('rows that do not fit get one repair round, then fail', async () => {
+    const px = new FakePixel()
+    const sheet = await sheetFile()
+    const base = { client: px, reference: sheet, grid: { w: 16, h: 12 }, palette: PAL, out: { w: 32, h: 24 }, tmpRoot: path.join(dir, 'tmp') }
+    const seen: string[][] = []
+    const replies = [JSON.stringify({ rows: ['....', 'zzzz'] }), undefined]
+    const ok = await drawSpriteFromGrid({
+      ...base,
+      ask: async (m) => {
+        seen.push(m.map((x) => String(x.content)))
+        return replies.shift() ?? cleanedUp(m)
+      }
+    })
+    expect(ok.steps).toBe(2)
+    expect(seen[1]!.at(-1)).toMatch(/Problems: there must be exactly 12 rows, there are 2; row 1 has 4 characters, it must have exactly 16/)
+    await expect(drawSpriteFromGrid({ ...base, ask: async () => JSON.stringify({ rows: ['no'] }) })).rejects.toThrow(/do not fit the 16x12 grid/)
+    await expect(drawSpriteFromGrid({ ...base, ask: async () => 'sorry, I cannot' })).rejects.toThrow(/do not fit the 16x12 grid: that was not one JSON object/)
+    // a row with a colour that is not in the palette
+    const bad = Array.from({ length: 12 }, () => '.'.repeat(15) + '9')
+    expect(checkRows(bad, { w: 16, h: 12 }, 3)[0]).toMatch(/row 1 uses "9", which is not in the alphabet/)
+    expect(checkRows(Array.from({ length: 12 }, () => '.'.repeat(16)), { w: 16, h: 12 }, 3)).toEqual([])
+  })
+
+  it('without Pixel Studio the PNG is built from the rows', async () => {
+    const sheet = await sheetFile()
+    const r = await drawSpriteFromGrid({ client: null, ask: async (m) => cleanedUp(m), reference: sheet, grid: { w: 16, h: 12 }, palette: PAL, out: { w: 32, h: 24 }, tmpRoot: path.join(dir, 'tmp') })
+    expect(r).toMatchObject({ local: true, calls: 0 })
+    const raw = await sharp(r.png).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+    expect(raw.info).toMatchObject({ width: 32, height: 24 })
+    const px = (x: number, y: number) => [...raw.data.subarray((y * 32 + x) * 4, (y * 32 + x) * 4 + 4)]
+    expect(px(16, 12)).toEqual([200, 40, 40, 255]) // colour 1 in the middle
+    expect(px(0, 0)[3]).toBe(0) // transparent around it
+    expect(await sharp(r.native).metadata()).toMatchObject({ width: 16, height: 12 })
+    // a Pixel Studio that is down gives the same
+    const down = new FakePixel()
+    down.down = true
+    const again = await drawSpriteFromGrid({ client: down, ask: async (m) => cleanedUp(m), reference: sheet, grid: { w: 16, h: 12 }, palette: PAL, out: { w: 32, h: 24 }, tmpRoot: path.join(dir, 'tmp') })
+    expect(again.local).toBe(true)
+  })
+
+  it('a palette of more than 62 colours is cut to the 62 the picture uses most', async () => {
+    const big: [number, number, number][] = Array.from({ length: 64 }, (_, i) => [i * 4, 255 - i * 4, (i * 37) % 256])
+    const sheet = await sheetFile()
+    const q = await quantizeToGrid(sheet, { w: 16, h: 24 }, big)
+    expect(q.palette).toHaveLength(62)
+    expect(q.rows).toHaveLength(24)
+    for (const row of q.rows) expect(row).toMatch(/^[.0-9a-zA-Z]{16}$/)
+    const small = await quantizeToGrid(sheet, { w: 16, h: 24 }, PAL)
+    expect(small.palette).toEqual(PAL)
+  })
+
+  it('generateAsset in grid mode: one request, draw_grid, a version with the native file', async () => {
+    const px = new FakePixel()
+    const sheet = await sheetFile()
+    let asks = 0
+    const s = pixelSettings({ provider: 'pixel-studio-draw' })
+    const r = await generateAsset(ctx({ settings: s, pixel: px, resolveRef: () => sheet, ask: async (m) => (asks++, cleanedUp(m)), draw: { steps: 12, ms: Infinity, mode: 'grid' } }), { ...stub('sprite_petra_worried'), engine: 'qwen-image-2.1-edit' })
+    if (!r.ok || r.skipped) throw new Error(JSON.stringify(r))
+    expect(asks).toBe(1)
+    expect(px.drawCalls).toBeGreaterThan(0)
+    expect(r.version.nativeFile).toBe('v1.px.png')
+    expect(r.version.warnings?.filter((w) => /Pixel Studio/.test(w)) ?? []).toEqual([])
+  })
+
+  it('bad rows after the repair fall back to the import path, with the reason', async () => {
+    const px = new FakePixel()
+    const sheet = await sheetFile()
+    const s = pixelSettings({ provider: 'pixel-studio-draw' })
+    const r = await generateAsset(ctx({ settings: s, pixel: px, resolveRef: () => sheet, ask: async () => JSON.stringify({ rows: [] }), draw: { steps: 12, ms: Infinity, mode: 'grid' } }), { ...stub('sprite_petra_worried'), engine: 'qwen-image-2.1-edit' })
+    if (!r.ok || r.skipped) throw new Error(JSON.stringify(r))
+    expect(r.version.warnings?.find((w) => /Pixel Studio drawing failed/.test(w))).toMatch(/do not fit the \d+x\d+ grid.*used the import path/)
+    expect(px.calls.some((c) => c.tool === 'import_image')).toBe(true)
+  })
+})
+
+describe('the draw mode follows the model (V13)', () => {
+  const cfg = (over: Record<string, unknown> = {}) => studiosConfigSchema.parse(over)
+  it('auto: grid for a client model, loop for any other; the client loop has no time limit', () => {
+    expect(resolveDrawMode(cfg(), true)).toEqual({ mode: 'grid', ms: 240_000 })
+    expect(resolveDrawMode(cfg(), false)).toEqual({ mode: 'loop', ms: 240_000 })
+    expect(resolveDrawMode(cfg({ drawMode: 'loop' }), true)).toEqual({ mode: 'loop', ms: Infinity })
+    expect(resolveDrawMode(cfg({ drawMode: 'grid' }), false)).toEqual({ mode: 'grid', ms: 240_000 })
+    expect(resolveDrawMode(cfg({ drawTimeoutS: 0 }), false)).toEqual({ mode: 'loop', ms: Infinity })
+    expect(cfg().drawMode).toBe('auto')
+  })
+  it('a loop with a client model ignores the time: the steps are the only bound, even when each turn takes ten minutes', async () => {
+    const px = new FakePixel()
+    const sheet = path.join(dir, 'sheet.png')
+    await writeFile(sheet, (await new FakeComfy().generate({ engine: 'x', prompt: 'p', references: [] })).bytes)
+    const { ms } = resolveDrawMode(cfg({ drawMode: 'loop' }), true)
+    let asks = 0
+    let t = 0
+    const draw = { calls: [{ tool: 'draw_grid', arguments: {} }] }
+    await drawSpriteWithStudio({ client: px, reference: sheet, grid: { w: 16, h: 24 }, palette: [[0, 0, 0]], out: { w: 32, h: 48 }, tmpRoot: path.join(dir, 'tmp'), ask: async () => (asks++, JSON.stringify(draw)), maxSteps: 5, maxMs: ms, now: () => (t += 600_000) })
+    expect(asks).toBe(5)
+    // with the default limit the same slow loop is out of time before its first turn
+    asks = 0
+    t = 0
+    await expect(drawSpriteWithStudio({ client: px, reference: sheet, grid: { w: 16, h: 24 }, palette: [[0, 0, 0]], out: { w: 32, h: 48 }, tmpRoot: path.join(dir, 'tmp'), ask: async () => (asks++, JSON.stringify(draw)), maxSteps: 5, maxMs: 240_000, now: () => (t += 600_000) })).rejects.toThrow(/drew nothing/)
+    expect(asks).toBe(0)
+  })
+  it('a client queue checks the rows schema on submit', () => {
+    const schema = { type: 'object', properties: { rows: { type: 'array', minItems: 2, maxItems: 2, items: { type: 'string', minLength: 3, maxLength: 3, pattern: '^[.01]*$' } } }, required: ['rows'] }
+    expect(checkAgainstSchema('{"rows": ["..1", "010"]}', schema)).toEqual([])
+    expect(checkAgainstSchema('{"rows": ["..1"]}', schema)[0]).toMatch(/needs at least 2 items/)
+    expect(checkAgainstSchema('{"rows": ["..1", "010", "000"]}', schema)[0]).toMatch(/needs at most 2 items/)
+    expect(checkAgainstSchema('{"rows": ["..1", "01"]}', schema)[0]).toMatch(/rows\[1\]: must be at least 3 characters/)
+    expect(checkAgainstSchema('{"rows": ["..1", "01x"]}', schema)[0]).toMatch(/does not match the pattern/)
   })
 })

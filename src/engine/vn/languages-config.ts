@@ -1,6 +1,6 @@
 import path from 'node:path'
 import { z } from 'zod'
-import { registerLanguages, resetLanguages } from '../../shared/languages'
+import { LANGUAGE_SCRIPTS, registerLanguages, resetLanguages } from '../../shared/languages'
 import { langSchema } from '../../shared/vn'
 import { readMd } from '../store/atomic'
 
@@ -14,9 +14,12 @@ const languageEntrySchema = z.object({
     .regex(/^[a-z][a-z0-9_]*$/, 'lowercase letters, digits and _')
     .optional(),
   rtl: z.boolean().optional(),
-  script: z.enum(['latin', 'cyrillic', 'greek', 'arabic', 'hebrew', 'devanagari', 'han', 'kana', 'hangul', 'thai', 'other']).optional(),
+  script: z.enum(LANGUAGE_SCRIPTS).optional(),
   supertonic: z.boolean().optional(),
-  ui: z.record(z.string(), z.string()).optional()
+  ui: z.record(z.string(), z.string()).optional(),
+  /** A font file with the glyphs of the language: an absolute path, or a file name in `<data>/fonts/`. */
+  font: z.string().min(1).optional(),
+  fontBold: z.string().min(1).optional()
 })
 const languagesConfigSchema = z.object({ languages: z.array(languageEntrySchema).default([]) })
 

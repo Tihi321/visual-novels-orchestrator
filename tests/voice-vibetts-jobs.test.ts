@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { SUPERTONIC_HINT, voiceGender } from '../src/engine/voice/catalog'
+import { invalidateSpeaker } from '../src/engine/voice/jobs'
 import { VibeTtsError, NOT_RUNNING_HINT } from '../src/engine/voice/vibetts'
 import type { BatchItem, BatchResult, FileResult, VibeTtsClient, VibeVoice, VibeVoiceList } from '../src/engine/voice/vibetts'
 import { voiceSubjects } from '../src/engine/vn/agents/voice-director'
@@ -78,7 +79,7 @@ async function setup(o: { chunkSize?: number } = {}) {
 type Harness = Awaited<ReturnType<typeof setup>>
 
 const vdir = (e: VnEnv, slug: string, lang: string) => path.join(e.dir, 'projects', slug, 'voice', lang)
-const readIndex = async (e: VnEnv, slug: string, lang: string) => JSON.parse(await readFile(path.join(vdir(e, slug, lang), 'index.json'), 'utf8')) as Record<string, { hash: string; file: string; speaker?: string }>
+const readIndex = async (e: VnEnv, slug: string, lang: string) => JSON.parse(await readFile(path.join(vdir(e, slug, lang), 'index.json'), 'utf8')) as Record<string, { hash: string; file: string; speaker?: string; imported?: boolean; textHash?: string }>
 const voicesOf = async (h: Harness) => (await h.svc.store.loadSettings(h.slug)).settings.voice.voices
 
 async function planned(h: Harness, langs: ('en' | 'hr')[] = ['en']) {
@@ -429,5 +430,111 @@ describe('voice tab commands', () => {
     await expect(h.svc.setVoice(h.slug, 'mara', 'hr', 'supertonic:F1')).rejects.toThrow(/Supertonic is not installed/)
     expect((await voicesOf(h)).mara).toBeUndefined()
     expect(h.fake.files).toEqual([])
+  })
+})
+
+describe('imported voice clips (V2)', () => {
+  const clip = async (h: Harness, name: string): Promise<string> => {
+    const f = path.join(h.env.dir, name)
+    await mkdir(path.dirname(f), { recursive: true })
+    await writeFile(f, `MY RECORDING ${name}`)
+    return f
+  }
+  const generate = async (h: Harness) => {
+    await h.svc.generateVoice(h.slug, { lang: 'en' })
+    const r = await waitIdle(h.env, h.slug)
+    expect(r.failed, (await failures(h.env)).join(' | ')).toEqual([])
+    return (await h.svc.pipelineStatus(h.slug))?.steps.voice?.message ?? ''
+  }
+  const beatsOf = async (h: Harness) => Object.keys((await h.svc.store.loadEdition(h.slug, 'en')).beats)
+
+  it('an imported clip is not regenerated, and the message says how many were kept', async () => {
+    const h = await setup()
+    await planned(h)
+    const [mine, other] = await beatsOf(h)
+    await generate(h)
+    const made = h.fake.clips.length
+    expect(made).toBeGreaterThan(2)
+    const r = await h.svc.importVoice(h.slug, 'en', { beatId: mine!, file: await clip(h, 'mine.mp3') }, { rebuild: false })
+    expect(r).toEqual({ lang: 'en', imported: [mine], unknown: [] })
+    const index = await readIndex(h.env, h.slug, 'en')
+    expect(index[mine!]).toMatchObject({ file: `${mine}.mp3`, imported: true })
+    expect(index[mine!]!.hash).toMatch(/^import:[0-9a-f]{40}$/)
+    expect(index[mine!]!.textHash).toMatch(/^[0-9a-f]{40}$/)
+    expect(existsSync(path.join(vdir(h.env, h.slug, 'en'), `${mine}.mp3`))).toBe(true)
+    // the clip that was generated for the same beat is gone, the other clips are as they were
+    expect(existsSync(path.join(vdir(h.env, h.slug, 'en'), `${mine}.mp3`))).toBe(true)
+    expect(index[other!]!.imported).toBeUndefined()
+
+    // the voice changes: everything but the imported clip is made again
+    const first = h.fake.clips.length
+    await h.svc.updateSettings(h.slug, { voice: { voices: { ...(await voicesOf(h)), narrator: { en: 'bm_george' } } } })
+    const message = await generate(h)
+    expect(message).toMatch(/1 imported clip\(s\) kept/)
+    expect(message).not.toMatch(/of them for text that changed/)
+    expect(h.fake.clips.length).toBeGreaterThan(first)
+    expect(h.fake.clips.slice(first).some((c) => path.basename(c.output) === `${mine}.mp3`)).toBe(false)
+    expect((await readFile(path.join(vdir(h.env, h.slug, 'en'), `${mine}.mp3`), 'utf8'))).toBe('MY RECORDING mine.mp3')
+    expect((await readIndex(h.env, h.slug, 'en'))[mine!]).toMatchObject({ imported: true })
+  })
+
+  it('says how many imported clips are for text that changed since', async () => {
+    const h = await setup()
+    await planned(h)
+    const [mine] = await beatsOf(h)
+    await h.svc.importVoice(h.slug, 'en', { beatId: mine!, file: await clip(h, 'mine.wav') }, { rebuild: false })
+    const ed = await h.svc.store.loadEdition(h.slug, 'en')
+    await h.svc.store.saveEdition(h.slug, { ...ed, beats: { ...ed.beats, [mine!]: 'Completely new words.' } })
+    const message = await generate(h)
+    expect(message).toMatch(/1 imported clip\(s\) kept \(1 of them for text that changed\)/)
+    expect(h.fake.clips.some((c) => path.basename(c.output).startsWith(mine!))).toBe(false)
+  })
+
+  it('a folder import matches the beat ids and reports the names that match nothing', async () => {
+    const h = await setup()
+    await planned(h)
+    const [a, b] = await beatsOf(h)
+    await clip(h, `clips/${a}.mp3`)
+    await clip(h, `clips/${b}.ogg`)
+    await clip(h, 'clips/nope.mp3')
+    await clip(h, 'clips/notes.txt')
+    const r = await h.svc.importVoice(h.slug, 'en', { folder: path.join(h.env.dir, 'clips') }, { rebuild: false })
+    expect(r.imported.sort()).toEqual([a, b].sort())
+    expect(r.unknown).toEqual(['nope.mp3'])
+    const index = await readIndex(h.env, h.slug, 'en')
+    expect(index[a!]).toMatchObject({ file: `${a}.mp3`, imported: true })
+    expect(index[b!]).toMatchObject({ file: `${b}.ogg`, imported: true })
+    await expect(h.svc.importVoice(h.slug, 'en', { beatId: 'ch99.s01.b001', file: await clip(h, 'x.mp3') })).rejects.toThrow(/no text beat ch99\.s01\.b001/)
+    await expect(h.svc.importVoice(h.slug, 'en', { beatId: a!, file: await clip(h, 'x.txt') })).rejects.toThrow(/a voice clip is/)
+    await expect(h.svc.importVoice(h.slug, 'hr', { folder: path.join(h.env.dir, 'clips') })).rejects.toThrow(/no hr edition/)
+    await expect(h.svc.importVoice(h.slug, 'en', { folder: path.join(h.env.dir, 'missing') })).rejects.toThrow(/no such folder/)
+  })
+
+  it('changing a speaker voice keeps the imported clips and drops the others of that speaker', async () => {
+    const h = await setup()
+    await planned(h)
+    await generate(h)
+    const index0 = await readIndex(h.env, h.slug, 'en')
+    const speaker = Object.values(index0).find((e) => e.speaker && e.speaker !== 'narrator')?.speaker ?? 'narrator'
+    const beats = Object.entries(index0).filter(([, e]) => e.speaker === speaker).map(([id]) => id)
+    expect(beats.length).toBeGreaterThan(1)
+    await h.svc.importVoice(h.slug, 'en', { beatId: beats[0]!, file: await clip(h, 'one.mp3') }, { rebuild: false })
+    const dropped = await invalidateSpeaker(h.svc, h.slug, speaker)
+    expect(dropped).toBe(beats.length - 1)
+    const index = await readIndex(h.env, h.slug, 'en')
+    expect(index[beats[0]!]).toMatchObject({ imported: true })
+    for (const id of beats.slice(1)) expect(index[id]).toBeUndefined()
+  })
+
+  it('the ComfyUI voice provider keeps an imported clip too', async () => {
+    const h = await setup()
+    await h.svc.updateSettings(h.slug, { voice: { enabled: true, langs: ['en'], provider: 'comfy', engines: { en: 'custom:chatterbox-multilingual' } } })
+    const [mine] = await beatsOf(h)
+    await h.svc.importVoice(h.slug, 'en', { beatId: mine!, file: await clip(h, 'mine.mp3') }, { rebuild: false })
+    await h.svc.generateVoice(h.slug, { lang: 'en' })
+    await waitIdle(h.env, h.slug)
+    const index = await readIndex(h.env, h.slug, 'en')
+    expect(index[mine!]).toMatchObject({ imported: true, file: `${mine}.mp3` })
+    expect(await readFile(path.join(vdir(h.env, h.slug, 'en'), `${mine}.mp3`), 'utf8')).toBe('MY RECORDING mine.mp3')
   })
 })

@@ -85,6 +85,23 @@ export class ModelRouter {
   }
 
   /**
+   * Why a model would be skipped when a job is routed, or null when it can be used now. Unknown model, provider disabled or not available (no key),
+   * server down, daily limit used up, not a vision model (`visionOnly`), embedding model.
+   */
+  whyUnusable(ref: string, o: { visionOnly?: boolean } = {}): string | null {
+    const m = this.registry.getModel(this.registry.resolve(ref))
+    if (!m) return `unknown model ${ref}`
+    const p = m.provider
+    if (!p.enabled) return `provider ${p.id} is disabled in config/providers.md`
+    if (!p.available || !p.client) return `provider ${p.id} is not available (${p.unavailableReason ?? 'no client'})`
+    if (p.down) return `server of provider ${p.id} is down`
+    if (this.limiter.dayFull(p)) return `daily limit of provider ${p.id} is used up`
+    if (m.embedding) return `${m.ref} is an embedding model`
+    if (o.visionOnly && !m.vision) return `${m.ref} is not a vision model`
+    return null
+  }
+
+  /**
    * Ordered models for a job: the agent's override, then the role's list. Unavailable providers are dropped,
    * and so are servers that are down (Strata not started) and providers whose daily limit is used up, unless nothing else is left.
    */

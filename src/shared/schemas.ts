@@ -190,6 +190,8 @@ export const jobSchema = z.looseObject({
   max_attempts: z.number().int().positive().nullable().default(null),
   /** Do not start before this time (ISO). Used for retry backoff. */
   not_before: z.string().nullable().default(null),
+  /** Higher goes first (then oldest first). 1 for a request someone made explicitly (MCP, the app), 0 for the pipeline's own jobs. Dependencies still gate. */
+  priority: z.number().int().default(0),
   created: z.string().optional()
 })
 

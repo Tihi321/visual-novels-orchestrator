@@ -10,6 +10,10 @@ export interface AssetGroups {
   backgrounds: AssetView[]
   characters: CharacterGroup[]
   cover: AssetView[]
+  /** CGs and inserts (`cg_<key>`). */
+  images: AssetView[]
+  /** Sound effects and ambiences (`sfx_<key>`, `amb_<key>`). */
+  sounds: AssetView[]
   music: AssetView[]
   /** Voice references (`voice_<char|narrator>`). */
   voice: AssetView[]
@@ -31,7 +35,7 @@ const byId = (a: AssetView, b: AssetView): number => (a.id < b.id ? -1 : a.id > 
 
 /** Groups the assets for the gallery: backgrounds, characters (sheet and sprites together), cover, music, voice references. */
 export function groupAssets(assets: readonly AssetView[]): AssetGroups {
-  const groups: AssetGroups = { backgrounds: [], characters: [], cover: [], music: [], voice: [] }
+  const groups: AssetGroups = { backgrounds: [], characters: [], cover: [], images: [], sounds: [], music: [], voice: [] }
   const chars = new Map<string, CharacterGroup>()
   const charOf = (key: string): CharacterGroup => {
     let g = chars.get(key)
@@ -48,6 +52,13 @@ export function groupAssets(assets: readonly AssetView[]): AssetGroups {
         break
       case 'cover':
         groups.cover.push(a)
+        break
+      case 'cg':
+        groups.images.push(a)
+        break
+      case 'sfx':
+      case 'ambience':
+        groups.sounds.push(a)
         break
       case 'music':
         groups.music.push(a)

@@ -67,7 +67,7 @@ An edition never changes the asset list.
 
 `AssetView` is the manifest entry (`id`, `kind`, `prompt`, `negative`, `engine`, `seed`, `size`, `refs`, `versions[]`, `selected`, `source: 'generated' | 'custom'`, `customFile`, `locked`, `review`) plus `fileRel` (the file the build uses), `versionFiles` (version number -> relative path) and `orphaned` (the book no longer uses it; it is kept).
 
-Asset ids: `bg_<place>_<time>`, `sheet_<char>`, `sprite_<char>_<expression>`, `cover`, `music_01..`, `voice_<char|narrator>`.
+Asset ids: `bg_<place>_<time>`, `sheet_<char>`, `sprite_<char>_<expression>`, `cg_<key>`, `sfx_<key>`, `amb_<key>`, `cover`, `music_01..`, `voice_<char|narrator>`.
 
 | Command | Effect |
 | --- | --- |

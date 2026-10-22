@@ -11,6 +11,7 @@ import { workflowDirs } from '../comfy/custom-workflow'
 import { DEFAULT_SDK_PATH } from '../renpy/run'
 import { atomicWrite, readMd, writeMd } from '../store/atomic'
 import type { AlignReport } from './align'
+import { asciiSlug } from './ids'
 import type { Uncertain } from './script'
 
 /**
@@ -32,18 +33,9 @@ import type { Uncertain } from './script'
 
 const SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/
 
-/** A folder-safe project slug from any text. */
+/** A folder-safe project slug from any text: `Война и мир` -> `voina-i-mir`, `红楼梦` -> `book-1a2b3c` (see `asciiSlug`). */
 export function projectSlug(text: string): string {
-  const s = text
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/đ/g, 'd')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60)
-    .replace(/-+$/g, '')
-  return s || 'book'
+  return asciiSlug(text, { sep: '-', fallback: 'book', max: 60 })
 }
 
 export function assertSlug(slug: string): string {
@@ -303,7 +295,7 @@ export function loadComfyConfigFor(dataDir: string): Promise<ComfyConfig> {
   return loadComfyConfig(path.join(dataDir, 'config', 'comfy.md'))
 }
 
-/** Where the custom workflows and palettes are (both seeded into the data folder from `seed/`). */
-export function dataFolders(dataDir: string): { workflows: string[]; palettes: string; voices: string } {
-  return { workflows: workflowDirs(dataDir), palettes: path.join(dataDir, 'palettes'), voices: path.join(dataDir, 'voices') }
+/** Where the custom workflows and palettes are (both seeded into the data folder from `seed/`), and the fonts you drop in for the languages the theme font lacks. */
+export function dataFolders(dataDir: string): { workflows: string[]; palettes: string; voices: string; fonts: string } {
+  return { workflows: workflowDirs(dataDir), palettes: path.join(dataDir, 'palettes'), voices: path.join(dataDir, 'voices'), fonts: path.join(dataDir, 'fonts') }
 }

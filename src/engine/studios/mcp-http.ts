@@ -5,6 +5,9 @@
  * Shared by VibeTTS (`voice/vibetts.ts`), Pixel Studio and Chiptune Studio (`studios/*.ts`).
  */
 
+import { resolveKey } from '../models/keys'
+import type { StoredKeyGetter } from '../models/keys'
+
 export class McpHttpError extends Error {
   constructor(
     message: string,
@@ -25,6 +28,19 @@ export interface McpHttpOptions {
   /** Timeout of `initialize` and the short calls. Default 15 s. */
   timeoutMs?: number
   fetchImpl?: typeof fetch
+  /** A bearer token: sent as `Authorization: Bearer <token>` on every request. */
+  token?: string | null
+  /** The variable that holds the token, named in the message when the app answers 401. */
+  tokenVar?: string
+}
+
+/**
+ * The token of an app, first match wins: the environment variable `varName`, the credential store (same account name), then `configured`
+ * (the optional field in config/studios.md or config/voice.md). Null when there is none.
+ */
+export function resolveToken(varName: string, configured: string | undefined, env: NodeJS.ProcessEnv = process.env, getKey?: StoredKeyGetter): string | null {
+  const found = getKey ? resolveKey(varName, getKey, env) : resolveKey(varName, undefined, env)
+  return found || configured?.trim() || null
 }
 
 export interface McpCallResult {
@@ -126,6 +142,7 @@ export function createMcpClient(opts: McpHttpOptions): McpHttpClient {
 
   async function post(message: object, ms: number, signal: AbortSignal | undefined): Promise<{ status: number; text: string; type: string; headers: Headers }> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }
+    if (opts.token) headers.Authorization = `Bearer ${opts.token}`
     if (session) headers['Mcp-Session-Id'] = session
     if ('method' in message && (message as { method: string }).method !== 'initialize') headers['MCP-Protocol-Version'] = version
     try {
@@ -142,6 +159,7 @@ export function createMcpClient(opts: McpHttpOptions): McpHttpClient {
   async function rpc(method: string, params: object, ms: number, signal?: AbortSignal): Promise<unknown> {
     const id = nextId++
     const r = await post({ jsonrpc: '2.0', id, method, params }, ms, signal)
+    if (r.status === 401) throw new McpHttpError(`${label} rejected the token: set ${opts.tokenVar ?? 'its token variable'} to the token shown in its Settings -> MCP`, 'http')
     if (r.status === 403) throw new McpHttpError(`${label} refused the request (HTTP 403: Host or Origin not allowed)`, 'http')
     if (r.status < 200 || r.status >= 300) throw new McpHttpError(`${label} answered HTTP ${r.status}${r.text ? `: ${r.text.slice(0, 200)}` : ''}`, 'http')
     const msg = parseRpcBody(r.text, r.type, id)

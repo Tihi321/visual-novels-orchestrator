@@ -1,5 +1,6 @@
 import { cp, mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
+import sharp from 'sharp'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildTools, callTool } from '../src/engine/mcp/tools'
 import type { McpOptions, ToolResult } from '../src/engine/mcp/tools'
@@ -7,6 +8,7 @@ import type { MusicPlan } from '../src/engine/vn/agents/composer'
 import { TASKS } from '../src/engine/vn/pipeline'
 import type { StageCues } from '../src/engine/renpy/stage'
 import type { VnBook } from '../src/shared/vn'
+import { resolveStylePrompt } from '../src/engine/assets/derive'
 import { book, makeVnEnv, waitIdle } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
 
@@ -231,5 +233,113 @@ describe('vno_set_library', () => {
     await env.engine.handleCommand({ type: 'saveSettings', lmstudioParallel: 3 })
     expect(env.engine.scriptoriumDataPath()).toBe(path.resolve(lib))
     expect(env.engine.settingsSummary().lmstudioParallel).toBe(3)
+  })
+})
+
+describe('vno_update_settings with a model nobody can use', () => {
+  it('saves the model, warns with the key variable, and vno_status shows it as not usable', async () => {
+    const loc = env.engine.registry.providers.get('loc')!
+    loc.available = false
+    loc.unavailableReason = 'no key (set NOKEY_API_KEY or run: npm run key:set NOKEY_API_KEY)'
+    const r = await ok('vno_update_settings', { slug, models: { 'script-analyst': 'loc/m1' } })
+    expect(r.settings.models).toEqual({ 'script-analyst': 'loc/m1' })
+    expect(r.warnings).toHaveLength(1)
+    expect(r.warnings[0]).toMatch(/loc\/m1: provider loc is not available \(no key \(set NOKEY_API_KEY.*jobs of script-analyst will use the role's list/)
+    const st = await ok('vno_status', { slug })
+    expect(st.models['script-analyst']).toMatchObject({ ref: 'loc/m1', usable: false })
+    expect(st.models['script-analyst'].reason).toMatch(/NOKEY_API_KEY/)
+    const proj = await ok('vno_get_project', { slug })
+    expect(proj.project.models['script-analyst'].usable).toBe(false)
+    // a usable model has no warning
+    loc.available = true
+    const again = await ok('vno_update_settings', { slug, models: { 'script-analyst': 'loc/m1' } })
+    expect(again.warnings).toBeUndefined()
+    expect((await ok('vno_status', { slug })).models['script-analyst']).toEqual({ ref: 'loc/m1', usable: true })
+  })
+})
+
+describe('a new style prefix reaches the prompts that are not generated yet (V11)', () => {
+  it('rewrites unversioned prompts, reports the generated ones, leaves sprites, and a queued job uses the new prompt', async () => {
+    const STYLE = 'ink wash, high contrast'
+    await ok('vno_plan', { slug, wait: true })
+    const assets = await svc().store.loadAssets(slug)
+    const bgs = assets.assets.filter((a) => a.kind === 'background')
+    expect(bgs.length).toBeGreaterThanOrEqual(2)
+    const [generated, queued] = [bgs[0]!, bgs[1]!]
+    const defaultStyle = resolveStylePrompt(await svc().store.loadBook(slug), (await svc().store.loadSettings(slug)).settings)
+    expect(queued.prompt.startsWith(defaultStyle)).toBe(true)
+    // one background already has an image
+    await ok('vno_asset_generate', { slug, only: [generated.id], wait: true })
+    const spritesBefore = assets.assets.filter((a) => a.kind === 'sprite').map((a) => [a.id, a.prompt])
+    // a prompt the art-director wrote with other words
+    const odd = bgs[2]
+    if (odd) await svc().setAssetPlan(slug, odd.id, { prompt: 'a lighthouse at dusk' })
+
+    // a generate job waits in the queue (the queue is paused), then the style changes
+    await env.engine.setPaused(true)
+    await svc().enqueue(slug, TASKS.generate, queued.id, await svc().nextRun(slug), { body: { force: false } })
+    const r = await ok('vno_update_settings', { slug, art: { stylePrompt: STYLE } })
+    expect(r.restyle.generated).toContain(generated.id)
+    expect(r.restyle.restyled).toContain(queued.id)
+    expect(r.restyle.restyled).not.toContain(generated.id)
+    if (odd) expect(r.restyle.kept).toContain(odd.id)
+    expect(r.restyle.hint).toMatch(/vno_asset_regen/)
+
+    const after = (await svc().store.loadAssets(slug)).assets
+    const prompt = (id: string) => after.find((a) => a.id === id)!.prompt
+    expect(prompt(queued.id).startsWith(`${STYLE}, `)).toBe(true)
+    expect(prompt(queued.id)).not.toContain(defaultStyle)
+    expect(prompt(queued.id).slice(STYLE.length)).toBe(assets.assets.find((a) => a.id === queued.id)!.prompt.slice(defaultStyle.length))
+    expect(prompt(generated.id)).toBe(assets.assets.find((a) => a.id === generated.id)!.prompt) // already generated: still the old style
+    if (odd) expect(prompt(odd.id)).toBe('a lighthouse at dusk')
+    expect(after.filter((a) => a.kind === 'sprite').map((a) => [a.id, a.prompt])).toEqual(spritesBefore)
+
+    // the queued job reads the prompt when it runs
+    const before = env.comfy.requests.length
+    await env.engine.setPaused(false)
+    await waitIdle(env, slug)
+    const sent = env.comfy.requests.slice(before).find((q) => q.prompt?.startsWith(STYLE))
+    expect(sent).toBeTruthy()
+
+    // changing nothing about the style restyles nothing
+    const again = await ok('vno_update_settings', { slug, art: { stylePrompt: STYLE } })
+    expect(again.restyle).toBeUndefined()
+  })
+})
+
+describe('the cover is planned landscape (V9)', () => {
+  const portrait = { w: 928, h: 1664 }
+  const oldPrompt = 'soft watercolour, a lighthouse, portrait composition, full-bleed artwork'
+
+  it('an empty portrait cover plan becomes landscape; one with an image, set by hand or locked is left alone', async () => {
+    expect(await asset('cover')).toMatchObject({ size: { w: 1664, h: 928 } }) // a new project plans it landscape
+    const old = async (patch: Record<string, unknown> = {}) => {
+      await svc().store.updateAsset(slug, 'cover', (c) => ({ ...c, size: portrait, prompt: oldPrompt, promptByHand: undefined, locked: false, versions: [], selected: null, ...patch }))
+    }
+    await old()
+    await svc().reconcileAssets(slug)
+    expect(await asset('cover')).toMatchObject({ size: { w: 1664, h: 928 }, prompt: 'soft watercolour, a lighthouse, landscape composition, full-bleed artwork' })
+
+    await old({ versions: [{ n: 1, file: 'v1.webp', createdAt: new Date().toISOString(), seed: 1, engine: 'z-image-turbo', prompt: oldPrompt }], selected: 1 })
+    await svc().reconcileAssets(slug)
+    expect(await asset('cover')).toMatchObject({ size: portrait, prompt: oldPrompt }) // it has an image: left alone
+
+    await old({ promptByHand: true })
+    await svc().reconcileAssets(slug)
+    expect(await asset('cover')).toMatchObject({ size: portrait, prompt: oldPrompt })
+
+    await old({ locked: true })
+    await svc().reconcileAssets(slug)
+    expect(await asset('cover')).toMatchObject({ size: portrait, prompt: oldPrompt })
+  })
+
+  it('the art plan asks for a landscape menu picture, and the generated cover is the screen size', async () => {
+    await ok('vno_plan', { slug, wait: true })
+    const prompt = (await asset('cover')).prompt
+    expect(prompt).toMatch(/landscape composition/)
+    expect(prompt).not.toMatch(/portrait/)
+    await ok('vno_asset_generate', { slug, only: ['cover'], wait: true })
+    const e = await asset('cover')
+    expect(await sharp(path.join(svc().store.dir(slug), 'assets', 'cover', e.versions[0]!.file)).metadata()).toMatchObject({ width: 1920, height: 1080 })
   })
 })

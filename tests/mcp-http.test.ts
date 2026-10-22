@@ -257,6 +257,41 @@ describe('MCP client tasks', () => {
     expect(view.system).toBe('You are the art critic.\n\nBe brief.')
     expect(view.user).toBe('Is this the harbour?\n[image 1]\nAnd this?\n[image 2]')
     expect(view.output).toBe('Reply with the text only: no preamble, no notes, no code fence.')
-    expect(view.messages).toHaveLength(3)
+    expect(view.messages).toBeUndefined()
+    expect((view as { turns?: string }).turns).toBe('single')
+  })
+
+  it('a multi-turn task sends system and messages, and no user', async () => {
+    const s = await start({ client: true })
+    const c = await connect(s.url()!)
+    env!.engine.clientQueue.add(
+      { messages: [{ role: 'system', content: 'SYS' }, { role: 'user', content: 'first ask' }, { role: 'assistant', content: 'bad answer' }, { role: 'user', content: 'repair it' }] },
+      { job: 'p--vn.analyse--all--r1', role: 'script-analyst', task: 'vn.analyse', book: 'p', unit: 'all' }
+    )
+    const res = await c.callTool({ name: 'vno_get_task', arguments: {} })
+    const view = res.structuredContent as { turns: string; system: string; user?: string; messages?: { role: string; content: string }[] }
+    expect(view.turns).toBe('multi')
+    expect(view.user).toBeUndefined()
+    expect(view.system).toBe('SYS')
+    expect(view.messages).toEqual([
+      { role: 'user', content: 'first ask' },
+      { role: 'assistant', content: 'bad answer' },
+      { role: 'user', content: 'repair it' }
+    ])
+  })
+
+  it('a single-turn task carries its user text once', async () => {
+    const s = await start({ client: true })
+    const c = await connect(s.url()!)
+    const marker = 'UNIQUE-MARKER-' + 'x'.repeat(200)
+    env!.engine.clientQueue.add(
+      { messages: [{ role: 'system', content: 'SYS' }, { role: 'user', content: marker }] },
+      { job: 'p--vn.analyse--all--r1', role: 'script-analyst', task: 'vn.analyse', book: 'p', unit: 'all' }
+    )
+    const res = await c.callTool({ name: 'vno_get_task', arguments: {} })
+    const json = JSON.stringify(res.structuredContent)
+    expect(json.split(marker)).toHaveLength(2)
+    expect(res.structuredContent).toMatchObject({ turns: 'single', user: marker })
+    expect((res.structuredContent as { messages?: unknown }).messages).toBeUndefined()
   })
 })

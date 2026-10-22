@@ -45,7 +45,7 @@ describe('deriveAssets', () => {
     expect(by('bg_harbour_dusk')).toMatchObject({ kind: 'background', engine: 'qwen-image-2.1', size: { w: 1664, h: 928 }, prompt: '', versions: [], selected: null, source: 'generated', locked: false, seed: null })
     expect(by('sheet_petra')).toMatchObject({ kind: 'sheet', size: { w: 928, h: 1664 } })
     expect(by('sprite_petra_worried')).toMatchObject({ kind: 'sprite', engine: 'qwen-image-2.1-edit', refs: ['sheet_petra'] })
-    expect(by('cover')).toMatchObject({ kind: 'cover', size: { w: 928, h: 1664 } })
+    expect(by('cover')).toMatchObject({ kind: 'cover', size: { w: 1664, h: 928 } }) // the menu picture is landscape
     expect(by('music_01')).toMatchObject({ kind: 'music', engine: 'ace-step-v1-instrumental', size: null })
   })
 
@@ -85,6 +85,8 @@ describe('fallbackPrompt', () => {
     expect(sprite).toContain('Show only this one character as a single full-body figure, centered, facing the viewer, worried facial expression, plain pure white background, nothing else')
     expect(sprite).toContain('red braids')
     expect(fallbackPrompt({ id: 'cover', kind: 'cover' }, book)).toContain('a girl and a dragon on a pier')
+    expect(fallbackPrompt({ id: 'cover', kind: 'cover' }, book)).toMatch(/wide 16:9 key art, landscape composition, keep the left third calm for the menu/)
+    expect(fallbackPrompt({ id: 'cover', kind: 'cover' }, book)).not.toContain('portrait')
     const music = fallbackPrompt({ id: 'music_02', kind: 'music' }, book)
     expect(music).toContain('calm, gentle, soft piano and strings, ambient, slow, instrumental, no vocals')
     expect(music).toContain('whimsical harp')

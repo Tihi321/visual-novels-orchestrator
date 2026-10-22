@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
 import { z } from 'zod'
+import { LANGUAGE_SCRIPTS } from '../../shared/languages'
 
 /**
  * Game themes: a folder `themes/<name>/` with a `theme.yaml` (colours, fonts, textbox, namebox, choice buttons,
@@ -47,13 +48,15 @@ export const themeSchema = z.object({
       textColor: color.nullable().default(null)
     })
     .default({ color: '#222222', opacity: 0.9, radius: 0, textColor: null }),
-  /** Font file names: in the theme's `fonts/` folder, or a font that ships with Ren'Py (`DejaVuSans.ttf`). */
+  /** Font file names: in the theme's `fonts/` folder, or a font that ships with Ren'Py (`DejaVuSans.ttf`). A language whose script the text font lacks gets another font (see `renpy/fonts.ts`). */
   fonts: z
     .object({
       text: z.string().default('DejaVuSans.ttf'),
       name: z.string().optional(),
       interface: z.string().optional(),
-      bold: z.string().optional()
+      bold: z.string().optional(),
+      /** The scripts the text font has glyphs for. Without it: DejaVuSans's scripts for a DejaVu font, Latin only for any other. */
+      scripts: z.array(z.enum(LANGUAGE_SCRIPTS)).optional()
     })
     .default({ text: 'DejaVuSans.ttf' }),
   sizes: z

@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fallbackNegative, fallbackPrompt, resolveStylePrompt } from '../src/engine/assets/derive'
 import { sanitizePrompt } from '../src/engine/vn/agents/art-director'
 import type { Decision } from '../src/engine/vn/agents/script-analyst'
@@ -13,13 +13,17 @@ import { answerClientTasks, book, failures, jsonAfter, makeVnEnv, waitIdle } fro
 import { waitFor } from './helpers'
 import type { VnEnv } from './vn-helpers'
 
+
+// these tests run a pipeline or import a whole book: under the load of the full suite 15 s is not always enough
+vi.setConfig({ testTimeout: 60_000 })
+
 let env: VnEnv | undefined
 afterEach(async () => {
   await env?.cleanup()
   env = undefined
 })
 
-const nullDecision = (index: number): Decision => ({ index, placeKey: null, newPlace: null, time: null, charKey: null, newCharacter: null, expression: null, isDirection: false })
+const nullDecision = (index: number): Decision => ({ index, placeKey: null, newPlace: null, time: null, charKey: null, newCharacter: null, expression: null, isDirection: false, aliasOf: null })
 
 /** What a sensible script-analyst answers for the items of the prompt. */
 function analystMock(env: VnEnv): void {
@@ -305,7 +309,8 @@ describe('a model per project', () => {
     await expect(svc.updateSettings(a.slug, { models: { writer: 'client/claude-code' } })).rejects.toThrow(/not a role/)
     await expect(svc.updateSettings(a.slug, { models: { 'art-director': 'client/nope' } })).rejects.toThrow(/no model/)
     const saved = await svc.updateSettings(a.slug, { models: { 'art-director': 'client/claude-code' } })
-    expect(saved.models).toEqual({ 'art-director': 'client/claude-code' })
+    expect(saved.settings.models).toEqual({ 'art-director': 'client/claude-code' })
+    expect(saved.warnings).toEqual([])
     expect((await svc.store.loadSettings(a.slug)).settings.models).toEqual({ 'art-director': 'client/claude-code' })
     await svc.enqueue(a.slug, 'vn.art.plan', 'all', 1)
     await svc.enqueue(b.slug, 'vn.art.plan', 'all', 1)
@@ -319,5 +324,50 @@ describe('a model per project', () => {
     // clearing the role sends the next job to the role's list again
     await svc.updateSettings(a.slug, { models: { 'art-director': null } })
     expect((await svc.store.loadSettings(a.slug)).settings.models).toEqual({})
+  }, 60_000)
+})
+
+describe('jobs that need no model do not wait for one (V18)', () => {
+  it('analyse with no items and stage with cues by hand finish while no model has room', async () => {
+    env = await makeVnEnv({ sdk: false, client: true })
+    const svc = env.engine.vn
+    const { slug } = await svc.importProject(book('linear-en'))
+    await svc.store.saveUncertain(slug, [])
+    const cues = { menuMusic: null, chapters: {}, scenes: {}, casts: {}, byHand: true }
+    await svc.store.writeJson(slug, 'cues.json', cues)
+    // the only model is on the client provider, which has no room and nobody to answer
+    env.engine.registry.providers.get('client')!.concurrency = 0
+    const run = await svc.nextRun(slug)
+    const analyse = await svc.enqueue(slug, 'vn.analyse', 'all', run)
+    const stage = await svc.enqueue(slug, 'vn.stage', 'all', run, { depends_on: [analyse] })
+    await waitFor(async () => (await env!.engine.jobs.ids('done')).includes(stage), 15_000, 'analyse and stage done')
+    expect(await env.engine.jobs.ids('done')).toEqual(expect.arrayContaining([analyse, stage]))
+    expect(env.engine.clientQueue.counts()).toEqual({ waiting: 0, leased: 0 })
+    // a job that does need the model still waits for it
+    const plan = await svc.enqueue(slug, 'vn.art.plan', 'all', run)
+    await new Promise((r) => setTimeout(r, 400))
+    expect(await env.engine.jobs.ids('done')).not.toContain(plan)
+    expect(await env.engine.jobs.ids('queued')).toContain(plan)
+  }, 60_000)
+})
+
+describe('a project model that is not used says why (V12)', () => {
+  it('the job log names the reason and the job runs on the role list', async () => {
+    env = await makeVnEnv({ sdk: false, mixed: true })
+    const svc = env.engine.vn
+    const { slug } = await svc.importProject(book('linear-en'))
+    await svc.reconcileAssets(slug)
+    const client = env.engine.registry.providers.get('client')!
+    client.available = false
+    client.unavailableReason = 'no key (set CLIENT_KEY or run: npm run key:set CLIENT_KEY)'
+    const saved = await svc.updateSettings(slug, { models: { 'art-director': 'client/claude-code' } })
+    expect(saved.warnings[0]).toMatch(/provider client is not available/)
+    const id = await svc.enqueue(slug, 'vn.art.plan', 'all', 1)
+    await waitFor(async () => (await env!.engine.jobs.ids('done')).includes(id), 20_000, 'art plan done')
+    await env.engine.logs.flush()
+    const log = await readFile(path.join(env.dir, 'logs', 'agents', 'art-director-test.md'), 'utf8')
+    expect(log).toContain('first model: loc/m1')
+    expect(log).toContain('- project model client/claude-code not used: provider client is not available (no key (set CLIENT_KEY')
+    expect(env.engine.clientQueue.counts()).toEqual({ waiting: 0, leased: 0 })
   }, 60_000)
 })

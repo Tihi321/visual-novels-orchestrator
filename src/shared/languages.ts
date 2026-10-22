@@ -1,3 +1,4 @@
+import { UI_STRINGS } from './ui-strings'
 import type { Lang } from './vn'
 
 /**
@@ -5,7 +6,8 @@ import type { Lang } from './vn'
  * Translator ones) and a registry that `config/languages.md` adds to or overrides.
  */
 
-export type LanguageScript = 'latin' | 'cyrillic' | 'greek' | 'arabic' | 'hebrew' | 'devanagari' | 'han' | 'kana' | 'hangul' | 'thai' | 'other'
+export const LANGUAGE_SCRIPTS = ['latin', 'cyrillic', 'greek', 'arabic', 'hebrew', 'devanagari', 'han', 'kana', 'hangul', 'thai', 'other'] as const
+export type LanguageScript = (typeof LANGUAGE_SCRIPTS)[number]
 
 export interface LanguageInfo {
   /** Lowercase code such as `en`, `hr` or `pt-br`; the file name of its edition. */
@@ -20,65 +22,16 @@ export interface LanguageInfo {
   script: LanguageScript
   /** VibeTTS Supertonic can read it. */
   supertonic?: boolean
-  /** The Ren'Py template's UI strings in this language (`old` -> `new`); without it the menus stay in English. */
+  /** The Ren'Py template's UI strings in this language (`old` -> `new`): the built-in table (`ui-strings.ts`), with the `ui` of `config/languages.md` over it. Without it the menus stay in English. */
   ui?: Record<string, string>
+  /** A font with the glyphs of the language: an absolute path, or a file name in `<data>/fonts/` (`font` in `config/languages.md`). */
+  font?: string
+  /** The bold face of `font`. Without it the regular face is used for bold text. */
+  fontBold?: string
 }
 
 /** The languages that books and voice settings could use before the table existed. */
 export const LEGACY_LANGS = ['en', 'hr']
-
-const HR_UI: Record<string, string> = {
-  Language: 'Jezik',
-  'The End': 'Kraj',
-  'Start again': 'Počni ispočetka',
-  'Back to main menu': 'Natrag na glavni izbornik',
-  Start: 'Započni',
-  Load: 'Učitaj',
-  Save: 'Spremi',
-  Preferences: 'Postavke',
-  Prefs: 'Postavke',
-  About: 'O igri',
-  Help: 'Pomoć',
-  Quit: 'Izlaz',
-  History: 'Povijest',
-  Skip: 'Preskoči',
-  Skipping: 'Preskakanje',
-  Auto: 'Automatski',
-  'Q.Save': 'Br.spremi',
-  'Q.Load': 'Br.učitaj',
-  Return: 'Povratak',
-  Back: 'Natrag',
-  Menu: 'Izbornik',
-  'Main Menu': 'Glavni izbornik',
-  Window: 'Prozor',
-  Fullscreen: 'Cijeli zaslon',
-  Display: 'Prikaz',
-  'Unseen Text': 'Neviđeni tekst',
-  'After Choices': 'Nakon izbora',
-  Transitions: 'Prijelazi',
-  'Text Speed': 'Brzina teksta',
-  'Auto-Forward Time': 'Vrijeme automatskog prelaska',
-  'Music Volume': 'Glasnoća glazbe',
-  'Sound Volume': 'Glasnoća zvukova',
-  'Voice Volume': 'Glasnoća glasa',
-  'Mute All': 'Utišaj sve',
-  Yes: 'Da',
-  No: 'Ne',
-  'empty slot': 'prazno mjesto',
-  'Automatic saves': 'Automatska spremanja',
-  'Quick saves': 'Brza spremanja',
-  'Page {}': 'Stranica {}',
-  'The dialogue history is empty.': 'Povijest dijaloga je prazna.',
-  'Are you sure?': 'Jeste li sigurni?',
-  'Are you sure you want to quit?': 'Jeste li sigurni da želite izaći?',
-  'Are you sure you want to delete this save?': 'Jeste li sigurni da želite izbrisati ovo spremanje?',
-  'Are you sure you want to overwrite your save?': 'Jeste li sigurni da želite prepisati svoje spremanje?',
-  'Loading will lose unsaved progress.\\nAre you sure you want to do this?': 'Učitavanje će izgubiti nespremljeni napredak.\\nJeste li sigurni da to želite?',
-  'Are you sure you want to return to the main menu?\\nThis will lose unsaved progress.':
-    'Jeste li sigurni da se želite vratiti u glavni izbornik?\\nNespremljeni napredak će se izgubiti.',
-  'Are you sure you want to begin skipping?': 'Jeste li sigurni da želite početi preskakati?',
-  'Are you sure you want to skip to the next choice?': 'Jeste li sigurni da želite preskočiti do sljedećeg izbora?'
-}
 
 type Row = [code: string, name: string, native: string, script: LanguageScript, flags: string]
 // flags: s = Supertonic reads it, r = right to left
@@ -126,7 +79,8 @@ export const BUILTIN_LANGUAGES: readonly LanguageInfo[] = ROWS.map(([code, name,
   const info: LanguageInfo = { code, name, native, renpy: name.toLowerCase(), script }
   if (flags.includes('s')) info.supertonic = true
   if (flags.includes('r')) info.rtl = true
-  if (code === 'hr') info.ui = HR_UI
+  const ui = UI_STRINGS[code]
+  if (ui) info.ui = { ...ui }
   return info
 })
 
@@ -144,10 +98,19 @@ const renpyId = (name: string): string => name.toLowerCase().normalize('NFKD').r
 
 export type LanguageInput = Pick<LanguageInfo, 'code' | 'name'> & Partial<LanguageInfo>
 
-/** Adds languages, or replaces the ones with the same code. A missing `renpy` comes from the name, a missing `script` is `other`. */
+/**
+ * Adds languages. An entry for a code that exists (a built-in one) is merged into it: `ui` key by key, any other field given replaces the
+ * built-in one. A new language gets `renpy` from its name when missing, and `script` `other`.
+ */
 export function registerLanguages(list: readonly LanguageInput[]): void {
   for (const l of list) {
     const code = l.code.trim().toLowerCase()
+    const base = registry.get(code)
+    const given = Object.fromEntries(Object.entries(l).filter(([, v]) => v !== undefined)) as Partial<LanguageInfo>
+    if (base) {
+      registry.set(code, { ...base, ...given, code, ui: base.ui || given.ui ? { ...base.ui, ...given.ui } : undefined })
+      continue
+    }
     registry.set(code, { ...l, code, native: l.native ?? l.name, renpy: l.renpy ?? (renpyId(l.name) || code.replace(/\W/g, '_')), script: l.script ?? 'other' })
   }
 }

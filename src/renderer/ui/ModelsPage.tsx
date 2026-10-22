@@ -255,7 +255,7 @@ export function ModelsPage() {
                 className={p.id === current?.id ? 'primary' : ''}
                 onClick={() => setProvider(p.id)}
                 data-testid={`models-provider-${p.id}`}
-                title={p.available ? undefined : p.reason}
+                title={p.available ? (p.keyFrom ? `key from ${p.keyFrom}` : undefined) : p.reason}
               >
                 <span>{p.id}</span>
                 <span className="dim">{p.available ? `${models.filter((m) => m.provider === p.id && m.shown !== false).length} ticked` : shortReason(p.reason)}</span>

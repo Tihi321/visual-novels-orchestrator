@@ -46,8 +46,8 @@ export function planTools(svc: VnService, def: ToolDef, opts: McpOptions): Tool[
       async (a) => {
         await need(a.slug)
         const run = await svc.nextRun(a.slug)
-        const art = await svc.enqueue(a.slug, TASKS.artPlan, 'all', run, { body: { force: !!a.refreshPrompts, explicit: true }, label: 'plan the art prompts' })
-        const music = await svc.enqueue(a.slug, TASKS.musicPlan, 'all', run, { depends_on: [art], body: { force: !!a.refreshPrompts }, label: 'plan the music' })
+        const art = await svc.enqueue(a.slug, TASKS.artPlan, 'all', run, { body: { force: !!a.refreshPrompts, explicit: true }, label: 'plan the art prompts', priority: 1 })
+        const music = await svc.enqueue(a.slug, TASKS.musicPlan, 'all', run, { depends_on: [art], body: { force: !!a.refreshPrompts }, label: 'plan the music', priority: 1 })
         const w = await settle(a.slug, a.wait)
         if (!w.waited) return { jobs: [art, music], ...w }
         const assets = (await svc.listAssets(a.slug)).filter((x) => !x.orphaned && x.kind !== 'voiceRef').map((x) => ({ id: x.id, kind: x.kind, prompt: x.prompt, byHand: !!x.promptByHand, engine: x.engine, size: x.size, locked: x.locked }))
@@ -61,26 +61,38 @@ export function planTools(svc: VnService, def: ToolDef, opts: McpOptions): Tool[
         slug,
         menu: z.string().nullable().optional().describe('Track id for the main menu, or null for none'),
         chapters: z.record(z.string(), z.string().nullable()).optional().describe('Chapter number -> track id, for example {"1":"music_02"}; null drops the entry (the default rotation applies)'),
+        scenes: z.record(z.string(), z.string().nullable()).optional().describe('Scene id -> track id for a scene whose mood is not its chapter\'s, for example {"ch01.s03":"music_03"}; null is silence in that scene, an empty string drops the entry. A scene whose story sets music keeps it'),
         seconds: z.record(z.string(), z.number()).optional().describe('Track id -> length in seconds (60 to 180)'),
         replace: z.boolean().optional().describe('Start from an empty plan instead of changing the current one')
       }),
       async (a) => {
         await need(a.slug)
         const tracks = await musicTracks(a.slug)
-        const patch = { menu: a.menu, chapters: a.chapters, seconds: a.seconds, replace: a.replace }
-        const changed = a.menu !== undefined || a.chapters !== undefined || a.seconds !== undefined || a.replace
+        const patch = { menu: a.menu, chapters: a.chapters, scenes: a.scenes, seconds: a.seconds, replace: a.replace }
+        const changed = a.menu !== undefined || a.chapters !== undefined || a.scenes !== undefined || a.seconds !== undefined || a.replace
         const plan: MusicPlan | null = changed ? await svc.setMusicPlan(a.slug, patch) : await svc.store.readJson<MusicPlan>(a.slug, 'music.json')
         return { plan, tracks }
       }
     ),
     def(
       'vno_set_cues',
-      'Set the stage cues of a project: the menu music, the music of each chapter, how each scene is shown (transition, pause) and where each character stands in a cast beat. Call it with only slug to read the cues (null until the stage step or this tool made them). Scene ids look like ch01.s02, cast beat ids like ch01.s02.b001 (vno_get_story). Your cues are kept by the stage step, which then does not ask the stage-director and only adds defaults for chapters, scenes and casts you left out. Build to see it.',
+      'Set the stage cues of a project: the menu music, the music of each chapter, how each scene is shown (transition, pause), the music and ambience of a scene and where each character stands in a cast beat. Call it with only slug to read the cues (null until the stage step or this tool made them). Scene ids look like ch01.s02, cast beat ids like ch01.s02.b001 (vno_get_story). Your cues are kept by the stage step, which then does not ask the stage-director and only adds defaults for chapters, scenes and casts you left out. Build to see it.',
       z.object({
         slug,
         menuMusic: z.string().nullable().optional().describe('Music track id for the main menu, or null for none'),
         chapters: z.record(z.string(), z.string().nullable()).optional().describe('Chapter number -> music track id (null: no music for that chapter)'),
-        scenes: z.record(z.string(), z.object({ transition: z.enum(['dissolve', 'fade', 'none']).optional(), pause: z.number().min(0).optional().describe('Seconds to wait after the scene is shown') })).optional().describe('Scene id -> how it is shown'),
+        scenes: z
+          .record(
+            z.string(),
+            z.object({
+              transition: z.enum(['dissolve', 'fade', 'none']).optional(),
+              pause: z.number().min(0).optional().describe('Seconds to wait after the scene is shown'),
+              music: z.string().nullable().optional().describe('A music track id for this scene (null: silence). The chapter music goes on when left out'),
+              ambience: z.string().nullable().optional().describe('An ambience key of the book (vno_sound_set) played looped from this scene (null stops it)')
+            })
+          )
+          .optional()
+          .describe('Scene id -> how it is shown, and its music and ambience'),
         casts: z.record(z.string(), z.record(z.string(), z.enum(['left', 'center', 'right']))).optional().describe('Cast beat id -> character key -> slot. Characters left out are not shown. At most three, one per slot'),
         replace: z.boolean().optional().describe('Drop the cues so far and start from the defaults')
       }),

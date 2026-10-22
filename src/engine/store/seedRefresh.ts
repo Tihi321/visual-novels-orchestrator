@@ -60,9 +60,11 @@ export interface SeedState {
   files: Record<string, string>
   /** Files you edited that have a newer seed version. */
   updateAvailable: string[]
+  /** Ids of the one-time migrations that ran (see `seedMigrations.ts`). */
+  migrations: string[]
 }
 
-export const emptySeedState = (): SeedState => ({ version: 1, files: {}, updateAvailable: [] })
+export const emptySeedState = (): SeedState => ({ version: 1, files: {}, updateAvailable: [], migrations: [] })
 
 export type SeedAction = 'copy' | 'same' | 'update' | 'keep'
 
@@ -85,14 +87,14 @@ export function planSeedFile(rel: string, seed: string, destHash: string | null,
 export async function loadSeedState(dataDir: string): Promise<SeedState> {
   try {
     const j = JSON.parse(await fs.readFile(path.join(dataDir, SEED_HASHES_FILE), 'utf8')) as Partial<SeedState>
-    return { version: 1, files: { ...(j.files ?? {}) }, updateAvailable: [...(j.updateAvailable ?? [])] }
+    return { version: 1, files: { ...(j.files ?? {}) }, updateAvailable: [...(j.updateAvailable ?? [])], migrations: [...(j.migrations ?? [])] }
   } catch {
     return emptySeedState()
   }
 }
 
 export async function saveSeedState(dataDir: string, state: SeedState): Promise<void> {
-  const sorted: SeedState = { version: 1, files: Object.fromEntries(Object.entries(state.files).sort(([a], [b]) => a.localeCompare(b))), updateAvailable: [...state.updateAvailable].sort() }
+  const sorted: SeedState = { version: 1, files: Object.fromEntries(Object.entries(state.files).sort(([a], [b]) => a.localeCompare(b))), updateAvailable: [...state.updateAvailable].sort(), migrations: [...state.migrations] }
   await atomicWrite(path.join(dataDir, SEED_HASHES_FILE), JSON.stringify(sorted, null, 2) + '\n')
 }
 

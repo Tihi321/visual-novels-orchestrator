@@ -1,7 +1,8 @@
 import { z } from 'zod'
-import { CANONICAL_EXPRESSIONS, langSchema, vnBookSchema } from '../../shared/vn'
+import { CANONICAL_EXPRESSIONS, EXPRESSION_RE, langSchema, vnBookSchema } from '../../shared/vn'
 import type { Edition, Lang, VnBeat, VnBook, VnChapter, VnScene } from '../../shared/vn'
-import { mapExpression } from './expressions'
+import { aliasIndex } from './aliases'
+import { expressionsOf, mapExpression } from './expressions'
 import { backgroundId, beatId, normText, sceneId, slugKey } from './ids'
 import { DEFAULT_ENDING } from './outline'
 
@@ -27,7 +28,10 @@ export const beatInputSchema = z.object({
     .describe('For a cast beat: who is on screen from here on (character keys or names, or { charKey, look }). An empty list clears the stage'),
   speaker: z.string().optional().describe('For a line: a character key or name (an unknown name is spoken without a sprite)'),
   expression: z.string().optional().describe(`For a line: ${CANONICAL_EXPRESSIONS.join(', ')} or a free word such as grinning (mapped to the nearest; default neutral)`),
-  text: z.string().optional().describe('The words of a line or a narration')
+  text: z.string().optional().describe('The words of a line or a narration'),
+  image: z.string().nullable().optional().describe('A picture of images (its key): shown from this beat on, over the scene. null hides the picture. Goes on a beat with text, a speaker or a cast'),
+  sfx: z.string().optional().describe('A sound effect of sounds (its key), played when this beat starts'),
+  ambience: z.string().nullable().optional().describe('An ambience of sounds (its key), started looped from this beat. null stops it')
 })
 export type BeatInput = z.infer<typeof beatInputSchema>
 
@@ -36,6 +40,8 @@ export const sceneInputSchema = z.object({
   time: z.string().nullable().optional().describe('For example dawn, dusk, night. One background is made per place and time'),
   description: z.string().optional().describe('What the scene looks like, used for the background prompt'),
   breakBefore: z.boolean().optional().describe('A scene break came before this scene'),
+  music: z.string().nullable().optional().describe('The music of this scene: a track id (music_02, see vno_asset_list kind music). null: silence. Left out: the chapter music goes on'),
+  ambience: z.string().nullable().optional().describe('An ambience (a key of sounds) for this scene, looped. null stops it. Left out: what plays goes on'),
   beats: z.array(beatInputSchema).default([])
 })
 export type SceneInput = z.infer<typeof sceneInputSchema>
@@ -56,7 +62,20 @@ const characterInputSchema = z.object({
   key: keyField.optional(),
   name: z.string().min(1),
   looks: z.string().optional().describe('What the character looks like (hair, clothes, colours): the character sheet prompt is made from it'),
-  voice: z.string().optional().describe('How the character sounds (a note)')
+  voice: z.string().optional().describe('How the character sounds (a note)'),
+  expressions: z.array(z.string()).optional().describe('Expressions of this character beyond the book set (for example smug): each gets a sprite. Lowercase letters and digits, at most 24'),
+  aliases: z.array(z.string().min(1)).optional().describe('Other names the story calls the character by ("the bald man"). A line spoken under one shows that name in the game, so the reader is not told the real name early')
+})
+const imageInputSchema = z.object({
+  key: keyField.optional(),
+  description: z.string().min(1).describe('What the picture shows: the prompt is made from it'),
+  display: z.enum(['full', 'insert']).default('full').describe('full: a CG over the whole scene. insert: an object or a document shown small in the middle'),
+  characters: z.array(z.string()).optional().describe('Character keys in the picture (at most 3 are references: their sheets are used)')
+})
+const soundInputSchema = z.object({
+  key: keyField.optional(),
+  kind: z.enum(['sfx', 'ambience']).describe('sfx: played once. ambience: looped until stopped'),
+  description: z.string().min(1).describe('What it sounds like: the prompt is made from it')
 })
 const placeInputSchema = z.object({ key: keyField.optional(), name: z.string().min(1), looks: z.string().optional().describe('What the place looks like') })
 
@@ -72,6 +91,9 @@ export const storyInputSchema = z.object({
   coverBrief: z.string().optional().describe('What the cover shows'),
   characters: z.array(characterInputSchema).default([]),
   places: z.array(placeInputSchema).default([]),
+  expressions: z.array(z.string()).optional().describe('The expression set of the book (default: neutral, happy, sad, angry, surprised, worried, scared, thinking). Must include neutral. Each character gets a sprite for each word it uses'),
+  images: z.array(imageInputSchema).default([]).describe('CGs and inserts the beats show (image: <key>)'),
+  sounds: z.array(soundInputSchema).default([]).describe('Sound effects and ambiences the beats play (sfx, ambience: <key>)'),
   chapters: z.array(chapterInputSchema).min(1)
 })
 export type StoryInput = z.infer<typeof storyInputSchema>
@@ -81,14 +103,30 @@ export type StoryInput = z.infer<typeof storyInputSchema>
 interface Ctx {
   characters: VnBook['characters']
   places: VnBook['places']
+  /** The book's expression set (default: the standard eight). */
+  expressions?: string[]
 }
 
-/** The character a key or a name points to. */
+/** The cues a beat input carries, in a book's terms: catalogue keys (a `cg_`, `sfx_` or `amb_` prefix is allowed). */
+function cuesOf(input: BeatInput): Pick<VnBeat, 'image' | 'sfx' | 'ambience'> {
+  return {
+    ...(input.image !== undefined ? { image: input.image === null ? null : input.image.trim().replace(/^cg_/, '') } : {}),
+    ...(input.sfx !== undefined ? { sfx: input.sfx.trim().replace(/^sfx_/, '') } : {}),
+    ...(input.ambience !== undefined ? { ambience: input.ambience === null ? null : input.ambience.trim().replace(/^amb_/, '') } : {})
+  }
+}
+
+/** The character a key, a name or an alias points to. */
 function findChar(chars: Ctx['characters'], text: string): Ctx['characters'][number] | undefined {
   const t = text.trim()
   const n = normText(t)
-  return chars.find((c) => c.key === t) ?? chars.find((c) => normText(c.name) === n) ?? chars.find((c) => c.key === slugKey(t))
+  return (
+    chars.find((c) => c.key === t) ?? chars.find((c) => normText(c.name) === n) ?? chars.find((c) => c.key === slugKey(t)) ?? chars.find((c) => (c.aliases ?? []).some((a) => normText(a) === n))
+  )
 }
+
+/** The speaker label of a line spoken by `who` as `text`: an alias keeps its own words (the game shows them), anything else is the character's name. */
+const speakerLabelFor = (who: Ctx['characters'][number] | undefined, text: string): string => (who && aliasIndex(who, text) > 0 ? text.trim() : (who?.name ?? text.trim()))
 
 /** The place a key or a name points to. */
 function findPlace(places: Ctx['places'], text: string): Ctx['places'][number] | undefined {
@@ -108,6 +146,10 @@ function freeKey(wanted: string, taken: string[]): string {
 }
 
 function makeBeat(ctx: Ctx, id: string, input: BeatInput): VnBeat {
+  const cues = cuesOf(input)
+  if (Object.keys(cues).length && input.type === undefined && input.cast === undefined && input.speaker === undefined && input.text === undefined) {
+    throw new Error(`beat ${id}: an image, sfx or ambience goes on a beat with text, a speaker or a cast; it cannot stand alone`)
+  }
   const type = input.type ?? (input.cast ? 'cast' : input.speaker !== undefined ? 'line' : 'narration')
   if (type === 'cast') {
     const cast = (input.cast ?? []).map((c) => {
@@ -116,22 +158,23 @@ function makeBeat(ctx: Ctx, id: string, input: BeatInput): VnBeat {
       if (!raw.trim()) throw new Error(`beat ${id}: a cast entry needs a character key or name`)
       return { charKey: findChar(ctx.characters, raw)?.key ?? raw.trim(), ...(look ? { look } : {}) }
     })
-    return { id, type: 'cast', cast }
+    return { id, type: 'cast', cast, ...cues }
   }
   if (input.text === undefined || !input.text.trim()) throw new Error(`beat ${id}: a ${type} needs text`)
-  if (type === 'narration') return { id, type: 'narration', text: input.text }
+  if (type === 'narration') return { id, type: 'narration', text: input.text, ...cues }
   const label = (input.speaker ?? '').trim()
   if (!label) throw new Error(`beat ${id}: a line needs a speaker (a character key or name)`)
   const who = findChar(ctx.characters, label)
-  const mapped = mapExpression(input.expression ?? '')
+  const mapped = mapExpression(input.expression ?? '', expressionsOf({ expressions: ctx.expressions }, who))
   return {
     id,
     type: 'line',
     speakerKey: who?.key ?? null,
-    speakerLabel: who?.name ?? label,
+    speakerLabel: speakerLabelFor(who, label),
     expression: mapped.expression,
     ...(mapped.rawExpression ? { rawExpression: mapped.rawExpression } : {}),
-    text: input.text
+    text: input.text,
+    ...cues
   }
 }
 
@@ -147,7 +190,9 @@ function makeScene(ctx: Ctx, id: string, input: SceneInput): VnScene {
     backgroundId: backgroundId(place?.key ?? null, place?.name ?? placeText, time),
     description: input.description?.trim() ?? '',
     beats: input.beats.map((b, i) => makeBeat(ctx, beatId(id, i + 1), b)),
-    breakBefore: input.breakBefore ?? false
+    breakBefore: input.breakBefore ?? false,
+    ...(input.music !== undefined ? { music: input.music === null ? null : input.music.trim() } : {}),
+    ...(input.ambience !== undefined ? { ambience: input.ambience === null ? null : input.ambience.trim().replace(/^amb_/, '') } : {})
   }
 }
 
@@ -171,6 +216,24 @@ function makeKeyed<T extends { key?: string; name: string; looks?: string }>(ite
     if (!KEY_RE.test(key)) throw new Error(`${what} key "${key}" must be lowercase letters, digits and underscores, starting with a letter`)
     if (out.some((o) => o.key === key)) throw new Error(`two ${what}s have the key "${key}": give one of them another key`)
     out.push({ key, name: it.name, looks: it.looks?.trim() ?? '' })
+  }
+  return out
+}
+
+/** The key of a catalogue entry made from its description: its first four content words (see `cueKey` in script.ts). */
+const cueKeyOf = (description: string): string => {
+  const stop = new Set(['the', 'a', 'an', 'of', 'in', 'at', 'on', 'to', 'and', 'with', 'by', 'for', 'from'])
+  return slugKey(normText(description).split(' ').filter((w) => w.length > 1 && !stop.has(w)).slice(0, 4).join(' ') || description)
+}
+
+/** A catalogue (images or sounds) from the input: keys given or made from the descriptions, valid and unique (per `group`, for sounds the kind). */
+function makeCatalogue<T extends { key?: string; description: string }>(items: T[], what: string, keyOf: (item: T) => string, group: (item: T) => string = () => ''): (T & { key: string })[] {
+  const out: (T & { key: string })[] = []
+  for (const it of items) {
+    const key = keyOf(it)
+    if (!KEY_RE.test(key)) throw new Error(`${what} key "${key}" must be lowercase letters, digits and underscores, starting with a letter`)
+    if (out.some((o) => o.key === key && group(o) === group(it))) throw new Error(`two ${what}s have the key "${key}": give one of them another key`)
+    out.push({ ...it, key })
   }
   return out
 }
@@ -204,9 +267,15 @@ const joinProblems = (what: string, errors: string[]) => `${what}:\n${errors.map
 
 /** Builds a book from the input. Throws with every problem when it is not valid (see `validateBook`). */
 export function buildBook(input: StoryInput, o: { slug: string; lang: Lang }): { book: VnBook; warnings: string[] } {
-  const characters = makeKeyed(input.characters, 'character').map((c, i) => ({ ...c, ...(input.characters[i]!.voice ? { voice: input.characters[i]!.voice } : {}) }))
+  const characters = makeKeyed(input.characters, 'character').map((c, i) => {
+    const aliases = [...new Set((input.characters[i]!.aliases ?? []).map((a) => a.trim()).filter((a) => a && normText(a) !== normText(c.name)))]
+    const own = [...new Set(input.characters[i]!.expressions ?? [])]
+    return { ...c, ...(input.characters[i]!.voice ? { voice: input.characters[i]!.voice } : {}), ...(aliases.length ? { aliases } : {}), ...(own.length ? { expressions: own } : {}) }
+  })
   const places = makeKeyed(input.places, 'place')
-  const ctx: Ctx = { characters, places }
+  const images = makeCatalogue(input.images, 'image', (i) => i.key ?? cueKeyOf(i.description)).map((i, n) => ({ key: i.key, description: i.description.trim(), display: input.images[n]!.display, ...(input.images[n]!.characters?.length ? { characters: input.images[n]!.characters } : {}) }))
+  const sounds = makeCatalogue(input.sounds, 'sound', (s) => s.key ?? cueKeyOf(s.description), (s) => s.kind).map((s, n) => ({ key: s.key, kind: input.sounds[n]!.kind, description: s.description.trim() }))
+  const ctx: Ctx = { characters, places, expressions: input.expressions }
   const ns = input.chapters.map((c, i) => c.n ?? i + 1)
   const chapters = input.chapters.map((c, i) => makeChapter(ctx, ns[i]!, c))
   const kind: VnBook['kind'] = chapters.some((c) => c.choices.length) ? 'choice' : 'linear'
@@ -222,6 +291,9 @@ export function buildBook(input: StoryInput, o: { slug: string; lang: Lang }): {
     style: input.style?.trim() ?? '',
     characters,
     places,
+    ...(input.expressions ? { expressions: [...new Set(input.expressions)] } : {}),
+    ...(images.length ? { images } : {}),
+    ...(sounds.length ? { sounds } : {}),
     ...(input.coverBrief?.trim() ? { coverBrief: input.coverBrief.trim() } : {}),
     chapters,
     warnings: []
@@ -251,6 +323,23 @@ export function validateBook(book: VnBook): { errors: string[]; warnings: string
   const chars = new Set(book.characters.map((c) => c.key))
   const places = new Set(book.places.map((p) => p.key))
   const chapterNs = new Set(book.chapters.map((c) => c.n))
+  // expression sets: the book's (default: the standard eight) must have neutral; a character may add words
+  const bookSet = book.expressions ?? [...CANONICAL_EXPRESSIONS]
+  if (!bookSet.includes('neutral')) errors.push('the expression set of the book must include neutral')
+  for (const e of [...bookSet, ...book.characters.flatMap((c) => c.expressions ?? [])]) if (!EXPRESSION_RE.test(e)) errors.push(`expression "${e}" must be lowercase letters and digits, starting with a letter, at most 24 characters (no underscore)`)
+  // the catalogues of pictures and sounds, and the cues that name them
+  const images = new Set((book.images ?? []).map((i) => i.key))
+  const sfx = new Set((book.sounds ?? []).filter((s) => s.kind === 'sfx').map((s) => s.key))
+  const ambiences = new Set((book.sounds ?? []).filter((s) => s.kind === 'ambience').map((s) => s.key))
+  dupes('image key', (book.images ?? []).map((i) => i.key))
+  dupes('sfx key', [...(book.sounds ?? [])].filter((s) => s.kind === 'sfx').map((s) => s.key))
+  dupes('ambience key', [...(book.sounds ?? [])].filter((s) => s.kind === 'ambience').map((s) => s.key))
+  for (const i of book.images ?? []) {
+    if (!KEY_RE.test(i.key)) errors.push(`image key "${i.key}" must be lowercase letters, digits and underscores, starting with a letter`)
+    for (const c of i.characters ?? []) if (!chars.has(c)) errors.push(`image "${i.key}": character "${c}" is not a character`)
+  }
+  for (const s of book.sounds ?? []) if (!KEY_RE.test(s.key)) errors.push(`sound key "${s.key}" must be lowercase letters, digits and underscores, starting with a letter`)
+  const known = (what: string, keys: Set<string>) => (keys.size ? `known ${what}: ${[...keys].join(', ')}` : `the book has no ${what}`)
   const unknownSpeakers = new Set<string>()
   let unplaced = 0
   for (const ch of book.chapters) {
@@ -259,13 +348,20 @@ export function validateBook(book: VnBook): { errors: string[]; warnings: string
     for (const s of ch.scenes) {
       if (s.placeKey && !places.has(s.placeKey)) errors.push(`${s.id}: place "${s.placeKey}" is not in places`)
       if (!s.placeKey) unplaced++
+      if (typeof s.music === 'string' && !/^music_\d{2,}$/.test(s.music)) errors.push(`${s.id}: music "${s.music}" is not a track id (music_01 ...; null is silence)`)
+      if (s.ambience && !ambiences.has(s.ambience)) errors.push(`${s.id}: ambience "${s.ambience}" is not in sounds (${known('ambiences', ambiences)})`)
       if (!s.beats.length) warnings.push(`${s.id} has no beats`)
       for (const b of s.beats) {
+        if (b.image && !images.has(b.image)) errors.push(`${b.id}: image "${b.image}" is not in images (${known('images', images)})`)
+        if (b.sfx && !sfx.has(b.sfx)) errors.push(`${b.id}: sfx "${b.sfx}" is not in sounds as a sound effect (${known('sound effects', sfx)})`)
+        if (b.ambience && !ambiences.has(b.ambience)) errors.push(`${b.id}: ambience "${b.ambience}" is not in sounds as an ambience (${known('ambiences', ambiences)})`)
         if (b.type === 'cast') {
           for (const c of b.cast) if (!chars.has(c.charKey)) errors.push(`${b.id}: cast member "${c.charKey}" is not a character (add it to characters first)`)
         } else if (b.type === 'line') {
           if (b.speakerKey && !chars.has(b.speakerKey)) errors.push(`${b.id}: speaker "${b.speakerKey}" is not a character`)
           if (!b.speakerKey) unknownSpeakers.add(b.speakerLabel)
+          const own = expressionsOf(book, book.characters.find((c) => c.key === b.speakerKey))
+          if (!own.includes(b.expression)) errors.push(`${b.id}: expression "${b.expression}" is not in the expression set of ${b.speakerKey ?? 'the book'} (${own.join(', ')})`)
         }
       }
     }
@@ -306,7 +402,14 @@ export function syncEdition(ed: Edition, book: VnBook): Edition {
   const pick = <T>(rec: Record<string, T>, keep: (k: string) => boolean): Record<string, T> => Object.fromEntries(Object.entries(rec).filter(([k]) => keep(k)))
   const chapter = (k: string) => book.chapters.find((c) => c.n === Number(k))
   const characterNames: Record<string, string> = {}
-  for (const c of book.characters) characterNames[c.key] = ed.characterNames[c.key] ?? c.name
+  for (const c of book.characters) {
+    characterNames[c.key] = ed.characterNames[c.key] ?? c.name
+    // the translated name of an alias is kept while the alias is there
+    for (const i of (c.aliases ?? []).keys()) {
+      const k = `${c.key}#${i + 1}`
+      if (ed.characterNames[k] !== undefined) characterNames[k] = ed.characterNames[k]
+    }
+  }
   return {
     ...ed,
     beats: pick(ed.beats, (id) => beatIds.has(id)),
@@ -332,9 +435,33 @@ export const storyOpSchema = z.discriminatedUnion('op', [
     genre: nullableText.describe('null clears it'),
     style: z.string().optional(),
     coverBrief: nullableText.describe('null clears it'),
-    format: z.string().optional()
+    format: z.string().optional(),
+    expressions: z.array(z.string()).nullable().optional().describe('The expression set of the book (must include neutral); null goes back to the standard eight. A line that uses a word the set loses is refused')
   }),
-  z.object({ op: z.literal('character.set'), key: z.string().optional().describe('An existing key to change, or the key of a new character'), name: z.string().optional(), looks: z.string().optional(), voice: z.string().optional() }),
+  z.object({
+    op: z.literal('character.set'),
+    key: z.string().optional().describe('An existing key to change, or the key of a new character'),
+    name: z.string().optional(),
+    looks: z.string().optional(),
+    voice: z.string().optional(),
+    aliases: z.array(z.string()).nullable().optional().describe('Other names the story calls the character by; replaces the list, null clears it'),
+    expressions: z.array(z.string()).nullable().optional().describe('Expressions of this character beyond the book set; replaces the list, null clears it')
+  }),
+  z.object({
+    op: z.literal('image.set'),
+    key: z.string().describe('An existing key to change, or the key of a new picture'),
+    description: z.string().optional().describe('What the picture shows (needed for a new one)'),
+    display: z.enum(['full', 'insert']).optional(),
+    characters: z.array(z.string()).nullable().optional().describe('Character keys in the picture; replaces the list, null clears it')
+  }),
+  z.object({ op: z.literal('image.remove'), key: z.string(), force: z.boolean().optional().describe('Also clear the image cues of the beats that show it') }),
+  z.object({
+    op: z.literal('sound.set'),
+    key: z.string().describe('An existing key to change, or the key of a new sound'),
+    kind: z.enum(['sfx', 'ambience']).optional().describe('Needed for a new sound, and to say which one when a sfx and an ambience share the key'),
+    description: z.string().optional().describe('What it sounds like (needed for a new one)')
+  }),
+  z.object({ op: z.literal('sound.remove'), key: z.string(), kind: z.enum(['sfx', 'ambience']).optional(), force: z.boolean().optional().describe('Also clear the cues that play it') }),
   z.object({ op: z.literal('character.remove'), key: z.string(), force: z.boolean().optional().describe('Also remove its cast entries and make its lines speakerless') }),
   z.object({ op: z.literal('place.set'), key: z.string().optional().describe('An existing key to change, or the key of a new place'), name: z.string().optional(), looks: z.string().optional() }),
   z.object({ op: z.literal('place.remove'), key: z.string(), force: z.boolean().optional().describe('The scenes keep the place text but lose the place') }),
@@ -355,7 +482,9 @@ export const storyOpSchema = z.discriminatedUnion('op', [
     place: z.string().optional().describe('A place key or name (the background follows)'),
     time: z.string().nullable().optional().describe('For example dusk; null clears it (the background follows)'),
     description: z.string().optional(),
-    breakBefore: z.boolean().optional()
+    breakBefore: z.boolean().optional(),
+    music: z.string().nullable().optional().describe('A track id (music_02), "none" for silence in this scene, null to remove the setting (the chapter music goes on)'),
+    ambience: z.string().nullable().optional().describe('An ambience key, "none" to stop it in this scene, null to remove the setting')
   }),
   z.object({ op: z.literal('scene.remove'), sceneId: z.string() }),
   z.object({
@@ -371,13 +500,16 @@ export const storyOpSchema = z.discriminatedUnion('op', [
     text: z.string().optional().describe('Line or narration'),
     speaker: z.string().optional().describe('Line: a character key or name'),
     expression: z.string().optional().describe('Line'),
-    cast: beatInputSchema.shape.cast.describe('Cast beat: the new list of who is on screen')
+    cast: beatInputSchema.shape.cast.describe('Cast beat: the new list of who is on screen'),
+    image: z.string().nullable().optional().describe('A picture key shown from this beat, "none" to hide the picture here, null to clear the cue'),
+    sfx: z.string().nullable().optional().describe('A sound effect key played when the beat starts; null clears it'),
+    ambience: z.string().nullable().optional().describe('An ambience key started here, "none" to stop it, null to clear the cue')
   }),
   z.object({ op: z.literal('beat.remove'), beatIds: z.array(z.string()).min(1) })
 ])
 export type StoryOp = z.infer<typeof storyOpSchema>
 
-export type StoryPart = 'book' | 'characters' | 'places' | 'chapters' | 'scenes' | 'beats'
+export type StoryPart = 'book' | 'characters' | 'places' | 'images' | 'sounds' | 'chapters' | 'scenes' | 'beats'
 
 export interface Affected {
   /** Keys of the characters whose name or looks changed (or that are new): their sheet and sprites need new prompts. */
@@ -448,7 +580,7 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
   const book = structuredClone(input)
   const changed = new Set<StoryPart>()
   const created: string[] = []
-  const ctx = (): Ctx => ({ characters: book.characters, places: book.places })
+  const ctx = (): Ctx => ({ characters: book.characters, places: book.places, expressions: book.expressions })
 
   ops.forEach((op, i) => {
     try {
@@ -461,6 +593,10 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
             const v = op[k]
             if (v === null || (v !== undefined && !v.trim())) delete book[k]
             else if (v !== undefined) book[k] = v.trim()
+          }
+          if (op.expressions !== undefined) {
+            if (op.expressions === null) delete book.expressions
+            else book.expressions = [...new Set(op.expressions)]
           }
           changed.add('book')
           break
@@ -482,9 +618,11 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
               }
             })
           } else if (op.name !== undefined && op.name.trim() && op.name.trim() !== c.name) {
+            const was = { name: c.name, aliases: c.aliases }
             c.name = op.name.trim()
             eachBeat(book, (b) => {
-              if (b.type === 'line' && b.speakerKey === c!.key) b.speakerLabel = c!.name
+              // a line spoken under an alias keeps the alias
+              if (b.type === 'line' && b.speakerKey === c!.key && aliasIndex(was, b.speakerLabel) === 0) b.speakerLabel = c!.name
             })
           }
           if (op.looks !== undefined) c.looks = op.looks.trim()
@@ -492,7 +630,97 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
             if (op.voice.trim()) c.voice = op.voice.trim()
             else delete c.voice
           }
+          if (op.aliases !== undefined) {
+            const own = normText(c.name)
+            const list = [...new Set((op.aliases ?? []).map((a) => a.trim()).filter((a) => a && normText(a) !== own))]
+            if (list.length) c.aliases = list
+            else delete c.aliases
+          }
+          if (op.expressions !== undefined) {
+            const list = [...new Set(op.expressions ?? [])]
+            if (list.length) c.expressions = list
+            else delete c.expressions
+          }
           changed.add('characters')
+          break
+        }
+        case 'image.set': {
+          const key = op.key.trim().replace(/^cg_/, '')
+          if (!KEY_RE.test(key)) throw new Error(`image key "${key}" must be lowercase letters, digits and underscores, starting with a letter`)
+          const images = (book.images ??= [])
+          let img = images.find((i) => i.key === key)
+          if (!img) {
+            if (!op.description?.trim()) throw new Error(`no image "${key}": give a description to create it`)
+            img = { key, description: op.description.trim(), display: op.display ?? 'full' }
+            images.push(img)
+            created.push(`image ${key}`)
+          } else {
+            if (op.description?.trim()) img.description = op.description.trim()
+            if (op.display) img.display = op.display
+          }
+          if (op.characters !== undefined) {
+            const list = [...new Set(op.characters ?? [])]
+            if (list.length) img.characters = list
+            else delete img.characters
+          }
+          changed.add('images')
+          break
+        }
+        case 'image.remove': {
+          const key = op.key.trim().replace(/^cg_/, '')
+          if (!book.images?.some((i) => i.key === key)) throw new Error(`no image "${key}"`)
+          let uses = 0
+          eachBeat(book, (b) => {
+            if (b.image === key) uses++
+          })
+          if (uses && !op.force) throw new Error(`image "${key}" is shown by ${uses} beat(s): clear their image first, or pass force to clear it everywhere`)
+          eachBeat(book, (b) => {
+            if (b.image === key) delete b.image
+          })
+          book.images = book.images.filter((i) => i.key !== key)
+          if (!book.images.length) delete book.images
+          changed.add('images')
+          break
+        }
+        case 'sound.set': {
+          const key = op.key.trim().replace(/^(?:sfx|amb)_/, '')
+          if (!KEY_RE.test(key)) throw new Error(`sound key "${key}" must be lowercase letters, digits and underscores, starting with a letter`)
+          const sounds = (book.sounds ??= [])
+          const same = sounds.filter((s) => s.key === key && (!op.kind || s.kind === op.kind))
+          if (same.length > 1) throw new Error(`"${key}" is both a sound effect and an ambience: say which with kind`)
+          let snd = same[0]
+          if (!snd) {
+            if (!op.kind) throw new Error(`no sound "${key}": give its kind (sfx or ambience) and a description to create it`)
+            if (!op.description?.trim()) throw new Error(`no sound "${key}": give a description to create it`)
+            snd = { key, kind: op.kind, description: op.description.trim() }
+            sounds.push(snd)
+            created.push(`${op.kind} ${key}`)
+          } else if (op.description?.trim()) snd.description = op.description.trim()
+          changed.add('sounds')
+          break
+        }
+        case 'sound.remove': {
+          const key = op.key.trim().replace(/^(?:sfx|amb)_/, '')
+          const same = (book.sounds ?? []).filter((s) => s.key === key && (!op.kind || s.kind === op.kind))
+          if (!same.length) throw new Error(`no sound "${key}"`)
+          if (same.length > 1) throw new Error(`"${key}" is both a sound effect and an ambience: say which with kind`)
+          const snd = same[0]!
+          let uses = 0
+          const plays = (b: { sfx?: string; ambience?: string | null }) => (snd.kind === 'sfx' ? b.sfx === key : b.ambience === key)
+          eachBeat(book, (b) => {
+            if (plays(b)) uses++
+          })
+          if (snd.kind === 'ambience') eachScene(book, (s) => { if (s.ambience === key) uses++ })
+          if (uses && !op.force) throw new Error(`${snd.kind} "${key}" is played by ${uses} cue(s): clear them first, or pass force to clear them everywhere`)
+          eachBeat(book, (b) => {
+            if (!plays(b)) return
+            if (snd.kind === 'sfx') delete b.sfx
+            else delete b.ambience
+          })
+          if (snd.kind === 'ambience') eachScene(book, (s) => { if (s.ambience === key) delete s.ambience })
+          book.sounds = (book.sounds ?? []).filter((s) => s !== snd)
+          if (!book.sounds.length) delete book.sounds
+          changed.add('sounds')
           break
         }
         case 'character.remove': {
@@ -593,6 +821,14 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
           else if (op.time !== undefined) scene.backgroundId = backgroundId(scene.placeKey, scene.placeText, scene.time)
           if (op.description !== undefined) scene.description = op.description.trim()
           if (op.breakBefore !== undefined) scene.breakBefore = op.breakBefore
+          if (op.music !== undefined) {
+            if (op.music === null) delete scene.music
+            else scene.music = /^none$/i.test(op.music.trim()) ? null : op.music.trim()
+          }
+          if (op.ambience !== undefined) {
+            if (op.ambience === null) delete scene.ambience
+            else scene.ambience = /^none$/i.test(op.ambience.trim()) ? null : op.ambience.trim().replace(/^amb_/, '')
+          }
           changed.add('scenes')
           break
         }
@@ -630,10 +866,10 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
             if (op.speaker !== undefined) {
               const who = findChar(book.characters, op.speaker)
               beat.speakerKey = who?.key ?? null
-              beat.speakerLabel = who?.name ?? op.speaker.trim()
+              beat.speakerLabel = speakerLabelFor(who, op.speaker)
             }
             if (op.expression !== undefined) {
-              const m = mapExpression(op.expression)
+              const m = mapExpression(op.expression, expressionsOf(book, book.characters.find((c) => c.key === beat.speakerKey)))
               beat.expression = m.expression
               if (m.rawExpression) beat.rawExpression = m.rawExpression
               else delete beat.rawExpression
@@ -642,6 +878,18 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
           if (op.cast !== undefined) {
             if (beat.type !== 'cast') throw bad('cast')
             beat.cast = (makeBeat(ctx(), beat.id, { type: 'cast', cast: op.cast }) as Extract<VnBeat, { type: 'cast' }>).cast
+          }
+          if (op.image !== undefined) {
+            if (op.image === null) delete beat.image
+            else beat.image = /^none$/i.test(op.image.trim()) ? null : op.image.trim().replace(/^cg_/, '')
+          }
+          if (op.sfx !== undefined) {
+            if (op.sfx === null) delete beat.sfx
+            else beat.sfx = op.sfx.trim().replace(/^sfx_/, '')
+          }
+          if (op.ambience !== undefined) {
+            if (op.ambience === null) delete beat.ambience
+            else beat.ambience = /^none$/i.test(op.ambience.trim()) ? null : op.ambience.trim().replace(/^amb_/, '')
           }
           changed.add('beats')
           break

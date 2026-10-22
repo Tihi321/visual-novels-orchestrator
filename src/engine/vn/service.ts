@@ -21,9 +21,11 @@ import type {
   VnCommand
 } from '../../shared/protocol'
 import { assertKnownLang } from '../../shared/languages'
-import { CANONICAL_EXPRESSIONS, CHIPTUNE_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
-import type { AssetEntry, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
-import { deriveAssets } from '../assets/derive'
+import { CHIPTUNE_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
+import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
+import { deriveAssets, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
+import { importAssetFile } from '../assets/import'
+import type { ImportOptions } from '../assets/import'
 import { lock, mergeDerived, pickVersion, resolveFile, setCustom, unlock } from '../assets/manifest'
 import { listPalettes } from '../assets/palettes'
 import { createComfyClient } from '../comfy/client'
@@ -33,7 +35,7 @@ import { ENGINES } from '../comfy/graphs'
 import { buildInventory, freeAllLanes } from '../comfy/inventory'
 import type { ModelRegistry } from '../models/registry'
 import type { ModelRouter } from '../models/router'
-import type { JobState, JobStore } from '../queue/jobs'
+import type { JobFile, JobState, JobStore } from '../queue/jobs'
 import { JOB_STATES } from '../queue/jobs'
 import { androidPreflight as runAndroidPreflight } from '../renpy/android'
 import { run as runRenpyGame, sdkExists } from '../renpy/run'
@@ -50,6 +52,7 @@ import type { SceneTransition, Slot, StageCues } from '../renpy/stage'
 import { MAX_SECONDS, MIN_SECONDS } from './agents/composer'
 import type { MusicPlan } from './agents/composer'
 import { buildEdition, importBook, textSample } from './import'
+import { expressionsOf } from './expressions'
 import { detectLanguage } from './lang'
 import { loadLanguageConfig } from './languages-config'
 import { applyStoryOps, buildBook, storySummary, syncEdition, validateBook } from './story'
@@ -63,8 +66,8 @@ import type { VnTask } from './pipeline'
 import { coverId, sheetId, spriteId, voiceRefId } from './ids'
 import { clientFor, loadVoiceConfig } from '../voice/config'
 import type { VoiceConfig } from '../voice/config'
-import { previewVoice, setVoice } from '../voice/jobs'
-import type { VoicePreview } from '../voice/jobs'
+import { importVoiceClips, previewVoice, setVoice } from '../voice/jobs'
+import type { VoiceImportResult, VoicePreview } from '../voice/jobs'
 import type { VibeTtsClient } from '../voice/vibetts'
 import { chiptuneClientFor, loadStudiosConfig, pixelClientFor, startHint, studioRepo, studioUrl, STUDIO_NAMES } from '../studios/config'
 import type { StudioId, StudiosConfig } from '../studios/config'
@@ -73,6 +76,16 @@ import type { PixelClient } from '../studios/pixel'
 import type { Watch } from '../studios/launch'
 import { openAssetInStudio } from './roundtrip'
 import type { OpenOptions, OpenResult } from './roundtrip'
+
+/** What `restylePrompts` did, by asset id. */
+export interface RestyleResult {
+  /** Prompts that got the new style words. */
+  restyled: string[]
+  /** Prompts that do not start with the old style words (written with other words): plan them again. */
+  kept: string[]
+  /** Assets that have a version already: still in the old style until they are generated again. */
+  generated: string[]
+}
 
 /** What the VN pipeline gets from the engine. */
 export interface VnDeps {
@@ -104,8 +117,15 @@ const SCENE_TRANSITIONS: SceneTransition[] = ['dissolve', 'fade', 'none']
 const SLOTS: Slot[] = ['left', 'center', 'right']
 
 /** The engine id a kind of asset is generated with, from the project settings. */
-export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings): string | null {
+export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings, refs?: string[]): string | null {
   switch (kind) {
+    case 'cg':
+      // a picture with characters is made from their sheets by the edit engine, one without by the generator
+      return refs?.length ? settings.art.editor : settings.art.generator
+    case 'ambience':
+      return settings.sound.ambienceEngine
+    case 'sfx':
+      return settings.sound.sfxEngine ?? null
     case 'background':
     case 'sheet':
     case 'cover':
@@ -256,7 +276,7 @@ export class VnService {
       await this.store.saveBook(slug, book)
       await this.store.saveEdition(slug, { ...r.edition, lang: book.primaryLang })
       await this.store.saveUncertain(slug, r.uncertain)
-      await this.store.writeJson(slug, 'import.json', { at: nowIso(), source: folder, detected: r.detected, uncertain: r.uncertain.length })
+      await this.store.writeJson(slug, 'import.json', { at: nowIso(), source: folder, detected: r.detected, uncertain: r.uncertain.length, ...(r.aliases.length ? { aliases: r.aliases } : {}) })
     })
     const preview: ImportPreview = {
       source,
@@ -360,6 +380,7 @@ export class VnService {
       const book = result.book
       const sceneIds = new Set(book.chapters.flatMap((c) => c.scenes.map((s) => s.id)))
       const castIds = new Set(book.chapters.flatMap((c) => c.scenes.flatMap((s) => s.beats.filter((b) => b.type === 'cast').map((b) => b.id))))
+      const beatIds = new Set(book.chapters.flatMap((c) => c.scenes.flatMap((s) => s.beats.map((b) => b.id))))
       const chapterNs = new Set(book.chapters.map((c) => c.n))
       const keep = <T>(rec: Record<string, T>, ok: (k: string) => boolean): Record<string, T> => Object.fromEntries(Object.entries(rec).filter(([k]) => ok(k)))
       const cues = await this.store.readJson<StageCues>(slug, 'cues.json')
@@ -368,16 +389,17 @@ export class VnService {
           ...cues,
           chapters: keep(cues.chapters ?? {}, (k) => chapterNs.has(Number(k))),
           scenes: keep(cues.scenes ?? {}, (k) => sceneIds.has(k)),
-          casts: keep(cues.casts ?? {}, (k) => castIds.has(k))
+          casts: keep(cues.casts ?? {}, (k) => castIds.has(k)),
+          ...(cues.beats ? { beats: keep(cues.beats, (k) => beatIds.has(k)) } : {})
         })
       }
       const music = await this.store.readJson<MusicPlan>(slug, 'music.json')
-      if (music) await this.store.writeJson(slug, 'music.json', { ...music, chapters: keep(music.chapters ?? {}, (k) => chapterNs.has(Number(k))) })
+      if (music) await this.store.writeJson(slug, 'music.json', { ...music, chapters: keep(music.chapters ?? {}, (k) => chapterNs.has(Number(k))), ...(music.scenes ? { scenes: keep(music.scenes, (k) => sceneIds.has(k)) } : {}) })
       return result
     })
     const { added, orphaned } = await this.reconcileAssets(slug)
     const subject = new Set([
-      ...r.affected.chars.flatMap((k) => [sheetId(k), ...CANONICAL_EXPRESSIONS.map((e) => spriteId(k, e))]),
+      ...r.affected.chars.flatMap((k) => [sheetId(k), ...expressionsOf(r.book, r.book.characters.find((c) => c.key === k)).map((e) => spriteId(k, e))]),
       ...r.affected.backgrounds,
       ...(r.affected.cover ? [coverId] : [])
     ])
@@ -506,8 +528,23 @@ export class VnService {
     }
   }
 
-  /** Merges a settings patch (theme, art, music, voice) into project.md and brings the asset list in line with it. */
-  async updateSettings(slug: string, patch: ProjectSettingsPatch): Promise<ProjectSettings> {
+  /** The project's own models per role, and whether jobs can use each now (`router.whyUnusable`). A model that is not usable is skipped: the role's list answers instead. */
+  async projectModels(slug: string): Promise<Record<string, { ref: string; usable: boolean; reason?: string }>> {
+    const { settings } = await this.store.loadSettings(slug)
+    return Object.fromEntries(
+      Object.entries(settings.models).map(([role, ref]) => {
+        const reason = this.deps.router.whyUnusable(ref, { visionOnly: role === 'art-critic' })
+        return [role, reason ? { ref, usable: false, reason } : { ref, usable: true }]
+      })
+    )
+  }
+
+  /**
+   * Merges a settings patch (theme, art, music, voice) into project.md and brings the asset list in line with it. `warnings`: a model that was
+   * saved but is not usable now (no key, server down ...), so its jobs use the role's list.
+   */
+  async updateSettings(slug: string, patch: ProjectSettingsPatch): Promise<{ settings: ProjectSettings; warnings: string[]; restyle?: RestyleResult }> {
+    const warnings: string[] = []
     const { settings: cur } = await this.store.loadSettings(slug)
     const art: Record<string, unknown> = clearNulls({ ...cur.art, ...(patch.art ?? {}) })
     // the pixel settings are merged field by field (a patch with only the dither keeps the size)
@@ -522,6 +559,8 @@ export class VnService {
         if (!m) throw new Error(`no model "${ref}" (see config/providers.md; a client model is client/claude-code, with the client provider enabled)`)
         if (m.embedding) throw new Error(`"${ref}" is an embedding model`)
         models[role] = full
+        const why = this.deps.router.whyUnusable(full, { visionOnly: role === 'art-critic' })
+        if (why) warnings.push(`${full}: ${why}; jobs of ${role} will use the role's list`)
       }
     }
     const next = projectSettingsSchema.parse({
@@ -530,13 +569,80 @@ export class VnService {
       theme: patch.theme !== undefined ? patch.theme : cur.theme,
       art,
       music: clearNulls({ ...cur.music, ...(patch.music ?? {}) }),
-      voice: { ...cur.voice, ...(patch.voice ?? {}) }
+      voice: { ...cur.voice, ...(patch.voice ?? {}) },
+      sound: clearNulls({ ...cur.sound, ...(patch.sound ?? {}) })
     })
     await this.store.saveSettings(next)
-    if (patch.art || patch.music || patch.voice) await this.reconcileAssets(slug)
+    // the style words are baked into each stored prompt: a new style prefix is swapped into the prompts that have not been generated yet
+    let restyle: RestyleResult | undefined
+    if (patch.art) {
+      const book = await this.store.loadBook(slug).catch(() => undefined)
+      if (book) {
+        const was = resolveStylePrompt(book, cur)
+        const now = resolveStylePrompt(book, next)
+        if (was !== now) restyle = await this.restylePrompts(slug, was, now)
+      }
+    }
+    if (patch.art || patch.music || patch.voice || patch.sound) await this.reconcileAssets(slug)
     if (patch.models) this.deps.kick?.()
     await this.emitProject(slug)
-    return next
+    return { settings: next, warnings, ...(restyle ? { restyle } : {}) }
+  }
+
+  /**
+   * A new style prefix: in every image prompt that has no version yet (not locked, generated, set by hand or planned) that starts with the old
+   * prefix, the old words become the new ones. Sprites have no style prefix. `kept`: prompts that do not start with the old prefix (the art-director
+   * wrote them with other words: `vno_plan {refreshPrompts: true}` writes them again). `generated`: assets that have a version already, still in
+   * the old style (`vno_asset_regen` makes them again). Queued generate jobs read the prompt when they run, so they use the new one.
+   */
+  async restylePrompts(slug: string, oldPrefix: string, newPrefix: string): Promise<RestyleResult> {
+    const result: RestyleResult = { restyled: [], kept: [], generated: [] }
+    const kinds = new Set(['background', 'sheet', 'cover'])
+    await this.store.withLock(slug, async () => {
+      const cur = await this.store.loadAssets(slug)
+      const assets = cur.assets.map((a) => {
+        if (!kinds.has(a.kind) || a.locked || a.source !== 'generated') return a
+        if (a.versions.length > 0) {
+          result.generated.push(a.id)
+          return a
+        }
+        if (!a.prompt) return a
+        const from = styleForKind(oldPrefix, a.kind)
+        if (!a.prompt.startsWith(from)) {
+          result.kept.push(a.id)
+          return a
+        }
+        result.restyled.push(a.id)
+        return { ...a, prompt: styleForKind(newPrefix, a.kind) + a.prompt.slice(from.length) }
+      })
+      if (result.restyled.length) await this.store.saveAssets(slug, { assets })
+    })
+    if (result.restyled.length) await this.emitProject(slug)
+    return result
+  }
+
+  /**
+   * Drops the queue: deletes the queued jobs of a project (or of every project) and marks the pipeline steps that were queued or running as
+   * skipped, so a later resume has nothing old to start again. Running jobs are not touched (stop them first: `vno_stop_now`).
+   */
+  async clearQueue(slug: string | null): Promise<{ dropped: number; projects: string[] }> {
+    if (slug) assertSlug(slug)
+    const ids = (await this.deps.jobs.ids('queued')).filter((id) => !slug || id.startsWith(`${slug}--`))
+    for (const id of ids) await fs.rm(this.deps.jobs.file('queued', id), { force: true })
+    const projects = slug ? [slug] : await this.store.slugs()
+    const touched: string[] = []
+    for (const s of projects) {
+      const st = await this.store.readJson<PipelineStatus>(s, 'pipeline.json').catch(() => null)
+      if (!st) continue
+      let changed = false
+      for (const [step, v] of Object.entries(st.steps) as [PipelineStep, StepStatus][]) {
+        if (v.status !== 'queued' && v.status !== 'running') continue
+        await this.setStep(s, step, 'skipped', 'dropped (vno_stop_now)')
+        changed = true
+      }
+      if (changed) touched.push(s)
+    }
+    return { dropped: ids.length, projects: touched }
   }
 
   /** Book ids of the assets the book no longer needs (kept in the manifest, never deleted). */
@@ -555,7 +661,11 @@ export class VnService {
       const book = await this.store.loadBook(slug)
       const merged = mergeDerived(await this.store.loadAssets(slug), deriveAssets(book, settings))
       const assets = merged.manifest.assets.map((a) => {
-        const engine = engineFor(a.kind, settings)
+        // a cover that is not made yet and has a portrait plan (an older project) is planned landscape now: the menu picture is 16:9
+        if (a.kind === 'cover' && a.versions.length === 0 && !a.locked && !a.promptByHand && a.source === 'generated' && ((a.size?.w === PORTRAIT.w && a.size.h === PORTRAIT.h) || /portrait composition/i.test(a.prompt))) {
+          a = { ...a, size: { ...LANDSCAPE }, prompt: a.prompt.replace(/portrait composition/gi, 'landscape composition') }
+        }
+        const engine = engineFor(a.kind, settings, a.refs)
         if (!engine || a.locked || a.source !== 'generated' || a.engine === engine) return a
         // an asset with versions keeps its engine, except music: that follows the project's music provider (chiptune or the configured ComfyUI engine)
         return a.versions.length === 0 || a.kind === 'music' ? { ...a, engine } : a
@@ -583,8 +693,11 @@ export class VnService {
     return max + 1
   }
 
-  /** Enqueues one job of the VN pipeline (idempotent by id). Returns the id. */
-  async enqueue(slug: string, task: VnTask, unit: string, run: number, o: { depends_on?: string[]; body?: object; label?: string; vision?: boolean; requested_by?: string } = {}): Promise<string> {
+  /**
+   * Enqueues one job of the VN pipeline (idempotent by id). Returns the id. `priority`: 1 for a request someone made on purpose (an MCP tool,
+   * the app), so it runs before the older jobs of the pipeline's own chain (0, the default); dependencies still decide what may start.
+   */
+  async enqueue(slug: string, task: VnTask, unit: string, run: number, o: { depends_on?: string[]; body?: object; label?: string; vision?: boolean; requested_by?: string; priority?: number } = {}): Promise<string> {
     const id = jobId(slug, task, unit, run)
     await this.deps.jobs.enqueue(
       {
@@ -597,7 +710,8 @@ export class VnService {
         depends_on: o.depends_on ?? [],
         ...(o.label ? { label: o.label } : {}),
         ...(o.vision ? { vision: true } : {}),
-        ...(o.requested_by ? { requested_by: o.requested_by } : {})
+        ...(o.requested_by ? { requested_by: o.requested_by } : {}),
+        ...(o.priority ? { priority: o.priority } : {})
       },
       o.body ? JSON.stringify(o.body) : ''
     )
@@ -624,11 +738,11 @@ export class VnService {
    * Enqueues the build, lint and summary jobs, and before them the voice and stage jobs, from `from` on. `deps` are the job
    * ids they wait for (the asset jobs). Used by the director and by the asset dispatcher.
    */
-  async enqueueTail(slug: string, run: number, from: PipelineStep, deps: string[]): Promise<string[]> {
+  async enqueueTail(slug: string, run: number, from: PipelineStep, deps: string[], priority = 0): Promise<string[]> {
     const { settings } = await this.store.loadSettings(slug)
     const ids: string[] = []
     const add = async (task: VnTask, unit: string, depends_on: string[], body?: object) => {
-      const id = await this.enqueue(slug, task, unit, run, { depends_on, body })
+      const id = await this.enqueue(slug, task, unit, run, { depends_on, body, priority })
       ids.push(id)
       const step = STEP_OF_TASK[task]
       if (step) await this.setStep(slug, step, 'queued', 'queued')
@@ -734,7 +848,7 @@ export class VnService {
       throw new Error(`${lang} is the primary language of ${slug}: an edition is another language${detected ? ` (the folder looks like ${lang}; give lang if it is another language)` : ''}`)
     }
     const run = await this.nextRun(slug)
-    const job = await this.enqueue(slug, TASKS.editionAdd, lang, run, { body: { source: folder, lang }, label: `add ${lang} edition` })
+    const job = await this.enqueue(slug, TASKS.editionAdd, lang, run, { body: { source: folder, lang }, label: `add ${lang} edition`, priority: 1 })
     return { job, lang, detected }
   }
 
@@ -762,7 +876,8 @@ export class VnService {
       const chapters = new Set(book.chapters.map((c) => String(c.n)))
       const choices = new Set(book.chapters.flatMap((c) => c.choices.map((_, i) => `${c.n}:${i}`)))
       const endings = new Set(book.chapters.filter((c) => c.ending).map((c) => String(c.n)))
-      const chars = new Set(book.characters.map((c) => c.key))
+      // a character's name, and the name of each alias under `<key>#<n>`
+      const chars = new Set(book.characters.flatMap((c) => [c.key, ...(c.aliases ?? []).map((_, i) => `${c.key}#${i + 1}`)]))
       const errors: string[] = []
       const check = (what: string, keys: string[] | undefined, known: Set<string>) => {
         const bad = (keys ?? []).filter((k) => !known.has(k))
@@ -854,17 +969,52 @@ export class VnService {
     return a
   }
 
-  /** Asks for a new version of the asset: a job that generates it with the edits, then a build. */
-  async regenerateAsset(slug: string, id: string, edits: { prompt?: string; engine?: string; seed?: number; rebuild?: boolean } = {}): Promise<string[]> {
+  /** The queued and running generate jobs of a project for these assets (by unit), from any run. */
+  async activeGenerateJobs(slug: string, units: string[]): Promise<JobFile[]> {
+    const wanted = new Set(units)
+    const out: JobFile[] = []
+    for (const state of ['queued', 'running'] as const) {
+      for (const j of await this.deps.jobs.list(state)) {
+        if (j.data.book === slug && (j.data.task === TASKS.generate || j.data.task === TASKS.draw) && j.data.unit && wanted.has(j.data.unit)) out.push(j)
+      }
+    }
+    return out
+  }
+
+  /**
+   * Asks for a new version of the asset: a job that generates it with the edits, then a build. These jobs have priority 1.
+   *
+   * A sprite is made from its character sheet, so order matters: a regenerated sheet is made before the sprite jobs that are queued for it (they
+   * are made to wait for it), and a regenerated sprite waits for a sheet job that is queued or running. Sprites already made from the old sheet
+   * are listed in `staleSprites`; with `sprites: true` they are made again after the sheet (every unlocked, generated sprite of it).
+   */
+  async regenerateAsset(slug: string, id: string, edits: { prompt?: string; engine?: string; seed?: number; rebuild?: boolean; sprites?: boolean } = {}): Promise<{ jobs: string[]; staleSprites: string[] }> {
     const entry = await this.requireAsset(slug, id)
     if (entry.kind === 'voiceRef') throw new Error('voice references are uploaded (setVoiceRef), not generated')
     const run = await this.nextRun(slug)
     const { settings } = await this.store.loadSettings(slug)
     this.assertNotHandImage(settings, entry)
-    const gen = await this.enqueue(slug, this.generateTask(settings, entry), id, run, { body: { force: true, prompt: edits.prompt, engine: edits.engine, seed: edits.seed }, label: `regenerate ${id}` })
+    const dir = this.store.dir(slug)
+    const sprites = entry.kind === 'sheet' ? (await this.store.loadAssets(slug)).assets.filter((a) => a.kind === 'sprite' && a.refs?.[0] === id) : []
+    const sheetJobs = entry.kind === 'sprite' && entry.refs?.[0] ? (await this.activeGenerateJobs(slug, [entry.refs[0]])).map((j) => j.id) : []
+    const gen = await this.enqueue(slug, this.generateTask(settings, entry), id, run, { body: { force: true, prompt: edits.prompt, engine: edits.engine, seed: edits.seed }, label: `regenerate ${id}`, depends_on: sheetJobs, priority: 1 })
     const ids = [gen]
-    if (edits.rebuild !== false) ids.push(await this.enqueue(slug, TASKS.build, `regen-${id}`, run, { depends_on: [gen] }))
-    return ids
+    const staleSprites: string[] = []
+    if (entry.kind === 'sheet') {
+      // sprite jobs already in the queue would otherwise run (oldest first) from the old sheet
+      for (const j of await this.activeGenerateJobs(slug, sprites.map((s) => s.id))) {
+        if (j.state === 'queued' && !j.data.depends_on.includes(gen)) await this.deps.jobs.update('queued', j.id, { depends_on: [...j.data.depends_on, gen] })
+      }
+      if (edits.sprites) {
+        for (const s of sprites.filter((a) => !a.locked && a.source === 'generated')) {
+          ids.push(await this.enqueue(slug, this.generateTask(settings, s), s.id, run, { body: { force: true }, label: `regenerate ${s.id}`, depends_on: [gen], priority: 1 }))
+        }
+      } else {
+        staleSprites.push(...sprites.filter((s) => resolveFile(dir, s)).map((s) => s.id))
+      }
+    }
+    if (edits.rebuild !== false) ids.push(await this.enqueue(slug, TASKS.build, `regen-${id}`, run, { depends_on: [...ids], priority: 1 }))
+    return { jobs: ids, staleSprites }
   }
 
   /** In hand-made art mode an image is never generated: it is set with vno_asset_replace. */
@@ -886,6 +1036,52 @@ export class VnService {
     return next
   }
 
+  /**
+   * Imports a file you made (or found) as the asset: an image is post-processed like a generated one (a sprite on a plain background is cut
+   * out and trimmed, a background is fitted to the screen, a pixel project gets pixel art; `process: 'none'` keeps the file as it is), music
+   * is copied. It becomes a new locked version (`custom:import`) and the original stays next to it. In hand-made art mode ComfyUI is never
+   * called for it unless BiRefNet is asked for. Rebuilds the game unless `rebuild` is false.
+   */
+  async importAsset(slug: string, id: string, file: string, opts: ImportOptions & { rebuild?: boolean } = {}): Promise<{ entry: AssetEntry; version: AssetVersion }> {
+    const source = path.resolve(file)
+    if (!existsSync(source)) throw new Error(`no such file: ${source}`)
+    await this.requireAsset(slug, id)
+    const { settings } = await this.store.loadSettings(slug)
+    const book = await this.store.loadBook(slug)
+    const res = (await loadRenpyConfig(this.dataDir)).resolution
+    const studios = await this.studios()
+    const ctx = {
+      book,
+      settings,
+      projectDir: this.store.dir(slug),
+      comfy: await this.comfy(),
+      palettesDir: dataFolders(this.dataDir).palettes,
+      pixel: studios.pixel,
+      sizes: { background: { w: res.w, h: res.h }, cover: { w: res.w, h: res.h }, spriteHeight: Math.round(res.h * 0.9) }
+    }
+    let imported: { entry: AssetEntry; version: AssetVersion } | undefined
+    await this.store.updateAsset(slug, id, async (cur) => {
+      imported = await importAssetFile(ctx, cur, source, opts)
+      return imported.entry
+    })
+    const done = imported!
+    this.log(`${slug}/${id}: version ${done.version.n} imported from ${path.basename(source)}`)
+    await this.emitAsset(slug, done.entry)
+    if (opts.rebuild !== false) await this.rebuildAfterEdit(slug)
+    return done
+  }
+
+  /** Imports voice clips you made for one language (one file for a beat, or a folder of `<beatId>.<ext>` files). The generators keep them. */
+  async importVoice(slug: string, lang: Lang, from: { beatId: string; file: string } | { folder: string }, opts: { rebuild?: boolean } = {}): Promise<VoiceImportResult> {
+    const r = await importVoiceClips(this, slug, lang, from)
+    if (r.imported.length) {
+      this.log(`${slug}: ${r.imported.length} voice clip(s) imported for ${lang}`)
+      await this.emitProject(slug)
+      if (opts.rebuild !== false) await this.rebuildAfterEdit(slug)
+    }
+    return r
+  }
+
   async pickAssetVersion(slug: string, id: string, n: number, opts: { rebuild?: boolean } = {}): Promise<AssetEntry> {
     const next = (await this.store.updateAsset(slug, id, (e) => pickVersion(e, n)))!
     await this.emitAsset(slug, next)
@@ -903,7 +1099,7 @@ export class VnService {
   async rebuildAfterEdit(slug: string): Promise<string | null> {
     const queued = await this.deps.jobs.list('queued')
     if (queued.some((j) => j.data.book === slug && j.data.task === TASKS.build)) return null
-    return this.enqueue(slug, TASKS.build, 'edit', await this.nextRun(slug), { label: 'rebuild after an asset edit' })
+    return this.enqueue(slug, TASKS.build, 'edit', await this.nextRun(slug), { label: 'rebuild after an asset edit', priority: 1 })
   }
 
   // ---- prompts, music plan and cues by hand ----
@@ -938,7 +1134,7 @@ export class VnService {
    * maps a chapter number to a track id, or null to drop the entry. `replace` starts from an empty plan instead of the current one.
    * Track ids are the project's music assets (`music_01` ...), chapter numbers the book's, lengths are clamped.
    */
-  async setMusicPlan(slug: string, patch: { menu?: string | null; chapters?: Record<string, string | null>; seconds?: Record<string, number>; replace?: boolean }): Promise<MusicPlan> {
+  async setMusicPlan(slug: string, patch: { menu?: string | null; chapters?: Record<string, string | null>; scenes?: Record<string, string | null>; seconds?: Record<string, number>; replace?: boolean }): Promise<MusicPlan> {
     const out = await this.store.withLock(slug, async () => {
       const book = await this.store.loadBook(slug)
       const tracks = new Set((await this.store.loadAssets(slug)).assets.filter((a) => a.kind === 'music').map((a) => a.id))
@@ -962,6 +1158,18 @@ export class VnService {
           plan.chapters[n] = id
         }
       }
+      // a scene's own track: null is silence in that scene, an empty string drops the entry
+      const sceneIds = new Set(book.chapters.flatMap((c) => c.scenes.map((s) => s.id)))
+      for (const [sceneId, id] of Object.entries(patch.scenes ?? {})) {
+        if (!sceneIds.has(sceneId)) throw new Error(`scenes: ${slug} has no scene "${sceneId}" (ids look like ch01.s02)`)
+        plan.scenes ??= {}
+        if (id === '') delete plan.scenes[sceneId]
+        else {
+          if (id !== null) track(id, `scene ${sceneId}`)
+          plan.scenes[sceneId] = id
+        }
+      }
+      if (plan.scenes && !Object.keys(plan.scenes).length) delete plan.scenes
       for (const [id, s] of Object.entries(patch.seconds ?? {})) {
         track(id, 'seconds')
         plan.seconds[id] = Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, Math.round(s)))
@@ -984,7 +1192,7 @@ export class VnService {
     patch: {
       menuMusic?: string | null
       chapters?: Record<string, string | null>
-      scenes?: Record<string, { transition?: SceneTransition; pause?: number }>
+      scenes?: Record<string, { transition?: SceneTransition; pause?: number; music?: string | null; ambience?: string | null }>
       casts?: Record<string, Record<string, Slot>>
       replace?: boolean
     }
@@ -1014,7 +1222,12 @@ export class VnService {
         if (cue.transition !== undefined && !SCENE_TRANSITIONS.includes(cue.transition)) throw new Error(`scenes.${id}: transition must be ${SCENE_TRANSITIONS.join(', ')}`)
         if (cue.pause !== undefined && !(cue.pause >= 0)) throw new Error(`scenes.${id}: pause must be 0 or more seconds`)
         const old = cues.scenes[id]
-        cues.scenes[id] = { transition: cue.transition ?? old?.transition ?? 'dissolve', ...(cue.pause !== undefined ? (cue.pause ? { pause: cue.pause } : {}) : old?.pause ? { pause: old.pause } : {}) }
+        if (cue.music !== undefined && cue.music !== null) track(cue.music, `scenes.${id}.music`)
+        const ambiences = (book.sounds ?? []).filter((s) => s.kind === 'ambience').map((s) => s.key)
+        if (cue.ambience !== undefined && cue.ambience !== null && !ambiences.includes(cue.ambience)) throw new Error(`scenes.${id}.ambience: "${cue.ambience}" is not an ambience of ${slug}${ambiences.length ? ` (${ambiences.join(', ')})` : ' (the book has no ambiences: vno_sound_set adds one)'}`)
+        const music = cue.music !== undefined ? { music: cue.music } : old && 'music' in old ? { music: old.music } : {}
+        const ambience = cue.ambience !== undefined ? { ambience: cue.ambience } : old && 'ambience' in old ? { ambience: old.ambience } : {}
+        cues.scenes[id] = { transition: cue.transition ?? old?.transition ?? 'dissolve', ...(cue.pause !== undefined ? (cue.pause ? { pause: cue.pause } : {}) : old?.pause ? { pause: old.pause } : {}), ...music, ...ambience }
       }
       const casts = new Map<string, Set<string>>()
       for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.type === 'cast') casts.set(b.id, new Set(b.cast.map((x) => x.charKey)))
@@ -1122,7 +1335,7 @@ export class VnService {
       this.log(`${slug}: voice is off, the voices are not planned (turn voice.enabled on in the project settings)`)
       return []
     }
-    return [await this.enqueue(slug, TASKS.voicePlan, 'plan', await this.nextRun(slug), { body: { overwrite: !!opts.overwrite, standalone: true }, label: 'plan the voices' })]
+    return [await this.enqueue(slug, TASKS.voicePlan, 'plan', await this.nextRun(slug), { body: { overwrite: !!opts.overwrite, standalone: true }, label: 'plan the voices', priority: 1 })]
   }
 
   /** Gives a speaker the voice for one language and makes its preview (a few seconds to load the model on the first call). */
@@ -1146,7 +1359,7 @@ export class VnService {
     const langs = opts.lang ? [opts.lang] : settings.voice.langs.length ? settings.voice.langs : [settings.primaryLang]
     const run = await this.nextRun(slug)
     const ids: string[] = []
-    for (const lang of langs) ids.push(await this.enqueue(slug, TASKS.voiceGenerate, lang, run, { body: { beatId: opts.beatId, limit: opts.limit } }))
+    for (const lang of langs) ids.push(await this.enqueue(slug, TASKS.voiceGenerate, lang, run, { body: { beatId: opts.beatId, limit: opts.limit }, priority: 1 }))
     return ids
   }
 
@@ -1157,15 +1370,15 @@ export class VnService {
   }
 
   async enqueueBuild(slug: string): Promise<string> {
-    return this.enqueue(slug, TASKS.build, 'now', await this.nextRun(slug), { label: 'build the game' })
+    return this.enqueue(slug, TASKS.build, 'now', await this.nextRun(slug), { label: 'build the game', priority: 1 })
   }
 
   async enqueueLint(slug: string): Promise<string> {
-    return this.enqueue(slug, TASKS.lint, 'now', await this.nextRun(slug), { label: 'lint the game' })
+    return this.enqueue(slug, TASKS.lint, 'now', await this.nextRun(slug), { label: 'lint the game', priority: 1 })
   }
 
   async enqueueAndroid(slug: string, bundle = false): Promise<string> {
-    return this.enqueue(slug, TASKS.android, 'now', await this.nextRun(slug), { body: { bundle }, label: 'build the Android package' })
+    return this.enqueue(slug, TASKS.android, 'now', await this.nextRun(slug), { body: { bundle }, label: 'build the Android package', priority: 1 })
   }
 
   async runGame(slug: string): Promise<{ pid: number | undefined }> {

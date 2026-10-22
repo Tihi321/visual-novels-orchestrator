@@ -126,15 +126,16 @@ providers:
     concurrency: 1
     discover: true
     models: []
-  # Model work done by an MCP client (Claude Code). Remove the # signs to switch it on, then set a role or an agent to
-  # client/claude-code (config/roles.md, or `model:` in agents/<agent>.md). See the "Client" section below.
-  # - id: client
-  #   kind: client
-  #   local: true
-  #   concurrency: 8
-  #   models:
-  #     - id: claude-code
-  #       vision: true            # the art-critic sends images
+  # Model work done by an MCP client (Claude Code). It is on, and harmless until a role, an agent or a project names it
+  # (client/claude-code in config/roles.md, `model:` in agents/<agent>.md, or the project's models). See the "Client" section below.
+  - id: client
+    kind: client
+    local: true
+    concurrency: 8                # how many jobs may wait for the client at once
+    models:
+      - id: claude-code
+        vision: true              # the art-critic sends images
+        context: 200000
 ---
 # Providers
 
@@ -160,7 +161,7 @@ Prices were checked 2026-10-08 from third-party listings; the DeepSeek ones were
 
 `kind: client` has no server and no key: a request waits in the engine's in-memory client task queue until an MCP client takes it (`vno_get_task`) and answers (`vno_submit_task`). It is `local: true`, so it is free, never paid and never budget-checked, and it has no timeout and is never marked down. Give it `concurrency` (8 is enough for the scheduler not to stall on `waiting-provider`) and a model such as `claude-code` (`vision: true` if the client can look at images; the art-critic needs that).
 
-- Switch it on by uncommenting the entry at the top of this file. Then use it for one project: `vno_update_settings {slug, models: {"art-director": "client/claude-code"}}` (saved as `models` in the project's `project.md`, first in that project's model lists). Or for every project: put `client/claude-code` first in a role's list in `config/roles.md`, or set one agent's `model:` in `agents/<agent>.md` (reloaded at once; a running request is asked again on the new model).
+- It is on by default (the entry above), and nothing uses it until you pick it. `context` is only recorded: nothing here sizes a prompt by it. Use it for one project: `vno_update_settings {slug, models: {"art-director": "client/claude-code"}}` (saved as `models` in the project's `project.md`, first in that project's model lists). Or for every project: put `client/claude-code` first in a role's list in `config/roles.md`, or set one agent's `model:` in `agents/<agent>.md` (reloaded at once; a running request is asked again on the new model).
 - A role left on `client` with nobody answering stalls every job of that role. Put the models back when the run is done.
 - The queue is lost when the engine restarts: the running job is asked again (a new task). See the guide (`vn-studio://guide`, "Do the model work yourself").
 

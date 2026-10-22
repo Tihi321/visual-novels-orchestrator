@@ -16,6 +16,7 @@ export function applySettingsPatch(settings: ProjectSettings, patch: ProjectSett
     theme: patch.theme !== undefined ? patch.theme : settings.theme,
     art: art as ProjectSettings['art'],
     music: dropNulls({ ...settings.music, ...patch.music }) as ProjectSettings['music'],
-    voice: { ...settings.voice, ...patch.voice }
+    voice: { ...settings.voice, ...patch.voice },
+    sound: dropNulls({ ...settings.sound, ...patch.sound }) as ProjectSettings['sound']
   }
 }

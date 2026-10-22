@@ -1,7 +1,9 @@
 import path from 'node:path'
 import type { Edition, Lang, VnBook, VnChapter, VnScene } from '../../shared/vn'
+import { aliasIndex } from '../vn/aliases'
+import { ambId, sfxId } from '../vn/ids'
 import { renpyPlainString, renpyString, renpyText, slugify } from './escape'
-import { bgImageName, pickColor, spriteImageName, type UsedImages } from './images'
+import { bgImageName, cgImageName, pickColor, spriteImageName, type UsedImages } from './images'
 import { assignSlots, type Slot, type StageCues } from './stage'
 
 /**
@@ -27,6 +29,8 @@ export interface EmitInput {
   voice?: VoiceSource
   /** Music asset id -> path inside `game/` (`audio/music_01.ogg`). Ids missing here are skipped. */
   music?: Record<string, string>
+  /** Sound asset id (`sfx_<key>`, `amb_<key>`) -> path inside `game/` (`audio/sfx_door.ogg`). A sound with no file here is skipped with a warning. */
+  sounds?: Record<string, string>
   /** Music asset id -> where the loop starts, in seconds (Chiptune Studio tracks). Those play as `"<loop S>audio/music_01.ogg"`: an intro, then a seamless loop to the end of the file. */
   musicLoops?: Record<string, number | null | undefined>
   /** A light theme needs darker character-name colours. */
@@ -99,17 +103,27 @@ interface CharacterTable {
   /** Ad hoc speakers: label -> variable. */
   extra: Map<string, string>
   known: Set<string>
+  /** Character key -> the aliases (1-based, as in `aliases`) that a line is spoken under. Each gets a `Character` of its own. */
+  aliasUsed: Map<string, Set<number>>
 }
+
+/** The used alias of a character as a variable: `mara__a1`. */
+const aliasVar = (key: string, n: number): string => `${charVar(key)}__a${n}`
 
 function collectCharacters(book: VnBook): CharacterTable {
   const known = new Set(book.characters.map((c) => c.key))
   const extra = new Map<string, string>()
+  const aliasUsed = new Map<string, Set<number>>()
   const taken = new Set<string>()
   for (const ch of book.chapters)
     for (const sc of ch.scenes)
       for (const b of sc.beats) {
         if (b.type !== 'line') continue
-        if (b.speakerKey && known.has(b.speakerKey)) continue
+        if (b.speakerKey && known.has(b.speakerKey)) {
+          const n = aliasIndex(book.characters.find((c) => c.key === b.speakerKey)!, b.speakerLabel)
+          if (n > 0) aliasUsed.set(b.speakerKey, (aliasUsed.get(b.speakerKey) ?? new Set()).add(n))
+          continue
+        }
         const label = b.speakerLabel.trim() || 'Unknown'
         if (extra.has(label)) continue
         let name = `extra_${slugify(label)}`
@@ -118,7 +132,7 @@ function collectCharacters(book: VnBook): CharacterTable {
         taken.add(name)
         extra.set(label, name)
       }
-  return { extra, known }
+  return { extra, known, aliasUsed }
 }
 
 /** The `characters.rpy` file. */
@@ -131,6 +145,11 @@ export function emitCharacters(book: VnBook, editions: Edition[], voiceOn: boole
     const tag = voiceOn ? `, voice_tag=${renpyPlainString(c.key)}` : ''
     const col = uniform ? '' : `, color="${characterColor(c.key, light)}"`
     out.push(`define ${charVar(c.key)} = Character(_(${renpyString(name)})${col}${tag})`)
+    // a line spoken under an alias shows the alias, not the name (the reader may not know it yet); same colour, voice and sprite
+    for (const n of [...(table.aliasUsed.get(c.key) ?? [])].sort((a, b) => a - b)) {
+      const alias = names[`${c.key}#${n}`]?.trim() || c.aliases![n - 1]!
+      out.push(`define ${aliasVar(c.key, n)} = Character(_(${renpyString(alias)}), kind=${charVar(c.key)})`)
+    }
   }
   for (const [label, v] of table.extra) {
     out.push(`define ${v} = Character(_(${renpyString(label)})${uniform ? '' : `, color="${characterColor(v, light)}"`})`)
@@ -157,11 +176,31 @@ interface ChapterCtx {
   music?: Record<string, string>
   musicLoops?: Record<string, number | null | undefined>
   table: CharacterTable
-  used: { bg: Set<string>; sprites: Map<string, { charKey: string; expression: string }> }
+  used: { bg: Set<string>; sprites: Map<string, { charKey: string; expression: string }>; cgs: Map<string, 'full' | 'insert'> }
+  /** The chapter's own track (a cue or the plan), set when the chapter starts. */
+  chapterTrack?: string | null
   lineMap: LineMapEntry[]
   warnings: string[]
   file: string
   labels: Record<number, string>
+  sounds?: Record<string, string>
+  /** What plays and shows now, so a cue is only emitted when it changes something. Per chapter. */
+  media: { track: string | null | undefined; ambience: string | null | undefined; cg: boolean }
+}
+
+/** Emits `play ambience` (or `stop ambience` for null) when it differs from what plays; a sound with no file is skipped with a warning. */
+function emitAmbience(w: Writer, ctx: ChapterCtx, where: string, key: string | null): void {
+  if (key === ctx.media.ambience) return
+  if (key === null) w.push('    stop ambience fadeout 1.5')
+  else {
+    const file = ctx.sounds?.[ambId(key)]
+    if (!file) {
+      ctx.warnings.push(`${where}: ambience ${key} has no file yet: skipped`)
+      return
+    }
+    w.push(`    play ambience ${renpyPlainString(file)} fadein 1.5`)
+  }
+  ctx.media.ambience = key
 }
 
 function emitScene(w: Writer, ctx: ChapterCtx, scene: VnScene): void {
@@ -188,6 +227,22 @@ function emitScene(w: Writer, ctx: ChapterCtx, scene: VnScene): void {
     if (cue.transition !== 'none') w.push('    with vn_fade')
   }
   if (cue.pause && cue.pause > 0) w.push(`    pause ${cue.pause}`)
+  ctx.media.cg = false // a `scene` statement clears a picture shown over the old one
+
+  // The music of the scene: a cue, else the story's `music`, else the chapter's goes on (back, after a scene that changed it).
+  const sceneMusic = 'music' in cue ? cue.music : scene.music
+  const wantTrack = sceneMusic !== undefined ? sceneMusic : (ctx.chapterTrack ?? undefined)
+  if (wantTrack !== undefined && wantTrack !== ctx.media.track) {
+    if (wantTrack === null) {
+      w.push('    stop music fadeout 2.0')
+      ctx.media.track = null
+    } else if (ctx.music?.[wantTrack]) {
+      w.push(`    play music ${renpyPlainString(musicFile(ctx.music[wantTrack]!, ctx.musicLoops?.[wantTrack]))} fadein 2.0 loop if_changed`)
+      ctx.media.track = wantTrack
+    } else ctx.warnings.push(`${scene.id}: music ${wantTrack} has no file yet: the music stays as it is`)
+  }
+  const sceneAmbience = 'ambience' in cue ? cue.ambience : scene.ambience
+  if (sceneAmbience !== undefined) emitAmbience(w, ctx, scene.id, sceneAmbience)
 
   // What is on screen: char key -> {expression, slot}.
   const shown = new Map<string, { expression: string; slot: Slot }>()
@@ -202,6 +257,28 @@ function emitScene(w: Writer, ctx: ChapterCtx, scene: VnScene): void {
   }
 
   scene.beats.forEach((beat, idx) => {
+    // the cues of this beat (the cues you set win over the story's): a picture, a sound effect, an ambience
+    const bc = cues.beats?.[beat.id]
+    const image = bc?.image !== undefined ? bc.image : beat.image
+    const sfx = bc?.sfx ?? beat.sfx
+    const ambience = bc?.ambience !== undefined ? bc.ambience : beat.ambience
+    if (image === null && ctx.media.cg) {
+      w.push('    hide vn_cg')
+      w.push('    with vn_dissolve')
+      ctx.media.cg = false
+    } else if (image) {
+      const display = ctx.book.images?.find((i) => i.key === image)?.display ?? 'full'
+      ctx.used.cgs.set(image, display)
+      w.push(`    show ${cgImageName(image)} as vn_cg${display === 'insert' ? ' at vn_insert' : ''} zorder 50`)
+      w.push('    with vn_dissolve')
+      ctx.media.cg = true
+    }
+    if (sfx) {
+      const file = ctx.sounds?.[sfxId(sfx)]
+      if (file) w.push(`    play sound ${renpyPlainString(file)}`)
+      else ctx.warnings.push(`${beat.id}: sound effect ${sfx} has no file yet: skipped`)
+    }
+    if (ambience !== undefined) emitAmbience(w, ctx, beat.id, ambience)
     if (beat.type === 'cast') {
       const keys = [...new Set(beat.cast.map((c) => c.charKey))].filter((k) => {
         if (ctx.table.known.has(k)) return true
@@ -243,7 +320,8 @@ function emitScene(w: Writer, ctx: ChapterCtx, scene: VnScene): void {
           w.push('    with vn_show')
         }
       }
-      const who = key && ctx.table.known.has(key) ? charVar(key) : (ctx.table.extra.get(beat.speakerLabel.trim() || 'Unknown') ?? 'narrator')
+      const alias = key && ctx.table.known.has(key) ? aliasIndex(ctx.book.characters.find((c) => c.key === key)!, beat.speakerLabel) : 0
+      const who = key && ctx.table.known.has(key) ? (alias > 0 ? aliasVar(key, alias) : charVar(key)) : (ctx.table.extra.get(beat.speakerLabel.trim() || 'Unknown') ?? 'narrator')
       emitSay(w, ctx, beat.id, `${who} `, beat.text, voice)
       return
     }
@@ -276,6 +354,8 @@ function emitChapter(ctx: ChapterCtx, ch: VnChapter, index: number): string {
   const trackId = cues.chapters[ch.n]?.music ?? null
   const track = trackId && ctx.music?.[trackId] ? musicFile(ctx.music[trackId]!, ctx.musicLoops?.[trackId]) : undefined
   if (track) w.push(`    play music ${renpyPlainString(track)} fadein 2.0 loop if_changed`)
+  ctx.chapterTrack = trackId
+  ctx.media = { track: track ? trackId : undefined, ambience: undefined, cg: false }
   if (ch.title.trim()) {
     w.push('    scene black')
     w.push('    with vn_fade')
@@ -314,7 +394,7 @@ export function emitScripts(inp: EmitInput): EmitResult {
   const lineMap: LineMapEntry[] = []
   const files: Record<string, string> = {}
   const labels: Record<number, string> = {}
-  const used = { bg: new Set<string>(), sprites: new Map<string, { charKey: string; expression: string }>() }
+  const used = { bg: new Set<string>(), sprites: new Map<string, { charKey: string; expression: string }>(), cgs: new Map<string, 'full' | 'insert'>() }
   const table = collectCharacters(book)
   const voiceOn = !!inp.voice
 
@@ -325,7 +405,7 @@ export function emitScripts(inp: EmitInput): EmitResult {
   const chapters = [...book.chapters].sort((a, b) => a.n - b.n)
   chapters.forEach((ch, i) => {
     const file = chapterFile(ch.n)
-    const ctx: ChapterCtx = { book: { ...book, chapters }, cues, voice: inp.voice, music: inp.music, musicLoops: inp.musicLoops, table, used, lineMap, warnings, file, labels }
+    const ctx: ChapterCtx = { book: { ...book, chapters }, cues, voice: inp.voice, music: inp.music, musicLoops: inp.musicLoops, sounds: inp.sounds, table, used, lineMap, warnings, file, labels, media: { track: undefined, ambience: undefined, cg: false } }
     files[file] = emitChapter(ctx, ch, i)
   })
 
@@ -342,7 +422,7 @@ export function emitScripts(inp: EmitInput): EmitResult {
   return {
     files,
     lineMap,
-    used: { backgrounds: [...used.bg], sprites: [...used.sprites.values()] },
+    used: { backgrounds: [...used.bg], sprites: [...used.sprites.values()], cgs: [...used.cgs].map(([key, display]) => ({ key, display })) },
     warnings,
     labels
   }
@@ -371,8 +451,13 @@ export function translatableStrings(book: VnBook, primaryNames: Record<string, s
     })
     if (ch.ending && ch.ending.trim()) out.push({ old: renpyText(ch.ending), pick: (e) => e.endings[ch.n], what: `chapter ${ch.n} ending` })
   }
+  const used = collectCharacters(book).aliasUsed
   for (const c of book.characters) {
     out.push({ old: renpyText(primaryNames[c.key]?.trim() || c.name), pick: (e) => e.characterNames[c.key], what: `name of ${c.key}` })
+    // the alias a line is spoken under is shown too: an edition translates it under `<key>#<n>`
+    for (const n of [...(used.get(c.key) ?? [])].sort((a, b) => a - b)) {
+      out.push({ old: renpyText(primaryNames[`${c.key}#${n}`]?.trim() || c.aliases![n - 1]!), pick: (e) => e.characterNames[`${c.key}#${n}`], what: `alias ${n} of ${c.key}` })
+    }
   }
   return out
 }

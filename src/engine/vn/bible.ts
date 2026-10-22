@@ -1,3 +1,4 @@
+import { extractAliases } from './aliases'
 import { normText, slugKey } from './ids'
 
 export interface BibleCharacter {
@@ -5,6 +6,8 @@ export interface BibleCharacter {
   name: string
   looks: string
   voice?: string
+  /** Other names the entry gives the character (`the bald man`), written in it or merged in from entries that were the same person (see `aliases.ts`). */
+  aliases?: string[]
 }
 export interface BiblePlace {
   key: string
@@ -76,7 +79,8 @@ export function parseBible(body: string): Bible {
     const v = VOICE.exec(b.text)
     const looks = (v ? b.text.slice(0, v.index) : b.text).trim()
     const voice = v ? b.text.slice(v.index + v[0].length).trim() : ''
-    return { key: uniqueKey(b.name, used), name: b.name, looks, ...(voice ? { voice } : {}) }
+    const aliases = extractAliases(b.text, b.name)
+    return { key: uniqueKey(b.name, used), name: b.name, looks, ...(voice ? { voice } : {}), ...(aliases.length ? { aliases } : {}) }
   })
   const usedPlaces = new Set<string>()
   const places = bullets(text.places).map((b): BiblePlace => ({ key: uniqueKey(b.name, usedPlaces), name: b.name, looks: b.text }))

@@ -10,6 +10,8 @@
  * afterwards, so the `{i}` tags we add are never escaped and the `{` of the author's own text always is.
  */
 
+import { asciiSlug } from '../vn/ids'
+
 interface Segment {
   text: string
   bold: boolean
@@ -142,14 +144,7 @@ export function renpyPlainString(s: string): string {
   return `"${escapeRenpy(s)}"`
 }
 
-/** Make an ASCII identifier fragment from any text (`Mr. Šarić` -> `mr_saric`). */
+/** Make an ASCII identifier fragment from any text (`Mr. Šarić` -> `mr_saric`, `Наташа` -> `natasha`). */
 export function slugify(s: string): string {
-  const out = s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/đ/gi, 'd')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-  return out || 'x'
+  return asciiSlug(s, { sep: '_', fallback: 'x' })
 }

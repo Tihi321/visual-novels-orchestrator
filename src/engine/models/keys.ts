@@ -51,9 +51,32 @@ export function deleteStoredKey(account: string, service = KEYRING_SERVICE): boo
 
 export type KeyResolver = (envName: string) => string | undefined
 
-/** The environment variable first, then the Windows credential store (account = the variable name). */
-export const resolveKey: KeyResolver = (envName) => {
-  const fromEnv = process.env[envName]
-  if (fromEnv) return fromEnv
-  return getStoredKey(envName)
+/** The credential-store services of the sibling tools, tried after `vn-studio` (off with `VNO_SHARED_KEYS=0`). */
+export const SHARED_KEY_SERVICES = ['scriptorium', 'book-translator'] as const
+
+export type StoredKeyGetter = (account: string, service?: string) => string | undefined
+
+/** Where a key came from: `the environment`, or `the <service> credential store`. Never the key itself. */
+export interface KeyHit {
+  value: string
+  from: string
 }
+
+/**
+ * The environment variable first, then the Windows credential store (account = the variable name): the `vn-studio` service, then the services of
+ * Scriptorium and Book Translator, unless `VNO_SHARED_KEYS=0`.
+ */
+export function lookupKey(envName: string, getKey: StoredKeyGetter = getStoredKey, env: NodeJS.ProcessEnv = process.env): KeyHit | undefined {
+  const fromEnv = env[envName]
+  if (fromEnv) return { value: fromEnv, from: 'the environment' }
+  const own = getKey(envName, KEYRING_SERVICE)
+  if (own) return { value: own, from: `the ${KEYRING_SERVICE} credential store` }
+  if (env.VNO_SHARED_KEYS === '0') return undefined
+  for (const service of SHARED_KEY_SERVICES) {
+    const v = getKey(envName, service)
+    if (v) return { value: v, from: `the ${service} credential store` }
+  }
+  return undefined
+}
+
+export const resolveKey = (envName: string, getKey: StoredKeyGetter = getStoredKey, env: NodeJS.ProcessEnv = process.env): string | undefined => lookupKey(envName, getKey, env)?.value

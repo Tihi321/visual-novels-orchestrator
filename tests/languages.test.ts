@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { UI_STRINGS } from '../src/shared/ui-strings'
 import { assertKnownLang, BUILTIN_LANGUAGES, isKnownLang, languageInfo, languages, registerLanguages, resetLanguages } from '../src/shared/languages'
 import { LANGS, langSchema, projectSettingsSchema } from '../src/shared/vn'
 import { detectLanguage } from '../src/engine/vn/lang'
@@ -40,6 +41,66 @@ describe('the language table', () => {
     expect(languageInfo('de')?.native).toBe('Deutsch (DE)')
     resetLanguages()
     expect(isKnownLang('pt-br')).toBe(false)
+  })
+})
+
+describe('UI strings of the built-in languages', () => {
+  const hr = Object.keys(UI_STRINGS.hr!)
+  const others = BUILTIN_LANGUAGES.filter((l) => l.code !== 'en')
+
+  it('every built-in language except English has a table, and English has none', () => {
+    expect(others).toHaveLength(36)
+    for (const l of others) expect(l.ui, l.code).toBeTruthy()
+    expect(languageInfo('en')?.ui).toBeUndefined()
+    expect(Object.keys(UI_STRINGS).sort()).toEqual(others.map((l) => l.code).sort())
+  })
+  it('each table has exactly the keys of the Croatian one, which are the template strings', () => {
+    expect(hr).toHaveLength(49)
+    for (const k of ['Language', 'The End', 'Start again', 'Back to main menu', 'Page {}']) expect(hr).toContain(k)
+    for (const l of others) expect(Object.keys(l.ui!), l.code).toEqual(hr)
+  })
+  it('keeps the placeholders and line breaks, and nothing that would break a Ren’Py string', () => {
+    const BREAK = '\\n' // a backslash and an n, as in the template source
+    for (const l of others) {
+      for (const [src, dst] of Object.entries(l.ui!)) {
+        const at = `${l.code}: ${src}`
+        expect(dst.trim(), at).not.toBe('')
+        expect(dst.includes('{}'), at).toBe(src.includes('{}'))
+        expect(dst.split(BREAK).length, at).toBe(src.split(BREAK).length)
+        expect(dst.replace('{}', '').replaceAll(BREAK, ''), at).not.toMatch(/["[\]{}%\\]/)
+      }
+    }
+  })
+  it('is written in the script of the language (checked for the non-Latin ones)', () => {
+    const sample = (code: string): string => Object.values(languageInfo(code)!.ui!).join(' ')
+    expect(sample('ru')).toMatch(/[а-яё]/i)
+    expect(sample('sr')).toMatch(/[а-шћђџљњ]/i)
+    expect(sample('el')).toMatch(/[α-ω]/i)
+    expect(sample('ja')).toMatch(/[ぁ-んァ-ン]/)
+    expect(sample('ko')).toMatch(/[가-힣]/)
+    expect(sample('zh')).toMatch(/[一-龥]/)
+    expect(sample('ar')).toMatch(/[ا-ي]/)
+    expect(sample('he')).toMatch(/[א-ת]/)
+    expect(sample('hi')).toMatch(/[अ-ह]/)
+  })
+  it('config/languages.md merges into a built-in language: ui key by key, other fields replace', () => {
+    registerLanguages([{ code: 'de', name: 'German', native: 'Deutsch (CH)', ui: { Start: 'Los' } }])
+    const de = languageInfo('de')!
+    expect(de.native).toBe('Deutsch (CH)')
+    expect(de.renpy).toBe('german')
+    expect(de.script).toBe('latin')
+    expect(de.supertonic).toBe(true)
+    expect(de.ui!.Start).toBe('Los')
+    expect(de.ui!.Load).toBe('Laden')
+    expect(Object.keys(de.ui!)).toEqual(hr)
+  })
+  it('a language entry from the config file keeps the built-in table', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vno-lang-'))
+    fs.mkdirSync(path.join(dir, 'config'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'config', 'languages.md'), '---\nkind: languages\nlanguages:\n  - code: fr\n    name: French\n    ui:\n      Quit: Fermer\n---\nbody\n')
+    await loadLanguageConfig(dir)
+    expect(languageInfo('fr')?.ui?.Quit).toBe('Fermer')
+    expect(languageInfo('fr')?.ui?.Start).toBe('Commencer')
   })
 })
 
@@ -98,10 +159,13 @@ describe('menus of the primary language', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vno-ui-'))
     expect(writeUiStrings(dir, 'hr')).toBe(true)
     expect(fs.readFileSync(path.join(dir, 'tl', 'croatian', 'ui.rpy'), 'utf8')).toContain('    new "Jezik"')
-    expect(writeUiStrings(dir, 'de')).toBe(false)
-    const de = fs.readFileSync(path.join(dir, 'tl', 'german', 'ui.rpy'), 'utf8')
-    expect(de).toContain('translate german strings:')
-    expect(de).toContain('    old "Language"\n    new "Language"')
+    registerLanguages([{ code: 'pt-br', name: 'Brazilian Portuguese' }])
+    expect(writeUiStrings(dir, 'pt-br')).toBe(false)
+    const pt = fs.readFileSync(path.join(dir, 'tl', 'brazilian_portuguese', 'ui.rpy'), 'utf8')
+    expect(pt).toContain('translate brazilian_portuguese strings:')
+    expect(pt).toContain('    old "Language"\n    new "Language"')
+    expect(writeUiStrings(dir, 'de')).toBe(true)
+    expect(fs.readFileSync(path.join(dir, 'tl', 'german', 'ui.rpy'), 'utf8')).toContain('    new "Sprache"')
   })
 })
 

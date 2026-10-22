@@ -3,12 +3,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { loadSeedState, saveSeedState, syncSeedFile } from './seedRefresh'
 import type { SeedState } from './seedRefresh'
+import { applySeedMigrations } from './seedMigrations'
 
 /** Folders created inside the data folder (see the README). */
 export const DATA_LAYOUT = [
   'config',
   'agents',
   'prompts',
+  'fonts',
   'projects',
   'jobs/queued',
   'jobs/running',
@@ -65,6 +67,8 @@ export interface InitResult {
   updated: string[]
   /** Seeded files you edited that have a newer seed version: yours are kept. */
   updateAvailable: string[]
+  /** One-time additive migrations that changed an edited config file (see `store/seedMigrations.ts`). */
+  migrated: string[]
 }
 
 async function copyTree(src: string, dest: string, root: string, result: InitResult, skipDirs: Set<string>, state: SeedState): Promise<void> {
@@ -108,12 +112,13 @@ async function copyTree(src: string, dest: string, root: string, result: InitRes
  * yours to hire and fire, and a fired starter agent doesn't come back at the next start.
  */
 export async function initDataFolder(dataDir: string, seedDir: string | undefined = findSeedDir()): Promise<InitResult> {
-  const result: InitResult = { dataDir, createdDirs: 0, copied: [], skipped: [], updated: [], updateAvailable: [] }
+  const result: InitResult = { dataDir, createdDirs: 0, copied: [], skipped: [], updated: [], updateAvailable: [], migrated: [] }
   await fs.mkdir(dataDir, { recursive: true })
   const skipDirs = new Set(existsSync(path.join(dataDir, 'agents')) ? ['agents'] : [])
   if (seedDir && existsSync(seedDir)) {
     const state = await loadSeedState(dataDir)
     await copyTree(seedDir, dataDir, dataDir, result, skipDirs, state)
+    result.migrated = await applySeedMigrations(dataDir, seedDir, state)
     await saveSeedState(dataDir, state)
     result.updateAvailable = [...state.updateAvailable].sort()
   }

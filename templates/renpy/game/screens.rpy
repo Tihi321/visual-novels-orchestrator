@@ -293,6 +293,7 @@ screen navigation():
         style_prefix "navigation"
 
         xpos gui.navigation_xpos
+        xanchor gui.navigation_xanchor
         yalign 0.5
 
         spacing gui.navigation_spacing
@@ -534,6 +535,7 @@ style game_menu_label_text:
 
 style return_button:
     xpos gui.navigation_xpos
+    xanchor gui.navigation_xanchor
     yalign 1.0
     yoffset -45
 

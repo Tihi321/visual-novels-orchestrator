@@ -541,3 +541,143 @@ describe('scheduler with a client provider', () => {
     expect(parseMd(await readFile(path.join(env.dir, 'jobs', 'done', 'j1.md'), 'utf8')).data.attempts).toBe(0)
   })
 })
+
+describe('a job parked on the client does not hold its agent (V6)', () => {
+  const clientEnv = (concurrency: number, maxParallel = 1) =>
+    makeEnv({
+      providers: [{ id: 'client', kind: 'client', local: true, concurrency, models: ['claude-code'] }],
+      roles: { writer: ['client/claude-code'] },
+      agents: [{ role: 'writer', name: 'A', maxParallel }]
+    })
+
+  it('three jobs of one agent (max_parallel 1) all park as client tasks', async () => {
+    env = await clientEnv(4)
+    registerChat(env)
+    for (const u of ['u1', 'u2', 'u3']) await env.engine.jobs.enqueue({ id: `b1--t--${u}--r0`, task: 't', role: 'writer', book: 'b1', unit: u })
+    const q = env.engine.clientQueue
+    await waitFor(() => q.counts().waiting === 3, 5000, 'three tasks wait')
+    expect(await jobsIn(env, 'running')).toHaveLength(3)
+    for (const t of q.list()) q.submit(t.id, 'answer')
+    await waitFor(async () => (await jobsIn(env!, 'done')).length === 3, 8000, 'all done')
+  })
+
+  it('a job on a real model still takes the agent: only one runs at a time', async () => {
+    env = await makeEnv({ roles: { writer: ['loc/m1'] }, agents: [{ role: 'writer', name: 'A' }] })
+    let active = 0
+    let max = 0
+    registerChat(env, 't', { before: () => (max = Math.max(max, ++active)), after: () => active-- })
+    env.mock.onAny({ text: 'slow answer', chunks: 4, chunkDelayMs: 40 })
+    for (const u of ['u1', 'u2', 'u3']) await env.engine.jobs.enqueue({ id: `b1--t--${u}--r0`, task: 't', role: 'writer', book: 'b1', unit: u })
+    await waitFor(async () => (await jobsIn(env!, 'done')).length === 3, 10000, 'all done')
+    expect(max).toBe(1)
+  })
+
+  it('the client provider concurrency caps the parked jobs', async () => {
+    env = await clientEnv(2)
+    registerChat(env)
+    for (const u of ['u1', 'u2', 'u3']) await env.engine.jobs.enqueue({ id: `b1--t--${u}--r0`, task: 't', role: 'writer', book: 'b1', unit: u })
+    const q = env.engine.clientQueue
+    await waitFor(() => q.counts().waiting === 2, 5000, 'two tasks wait')
+    await sleep(300)
+    expect(q.counts().waiting).toBe(2)
+    expect(await jobsIn(env, 'queued')).toHaveLength(1)
+    // answering one frees a slot for the third
+    q.submit(q.list()[0]!.id, 'answer')
+    await waitFor(() => q.list().some((t) => t.job.includes('u3')), 5000, 'the third parks')
+  })
+})
+
+describe('jobs that need no model do not wait for a slot (V18)', () => {
+  it('a skipModel job runs while the only provider has no capacity, and a lazy chat waits for it', async () => {
+    env = await makeEnv({
+      providers: [{ id: 'loc', local: true, concurrency: 1, models: ['m1'] }, { id: 'alt', local: true, concurrency: 4, models: ['m2'] }],
+      roles: { writer: ['loc/m1', 'alt/m2'] },
+      agents: [{ role: 'writer', name: 'A' }, { role: 'writer', name: 'B' }, { role: 'writer', name: 'C' }]
+    })
+    const order: string[] = []
+    let lazyModel: string | undefined
+    let modelAtStart: string | undefined = 'unset'
+    env.mock.onAny({ text: 'slow answer', chunks: 6, chunkDelayMs: 60 })
+    env.engine.scheduler.register('hold', async (ctx) => {
+      order.push('hold:start')
+      await ctx.chat({ messages: [{ role: 'user', content: 'x' }] })
+      order.push('hold:end')
+      return { result: 'ok' }
+    })
+    env.engine.scheduler.register(
+      'skip',
+      async () => {
+        order.push('skip:ran')
+        return { result: 'no model needed' }
+      },
+      { skipModel: async () => true }
+    )
+    env.engine.scheduler.register(
+      'lazy',
+      async (ctx) => {
+        order.push('lazy:start')
+        modelAtStart = ctx.model?.ref
+        const r = await ctx.chat({ messages: [{ role: 'user', content: 'y' }] })
+        lazyModel = r.model.ref
+        order.push('lazy:end')
+        return { result: 'ok' }
+      },
+      { skipModel: async () => true }
+    )
+    await env.engine.jobs.enqueue({ id: 'hold1', task: 'hold', role: 'writer' })
+    await waitFor(() => order.includes('hold:start'), 5000, 'hold started')
+    await env.engine.jobs.enqueue({ id: 'skip1', task: 'skip', role: 'writer' })
+    await env.engine.jobs.enqueue({ id: 'lazy1', task: 'lazy', role: 'writer' })
+    await waitFor(async () => (await jobsIn(env!, 'done')).length === 3, 10000, 'all done')
+    // the no-op job ran while hold still had the only slot of loc; the lazy job started at once but its chat waited for loc
+    expect(order.indexOf('skip:ran')).toBeLessThan(order.indexOf('hold:end'))
+    expect(order.indexOf('lazy:start')).toBeLessThan(order.indexOf('hold:end'))
+    expect(order.indexOf('lazy:end')).toBeGreaterThan(order.indexOf('hold:end'))
+    expect(modelAtStart).toBeUndefined()
+    expect(lazyModel).toBe('loc/m1') // the first candidate, not the fallback it could have had at once
+    const done = parseMd(await readFile(path.join(env.dir, 'jobs', 'done', 'lazy1.md'), 'utf8'))
+    expect(done.data).toMatchObject({ model: 'loc/m1', paid: false })
+  })
+
+  it('an error in skipModel counts as false: the job waits for its slot as usual', async () => {
+    env = await makeEnv({ roles: { writer: ['loc/m1'] }, agents: [{ role: 'writer', name: 'A' }] })
+    env.engine.scheduler.register(
+      't',
+      async (ctx) => {
+        const r = await ctx.chat({ messages: [{ role: 'user', content: 'x' }] })
+        return { result: `${ctx.model?.ref} ${r.text.length > 0}` }
+      },
+      { skipModel: async () => Promise.reject(new Error('boom')) }
+    )
+    await env.engine.jobs.enqueue({ id: 'j1', task: 't', role: 'writer' })
+    await waitFor(async () => (await jobsIn(env!, 'done')).length === 1, 5000, 'done')
+    expect(parseMd(await readFile(path.join(env.dir, 'jobs', 'done', 'j1.md'), 'utf8')).body).toContain('loc/m1 true')
+  })
+})
+
+describe('job priority (V11)', () => {
+  it('a later priority-1 job runs before an earlier priority-0 job, and dependencies still win', async () => {
+    env = await makeEnv({ roles: { writer: ['loc/m1'] }, agents: [{ role: 'writer', name: 'A' }] })
+    const order: string[] = []
+    let release: () => void = () => undefined
+    const gate = new Promise<void>((r) => (release = r))
+    env.engine.scheduler.register('gate', async () => {
+      await gate
+      return { result: 'ok' }
+    })
+    env.engine.scheduler.register('t', async (ctx) => {
+      order.push(ctx.job.id)
+      return { result: 'ok' }
+    })
+    const j = env.engine.jobs
+    await j.enqueue({ id: 'gate1', task: 'gate', role: 'writer' })
+    await waitFor(async () => (await jobsIn(env!, 'running')).length === 1, 5000, 'gate running')
+    await j.enqueue({ id: 'old0', task: 't', role: 'writer' })
+    await sleep(15)
+    await j.enqueue({ id: 'new1', task: 't', role: 'writer', priority: 1 })
+    await j.enqueue({ id: 'new1-dep', task: 't', role: 'writer', priority: 1, depends_on: ['old0'] })
+    release()
+    await waitFor(async () => (await jobsIn(env!, 'done')).length === 4, 8000, 'all done')
+    expect(order).toEqual(['new1', 'old0', 'new1-dep'])
+  })
+})

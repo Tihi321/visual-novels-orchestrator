@@ -12,13 +12,15 @@ import { pickVersion, resolveFile, setCustom } from '../assets/manifest'
 import { lanesOf } from '../comfy/client'
 import { loadCustomWorkflow } from '../comfy/custom-workflow'
 import { BudgetError, isAbortError } from '../models/types'
+import type { ChatMessage } from '../models/types'
+import type { JobFile } from '../queue/jobs'
 import type { HandlerOptions, JobContext } from '../queue/scheduler'
 import type { Scheduler } from '../queue/scheduler'
 import { buildGame } from '../renpy/build'
 import type { VoiceSource } from '../renpy/emit'
 import { androidBuild } from '../renpy/android'
 import { lint, sdkExists } from '../renpy/run'
-import { defaultCues, fillCues } from '../renpy/stage'
+import { addScenePlan, defaultCues, fillCues } from '../renpy/stage'
 import type { StageCues } from '../renpy/stage'
 import { alignEdition } from './align'
 import { planArt } from './agents/art-director'
@@ -30,16 +32,19 @@ import { planSummary } from '../studios/chip-plan'
 import { summarizeRun } from './agents/director'
 import { resolveAlignment } from './agents/edition-aligner'
 import { resolveUncertain } from './agents/script-analyst'
+import type { ExistingArt } from './agents/script-analyst'
 import { mergeChapterCues, stageChapter } from './agents/stage-director'
 import { planVoices, speakerOf } from './agents/voice-director'
 import { describeVoices, voiceLangsOf } from '../voice/catalog'
-import { generateVibeClips, planVibeVoices, readVoiceIndexIn } from '../voice/jobs'
+import { generateVibeClips, importedClipsNote, planVibeVoices, readVoiceIndexIn } from '../voice/jobs'
 import type { VoiceIndexEntry } from '../voice/jobs'
 import type { AgentCall } from './agents/common'
 import { applyAlignmentFixes, applyDecisions } from './fixes'
 import { voiceRefId } from './ids'
 import { bodyOf, isStep, Semaphore, STEP_OF_TASK, TASKS } from './pipeline'
 import type { VnTask } from './pipeline'
+import { resolveDrawMode } from '../studios/config'
+import type { StudiosConfig } from '../studios/config'
 import { dataFolders, loadComfyConfigFor, loadRenpyConfig } from './project'
 import { VnService } from './service'
 import type { VnDeps } from './service'
@@ -86,11 +91,41 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
   const call = (ctx: JobContext): AgentCall => ({ ctx, dataDir: deps.dataDir })
 
   /**
+   * For the agent jobs: a cheap look at the project's files that says this job will not ask a model this time, because its handler would return
+   * before the call (see `HandlerOptions.skipModel`). Such a job starts at once instead of waiting for a model slot, which a down server or a
+   * full client queue would hold back. Each check mirrors an early return of its handler.
+   */
+  const noModelThisTime: Partial<Record<VnTask, (slug: string, job: JobFile) => Promise<boolean>>> = {
+    [TASKS.analyse]: async (slug) => (await store.loadUncertain(slug)).length === 0,
+    [TASKS.editionAlign]: async (slug, job) => {
+      const lang = (bodyOf<{ lang: Lang }>(job.body).lang ?? job.data.unit) as Lang
+      const report = await store.loadAlignReport(slug, lang)
+      return !report || (!report.missing.length && !report.extra.length)
+    },
+    [TASKS.artPlan]: async (slug, job) => isHandArt((await store.loadSettings(slug)).settings.art) && !bodyOf<{ explicit: boolean }>(job.body).explicit,
+    [TASKS.musicPlan]: async (slug) => (await store.loadSettings(slug)).settings.music.tracks <= 0,
+    [TASKS.stage]: async (slug) => !!(await store.readJson<StageCues>(slug, 'cues.json'))?.byHand,
+    [TASKS.voicePlan]: async (slug) => !(await store.loadSettings(slug)).settings.voice.enabled,
+    [TASKS.review]: async (slug, job) => {
+      const entry = job.data.unit ? (await store.loadAssets(slug)).assets.find((a) => a.id === job.data.unit) : undefined
+      return !!entry && (entry.locked || entry.source === 'custom' || !resolveFile(store.dir(slug), entry))
+    },
+    [TASKS.draw]: async (slug, job) => {
+      const entry = job.data.unit ? (await store.loadAssets(slug)).assets.find((a) => a.id === job.data.unit) : undefined
+      if (!entry) return false
+      if (IMAGE_KINDS.has(entry.kind) && isHandArt((await store.loadSettings(slug)).settings.art)) return true
+      return !bodyOf<{ force: boolean }>(job.body).force && !!resolveFile(store.dir(slug), entry)
+    }
+  }
+
+  /**
    * Registers a handler that works on a project (`ctx.job.book`). `step` is the pipeline step it reports on: it is shown running,
    * then done with the handler's message, or failed with the error (not when the job was only stopped).
    */
   const reg = (task: VnTask, fn: (ctx: JobContext, slug: string) => Promise<string>, opts: HandlerOptions & { step?: PipelineStep | false } = {}): void => {
-    const { step: stepOpt, ...hopts } = opts
+    const { step: stepOpt, ...rest } = opts
+    const check = noModelThisTime[task]
+    const hopts: HandlerOptions = { ...rest, ...(check ? { skipModel: async (job: JobFile) => (job.data.book ? check(job.data.book, job) : false) } : {}) }
     const step = stepOpt === false ? undefined : (stepOpt ?? STEP_OF_TASK[task])
     sched.register(
       task,
@@ -141,7 +176,18 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const items = await store.loadUncertain(slug)
     if (!items.length) return 'nothing for the script-analyst to settle'
     const book = await store.loadBook(slug)
-    const r = await tryAgent(ctx, 'script-analyst', () => resolveUncertain(call(ctx), book, items))
+    // what already has art: the analysis picks a time or an expression from it instead of asking for a new image
+    const manifest = await store.loadAssets(slug)
+    const dir = store.dir(slug)
+    const withFile = new Set(manifest.assets.filter((a) => resolveFile(dir, a)).map((a) => a.id))
+    const art: ExistingArt = { backgrounds: {}, sprites: {} }
+    for (const id of withFile) {
+      const bg = /^bg_(.+)_([a-z]+)$/.exec(id)
+      if (bg) (art.backgrounds[bg[1]!] ??= []).push(bg[2]!)
+      const sp = /^sprite_(.+)_([a-z0-9]+)$/.exec(id)
+      if (sp) (art.sprites[sp[1]!] ??= []).push(sp[2]!)
+    }
+    const r = await tryAgent(ctx, 'script-analyst', () => resolveUncertain(call(ctx), book, items, art))
     const decisions = r.ok ? r.value.decisions : []
     const error = r.ok ? r.value.errors.join('; ') : r.error
     if (!decisions.length) return `the script-analyst gave no answer${error ? ` (${error})` : ''}: ${items.length} item(s) keep the parser's defaults`
@@ -149,7 +195,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       const { settings } = await store.loadSettings(slug)
       const cur = await store.loadBook(slug)
       const ed = await store.loadEdition(slug, settings.primaryLang).catch(() => undefined)
-      const res = applyDecisions(cur, ed, items, decisions)
+      const res = applyDecisions(cur, ed, items, decisions, { hasFile: (id) => withFile.has(id) })
       await store.saveBook(slug, res.book)
       if (res.edition) await store.saveEdition(slug, res.edition)
       await store.saveUncertain(slug, res.unresolved)
@@ -299,6 +345,17 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
 
   // ---- generate ----
 
+  /**
+   * The drawing agent of a sprite: how it asks the model, the mode and the limits (see `resolveDrawMode`).
+   */
+  const drawing = (ctx: JobContext, config: StudiosConfig) => {
+    const { mode, ms } = resolveDrawMode(config, ctx.model?.provider.kind === 'client')
+    return {
+      ask: async (messages: ChatMessage[], schema?: Record<string, unknown>) => (await ctx.chat({ messages, schema, maxTokens: mode === 'grid' ? 8000 : 3000, temperature: mode === 'grid' ? 0.2 : 0.3 })).text,
+      draw: { steps: config.drawSteps, ms, mode }
+    }
+  }
+
   /** Generates one asset (a new version) and records it. Throws when ComfyUI fails, so the job retries. */
   const generateOne = async (ctx: JobContext, slug: string, id: string, o: GenerateOptions, mode: { draw?: boolean } = {}): Promise<{ skipped?: string; entry: AssetEntry }> => {
     const { settings } = await store.loadSettings(slug)
@@ -326,12 +383,12 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
             pixel: studios.pixel,
             chiptune: studios.chiptune,
             chipPlan: music?.tracks?.[id],
-            ...(mode.draw ? { ask: async (messages) => (await ctx.chat({ messages, maxTokens: 3000, temperature: 0.3 })).text, draw: { steps: studios.config.drawSteps, ms: studios.config.drawTimeoutS * 1000 } } : {}),
+            ...(mode.draw ? drawing(ctx, studios.config) : {}),
             resolveRef: (rid) => {
               const e = manifest.assets.find((a) => a.id === rid)
               return e ? resolveFile(projectDir, e) : null
             },
-            sizes: { background: { w: res.w, h: res.h }, cover: { w: res.h, h: res.w }, spriteHeight: Math.round(res.h * 0.9), musicSeconds: music?.seconds[id] ?? DEFAULT_SECONDS, musicFormat: config.audioFormat },
+            sizes: { background: { w: res.w, h: res.h }, cover: { w: res.w, h: res.h }, spriteHeight: Math.round(res.h * 0.9), musicSeconds: music?.seconds[id] ?? DEFAULT_SECONDS, musicFormat: config.audioFormat },
             onProgress: (p) => {
               if (p.stage !== 'comfy') ctx.log(`${p.id}: ${p.stage} ${p.message}`)
             },
@@ -420,14 +477,18 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     if (settings.art.review && !reviewOn) ctx.log('art review is on but no vision model is available: the images are not reviewed')
     const generated = new Map<string, string>()
     const all: string[] = []
+    const priority = ctx.job.priority ?? 0 // an explicit request (vno_asset_generate) keeps its priority for the jobs it fans out
     for (const a of todo) {
-      const sheet = a.kind === 'sprite' ? generated.get(a.refs?.[0] ?? '') : undefined
-      const id = await svc.enqueue(slug, svc.generateTask(settings, a), a.id, run, { depends_on: sheet ? [sheet] : [], body: { force: !!body.force }, label: `generate ${a.id}` })
+      // a sprite waits for its sheet, a CG for the sheets of its characters, and both for a sheet job of another run that is still queued or running (a regenerated sheet)
+      const refs = a.kind === 'sprite' || a.kind === 'cg' ? (a.refs ?? []) : []
+      const sheets = refs.flatMap((r) => generated.get(r) ?? [])
+      const otherSheet = refs.length ? (await svc.activeGenerateJobs(slug, refs)).filter((j) => j.data.round !== run).map((j) => j.id) : []
+      const id = await svc.enqueue(slug, svc.generateTask(settings, a), a.id, run, { depends_on: [...sheets, ...otherSheet], body: { force: !!body.force }, label: `generate ${a.id}`, priority })
       generated.set(a.id, id)
       all.push(id)
-      if (reviewOn && IMAGE_KINDS.has(a.kind)) all.push(await svc.enqueue(slug, TASKS.review, a.id, run, { depends_on: [id], vision: true, label: `review ${a.id}` }))
+      if (reviewOn && IMAGE_KINDS.has(a.kind)) all.push(await svc.enqueue(slug, TASKS.review, a.id, run, { depends_on: [id], vision: true, label: `review ${a.id}`, priority }))
     }
-    if (body.tail !== false) await svc.enqueueTail(slug, run, 'voice', all)
+    if (body.tail !== false) await svc.enqueueTail(slug, run, 'voice', all, priority)
     return `${todo.length} asset job(s) queued${reviewOn ? ' with reviews' : ''}${waiting}`
   }
 
@@ -492,6 +553,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const current = await store.readJson<StageCues>(slug, 'cues.json')
     if (current?.byHand) {
       const filled = fillCues(current, book, { musicIds, warn: (m) => warnings.push(m) })
+      addScenePlan(filled.cues, book, (await store.readJson<MusicPlan>(slug, 'music.json'))?.scenes, musicIds)
       for (const w of warnings) ctx.log(`stage: ${w}`)
       await store.writeJson(slug, 'cues.json', { ...filled.cues, byHand: true })
       return `cues set by hand kept${filled.added ? `, ${filled.added} default cue(s) added for new chapters, scenes or casts` : ''}; the stage-director was not asked`
@@ -505,6 +567,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         const id = plan.chapters[c.n]
         if (id && musicIds.includes(id)) cues.chapters[c.n] = { music: id }
       }
+      addScenePlan(cues, book, plan.scenes, musicIds)
     }
     let staged = 0
     let down = ''
@@ -515,7 +578,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         down = r.error
         break
       }
-      const merged = mergeChapterCues(cues, chapter, r.value, musicIds)
+      const merged = mergeChapterCues(cues, chapter, r.value, musicIds, book.sounds ?? [])
       cues = merged.cues
       for (const n of merged.notes) ctx.log(`stage-director: ${n}`)
       staged++
@@ -637,12 +700,21 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       let made = 0
       let kept = 0
       let skipped = 0
+      let importedKept = 0
+      let importedStale = 0
       for (const chapter of book.chapters) {
         for (const scene of chapter.scenes) {
           for (const beat of scene.beats) {
             if (beat.type === 'cast' || (only && beat.id !== only)) continue
             const text = edition.beats[beat.id]?.trim()
             if (!text) continue
+            // a clip you imported is never made again
+            const mine = index[beat.id]
+            if (mine?.imported && existsSync(path.join(dir, mine.file))) {
+              importedKept++
+              if (mine.textHash !== sha1(text)) importedStale++
+              continue
+            }
             const speaker = beat.type === 'line' && beat.speakerKey ? beat.speakerKey : 'narrator'
             const ref = refs.get(voiceRefId(speaker)) ?? refs.get(voiceRefId('narrator'))
             if (wf.mapping.voiceRef && !ref) {
@@ -668,6 +740,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       }
       await fs.writeFile(path.join(dir, 'index.json'), JSON.stringify(index, null, 2))
       const parts = [`${made} clip(s) made, ${kept} unchanged`]
+      if (importedKept) parts.push(importedClipsNote(importedKept, importedStale))
       if (skipped) parts.push(`${skipped} skipped: no voice reference for ${[...missingRef].join(', ')} (upload one with setVoiceRef)`)
       const msg = `voice ${lang}: ${parts.join('; ')}`
       await svc.setStep(slug, 'voice', skipped && !made && !kept ? 'skipped' : 'done', msg)
@@ -726,7 +799,8 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         resolution: renpy.resolution,
         imageFormat: renpy.imageFormat,
         templateDir: svc.dirs.templates,
-        themesDir: svc.dirs.themes
+        themesDir: svc.dirs.themes,
+        fontsDir: dataFolders(deps.dataDir).fonts
       })
       const messages = [...r.warnings]
       if (!sdk) messages.push(`the Ren'Py SDK was not found at ${renpy.sdkPath}: the menu images keep the template colours, other editions are not translated and the game cannot be linted or run (set sdkPath in config/renpy.md)`)

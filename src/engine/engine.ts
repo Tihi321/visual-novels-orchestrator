@@ -163,6 +163,7 @@ export class Engine {
     await this.loadSettings()
     await loadLanguageConfig(this.opts.dataDir, (m) => this.log(`languages: ${m}`))
     await this.registry.load()
+    for (const p of this.registry.providers.values()) if (p.keyFrom) this.log(`provider ${p.id}: key from ${p.keyFrom}`)
     void this.discoverModels()
     // providers with `concurrency: auto` (Strata) follow the slot count their server reports: asked now and every few seconds,
     // so starting Strata with a "4 at once" or a "one at a time" script needs no change in providers.md
@@ -220,16 +221,22 @@ export class Engine {
   }
 
   /** The queue switches the MCP tools `vno_pause_all`, `vno_resume_all` and `vno_stop_now` use. */
-  mcpControl(): { setPaused(paused: boolean): Promise<void>; stopNow(): Promise<void> } {
+  mcpControl(): { setPaused(paused: boolean): Promise<void>; stopNow(opts?: { drop?: boolean; slug?: string }): Promise<void>; clearQueue(slug?: string): Promise<{ dropped: number; projects: string[] }> } {
     return {
       setPaused: async (paused) => {
         await this.setPaused(paused)
         if (!paused) this.scheduler.kick()
       },
-      stopNow: async () => {
+      stopNow: async (opts = {}) => {
         await this.setPaused(true)
         this.scheduler.stopAll('stopNow')
-      }
+        if (opts.drop) {
+          // the stopped jobs go back to the queue first, then the whole queue is dropped
+          await this.scheduler.drain()
+          await this.vn.clearQueue(opts.slug ?? null)
+        }
+      },
+      clearQueue: (slug) => this.vn.clearQueue(slug ?? null)
     }
   }
 

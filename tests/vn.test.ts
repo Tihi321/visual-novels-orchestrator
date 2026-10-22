@@ -41,7 +41,7 @@ describe('VN contract schemas', () => {
       ]
     }
     expect(vnBookSchema.parse(book)).toEqual(book)
-    const bad = { id: 'x', type: 'line', speakerKey: null, speakerLabel: 'A', expression: 'smug', text: 't' }
+    const bad = { id: 'x', type: 'line', speakerKey: null, speakerLabel: 'A', expression: 'Not Valid', text: 't' }
     expect(vnBeatSchema.safeParse(bad).success).toBe(false)
   })
 

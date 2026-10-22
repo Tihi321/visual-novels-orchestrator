@@ -1,5 +1,28 @@
-import type { CanonicalExpression } from '../../shared/vn'
+import { CANONICAL_EXPRESSIONS } from '../../shared/vn'
+import type { CanonicalExpression, Expression, VnBook } from '../../shared/vn'
 import { normText } from './ids'
+
+/** The expression a sprite is made for when the set lacks one, nearest first: worried -> scared -> sad -> neutral. */
+export const EXPRESSION_CHAIN: Record<string, string[]> = {
+  worried: ['scared', 'sad', 'neutral'],
+  scared: ['worried', 'sad', 'neutral'],
+  sad: ['worried', 'neutral'],
+  surprised: ['happy', 'neutral'],
+  happy: ['neutral'],
+  thinking: ['neutral'],
+  angry: ['neutral']
+}
+
+/** The expressions a character has sprites for: the book's set (default: the standard eight) plus its own. */
+export function expressionsOf(book: Pick<VnBook, 'expressions'>, char?: { expressions?: string[] }): Expression[] {
+  return [...new Set([...(book.expressions ?? CANONICAL_EXPRESSIONS), ...(char?.expressions ?? [])])]
+}
+
+/** A standard expression in terms of `set`: itself, else the nearest one down its chain that the set has, else neutral. */
+export function fitExpression(expression: string, set: readonly string[]): string {
+  if (set.includes(expression)) return expression
+  return (EXPRESSION_CHAIN[expression] ?? ['neutral']).find((e) => set.includes(e)) ?? 'neutral'
+}
 
 /**
  * Free-form expression words (English and Croatian) -> the canonical set.
@@ -44,28 +67,32 @@ function matchToken(tok: string): CanonicalExpression | null {
   return null
 }
 
-/** The canonical expression named by free text (a bracket like `grinning` or a look like `out of breath, grinning`), or null. */
-export function findExpression(text: string): CanonicalExpression | null {
+/**
+ * The expression named by free text (a bracket like `grinning` or a look like `out of breath, grinning`), or null. A word of `set` wins as it is;
+ * else the standard table maps it, and a standard word the set lacks goes down the chain to the nearest one it has.
+ */
+export function findExpression(text: string, set: readonly string[] = CANONICAL_EXPRESSIONS): Expression | null {
   for (const tok of normText(text).split(' ')) {
     if (!tok) continue
+    if (set.includes(tok)) return tok
     const m = matchToken(tok)
-    if (m) return m
+    if (m) return fitExpression(m, set)
   }
   return null
 }
 
 export interface MappedExpression {
-  expression: CanonicalExpression
-  /** The expression as written, when it was not already one of the standard words. */
+  expression: Expression
+  /** The expression as written, when it was not already one of the words of the set. */
   rawExpression?: string
   /** False when nothing matched and `neutral` is a fallback. */
   known: boolean
 }
 
-/** Maps a written expression to the canonical set; unknown words become `neutral` with the raw text kept. */
-export function mapExpression(raw: string): MappedExpression {
+/** Maps a written expression to the set (default: the standard eight); unknown words become `neutral` with the raw text kept. */
+export function mapExpression(raw: string, set: readonly string[] = CANONICAL_EXPRESSIONS): MappedExpression {
   const text = raw.trim()
-  const found = findExpression(text)
+  const found = findExpression(text, set)
   if (!found) return { expression: 'neutral', rawExpression: text || undefined, known: false }
   const same = normText(text) === found
   return same ? { expression: found, known: true } : { expression: found, rawExpression: text, known: true }

@@ -20,6 +20,22 @@ export const CANONICAL_EXPRESSIONS = ['neutral', 'happy', 'sad', 'angry', 'surpr
 export const canonicalExpressionSchema = z.enum(CANONICAL_EXPRESSIONS)
 export type CanonicalExpression = z.infer<typeof canonicalExpressionSchema>
 
+/** An expression of a sprite: a standard word or one the book defines (`smug`). No underscore: a sprite id is split at its last one. */
+export const EXPRESSION_RE = /^[a-z][a-z0-9]{0,23}$/
+export const expressionSchema = z.string().regex(EXPRESSION_RE, 'lowercase letters and digits, starting with a letter, at most 24 characters')
+/** Any expression: the standard ones are a subset (so a vn.json from before expression sets still parses). */
+export type Expression = string
+
+/**
+ * What a beat may carry besides its own content (a cast, a line or narration): a picture shown from this beat on (`cg_<key>`, null hides it), a
+ * sound effect played when it starts (`sfx_<key>`), an ambience started or, with null, stopped (`amb_<key>`). Values are catalogue keys.
+ */
+const beatCues = {
+  image: z.string().nullable().optional(),
+  sfx: z.string().optional(),
+  ambience: z.string().nullable().optional()
+}
+
 // ---- beats ----
 
 /** Who is on screen from this beat on. */
@@ -27,7 +43,8 @@ export const castBeatSchema = z.object({
   /** `ch01.s01.b001` */
   id: z.string(),
   type: z.literal('cast'),
-  cast: z.array(z.object({ charKey: z.string(), look: z.string().optional() }))
+  cast: z.array(z.object({ charKey: z.string(), look: z.string().optional() })),
+  ...beatCues
 })
 
 /** A spoken line. */
@@ -38,16 +55,18 @@ export const lineBeatSchema = z.object({
   speakerKey: z.string().nullable(),
   /** The name as written in the script. */
   speakerLabel: z.string(),
-  expression: canonicalExpressionSchema,
-  /** The expression as written, when it was not one of the standard ones. */
+  expression: expressionSchema,
+  /** The expression as written, when it was not one of the book's own words. */
   rawExpression: z.string().optional(),
-  text: z.string()
+  text: z.string(),
+  ...beatCues
 })
 
 export const narrationBeatSchema = z.object({
   id: z.string(),
   type: z.literal('narration'),
-  text: z.string()
+  text: z.string(),
+  ...beatCues
 })
 
 export const vnBeatSchema = z.discriminatedUnion('type', [castBeatSchema, lineBeatSchema, narrationBeatSchema])
@@ -67,7 +86,11 @@ export const vnSceneSchema = z.object({
   description: z.string(),
   beats: z.array(vnBeatSchema),
   /** A scene break (`---`) came before this scene. */
-  breakBefore: z.boolean()
+  breakBefore: z.boolean(),
+  /** Music for this scene: a track id (`music_02`), null for silence. Missing: the chapter's music goes on. */
+  music: z.string().nullable().optional(),
+  /** An ambience for this scene (a sound key, started looped), null to stop it. Missing: what plays goes on. */
+  ambience: z.string().nullable().optional()
 })
 export type VnScene = z.infer<typeof vnSceneSchema>
 
@@ -83,6 +106,25 @@ export const vnChapterSchema = z.object({
 })
 export type VnChapter = z.infer<typeof vnChapterSchema>
 
+/** An extra picture of the book: a CG (shown over the scene) or an insert (an object or a document shown small in the middle). */
+export const imageEntrySchema = z.object({
+  /** Lowercase key: the asset is `cg_<key>`. */
+  key: z.string(),
+  description: z.string(),
+  display: z.enum(['full', 'insert']),
+  /** Characters in the picture: their sheets are references when it is made. */
+  characters: z.array(z.string()).optional()
+})
+export type ImageEntry = z.infer<typeof imageEntrySchema>
+
+/** A sound of the book: a one-shot effect (`sfx_<key>`) or a looped ambience (`amb_<key>`). */
+export const soundEntrySchema = z.object({
+  key: z.string(),
+  kind: z.enum(['sfx', 'ambience']),
+  description: z.string()
+})
+export type SoundEntry = z.infer<typeof soundEntrySchema>
+
 export const vnBookSchema = z.object({
   slug: z.string(),
   title: z.string(),
@@ -94,8 +136,25 @@ export const vnBookSchema = z.object({
   primaryLang: langSchema,
   /** The art style from the bible's Style section. */
   style: z.string(),
-  characters: z.array(z.object({ key: z.string(), name: z.string(), looks: z.string(), voice: z.string().optional() })),
+  characters: z.array(
+    z.object({
+      key: z.string(),
+      name: z.string(),
+      looks: z.string(),
+      voice: z.string().optional(),
+      /** Other names the story calls the character by (`the bald man`). A line spoken under one shows that name, so the reader is not told early. */
+      aliases: z.array(z.string()).optional(),
+      /** Expressions of this character beyond the book's set (`smug`): each gets a sprite. */
+      expressions: z.array(expressionSchema).optional()
+    })
+  ),
   places: z.array(z.object({ key: z.string(), name: z.string(), looks: z.string() })),
+  /** The expression set of the book: the words a line may use and each character gets a sprite for. Missing: the standard eight. Includes `neutral`. */
+  expressions: z.array(expressionSchema).optional(),
+  /** CGs and inserts the story shows (`cg_<key>`). */
+  images: z.array(imageEntrySchema).optional(),
+  /** Sound effects and ambiences the story plays (`sfx_<key>`, `amb_<key>`). */
+  sounds: z.array(soundEntrySchema).optional(),
   coverBrief: z.string().optional(),
   chapters: z.array(vnChapterSchema),
   /** Problems found while importing (a bad branch, an unknown speaker ...). */
@@ -217,7 +276,14 @@ export const projectSettingsSchema = z.object({
       /** Speaker key (character key or `narrator`) -> language -> VibeTTS voice id such as `af_heart` (en) or `supertonic:F2`. */
       voices: z.preprocess(legacyVoices, z.record(z.string(), z.record(langSchema, z.string()))).default({})
     })
-    .default({ enabled: false, langs: [], provider: 'vibetts', engines: {}, voices: {} })
+    .default({ enabled: false, langs: [], provider: 'vibetts', engines: {}, voices: {} }),
+  /** Sound effects and ambiences. There is no sound-effect engine by default: an effect without a file waits for `vno_asset_import`, unless `sfxEngine` is a `custom:<workflow>`. */
+  sound: z
+    .object({
+      ambienceEngine: z.string().default('ace-step-v1-instrumental'),
+      sfxEngine: z.string().optional()
+    })
+    .default({ ambienceEngine: 'ace-step-v1-instrumental' })
 })
 export type ProjectSettings = z.infer<typeof projectSettingsSchema>
 
@@ -231,7 +297,9 @@ export function resolvePixel(art: Pick<ProjectSettings['art'], 'pixel'>): { widt
 export const resolvePixelProvider = (art: Pick<ProjectSettings['art'], 'pixelProvider'>): (typeof PIXEL_PROVIDERS)[number] => art.pixelProvider ?? 'vno'
 export const resolveArtProvider = (art: Pick<ProjectSettings['art'], 'provider'>): (typeof ART_PROVIDERS)[number] => art.provider ?? 'comfy'
 /** The asset kinds that are images. */
-export const IMAGE_KINDS: ReadonlySet<string> = new Set(['background', 'sheet', 'sprite', 'cover'])
+export const IMAGE_KINDS: ReadonlySet<string> = new Set(['background', 'sheet', 'sprite', 'cover', 'cg'])
+/** The asset kinds that are audio, made by a model or imported (a voice reference is audio too, but only ever uploaded). */
+export const AUDIO_KINDS: ReadonlySet<string> = new Set(['music', 'sfx', 'ambience'])
 /** Hand-made art: VN Studio never generates an image (any art style). */
 export const isHandArt = (art: Pick<ProjectSettings['art'], 'provider'>): boolean => art.provider === 'hand'
 
@@ -245,7 +313,7 @@ export const CHIPTUNE_ENGINE = 'chiptune'
 
 // ---- assets (assets.json) ----
 
-export const ASSET_KINDS = ['background', 'sheet', 'sprite', 'cover', 'music', 'voiceRef'] as const
+export const ASSET_KINDS = ['background', 'sheet', 'sprite', 'cover', 'cg', 'music', 'sfx', 'ambience', 'voiceRef'] as const
 export const assetKindSchema = z.enum(ASSET_KINDS)
 export type AssetKind = z.infer<typeof assetKindSchema>
 

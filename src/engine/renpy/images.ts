@@ -19,6 +19,8 @@ export interface UsedImages {
   /** Background asset ids (`bg_<place>_<time|any>`). */
   backgrounds: string[]
   sprites: { charKey: string; expression: string }[]
+  /** The CGs and inserts the script shows (keys of the book's `images`). */
+  cgs?: { key: string; display: 'full' | 'insert' }[]
 }
 
 const safe = (s: string): string => s.replace(/[^A-Za-z0-9_]/g, '_')
@@ -27,6 +29,11 @@ const safe = (s: string): string => s.replace(/[^A-Za-z0-9_]/g, '_')
 export function bgImageName(backgroundId: string): string {
   const rest = backgroundId.replace(/^bg_/, '')
   return `bg ${safe(rest)}`
+}
+
+/** `ledger_page` -> `cg ledger_page` (the Ren'Py image name of a CG or an insert). */
+export function cgImageName(key: string): string {
+  return `cg ${safe(key)}`
 }
 
 /** `mara`, `worried` -> `mara worried`. */
@@ -87,6 +94,30 @@ export async function placeholderCover(title: string, res: Resolution): Promise<
   return placeholderBackground(title, res, 'png')
 }
 
+/**
+ * The main menu picture from the cover. A cover about as wide as the screen fills it (cut to fit). A narrower one (a portrait cover from an
+ * older project, or one you made by hand) is not cut to a strip: it is shown whole at the full screen height, centred right of the menu
+ * buttons (at 62% of the width), over a blurred and darkened copy of itself that fills the screen. In pixel art the fill is the mean colour
+ * of the cover (a blur would add colours) and the picture is scaled with the nearest-neighbour kernel.
+ */
+export async function menuImage(file: string, res: Resolution, pixel = false): Promise<Buffer> {
+  const kernel = pixel ? ('nearest' as const) : undefined
+  const meta = await sharp(file).metadata()
+  const ratio = (meta.width ?? 1) / (meta.height ?? 1) / (res.w / res.h)
+  if (ratio >= 0.85) return sharp(file).resize(res.w, res.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }).png().toBuffer()
+  let fill: Buffer
+  if (pixel) {
+    const mean = (await sharp(file).removeAlpha().stats()).channels.map((c) => Math.round(c.mean))
+    fill = await sharp({ create: { width: res.w, height: res.h, channels: 3, background: { r: mean[0] ?? 0, g: mean[1] ?? 0, b: mean[2] ?? 0 } } }).png().toBuffer()
+  } else {
+    fill = await sharp(file).resize(res.w, res.h, { fit: 'cover' }).blur(40).modulate({ brightness: 0.55 }).removeAlpha().png().toBuffer()
+  }
+  const front = await sharp(file).resize({ height: res.h, width: res.w, fit: 'inside', ...(kernel ? { kernel } : {}) }).png().toBuffer()
+  const fw = (await sharp(front).metadata()).width ?? res.w
+  const left = Math.max(0, Math.min(res.w - fw, Math.round(res.w * 0.62 - fw / 2)))
+  return sharp(fill).composite([{ input: front, left, top: 0 }]).png().toBuffer()
+}
+
 /** `lossless`: WebP without loss (pixel art: lossy WebP smears colour edges). */
 function encode(img: Sharp, format: ImageFormat, lossless = false): Promise<Buffer> {
   return format === 'png' ? img.png().toBuffer() : img.webp(lossless ? { lossless: true } : { quality: 88 }).toBuffer()
@@ -136,6 +167,26 @@ export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesRes
     written.push(rel)
   }
 
+  // CGs fill the screen like a background; an insert is scaled down to at most 70% of the screen height (it is shown small, in the middle)
+  for (const g of used.cgs ?? []) {
+    const id = `cg_${g.key}`
+    const rel = imageFile(cgImageName(g.key), format)
+    const src = resolveAsset(id)
+    let buf: Buffer
+    if (src && fs.existsSync(src)) {
+      buf =
+        g.display === 'insert'
+          ? await encode(sharp(src).ensureAlpha().resize({ height: Math.round(resolution.h * 0.7), width: resolution.w, fit: 'inside', withoutEnlargement: true, ...(kernel ? { kernel } : {}) }), format, !!inp.pixel)
+          : await encode(sharp(src).resize(resolution.w, resolution.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }), format, !!inp.pixel)
+    } else {
+      const size = g.display === 'insert' ? { w: Math.round(resolution.h * 0.5), h: Math.round(resolution.h * 0.5) } : resolution
+      buf = await placeholderBackground(g.key.replace(/_/g, ' '), size, format, !!inp.pixel)
+      placeholders.push(id)
+    }
+    fs.writeFileSync(path.join(gameSubdir, rel), buf)
+    written.push(rel)
+  }
+
   const names = new Map(book.characters.map((c) => [c.key, c.name]))
   for (const s of used.sprites) {
     const id = `sprite_${s.charKey}_${s.expression}`
@@ -156,7 +207,7 @@ export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesRes
   const coverSrc = resolveAsset('cover')
   let cover: Buffer
   if (coverSrc && fs.existsSync(coverSrc)) {
-    cover = await sharp(coverSrc).resize(resolution.w, resolution.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }).png().toBuffer()
+    cover = await menuImage(coverSrc, resolution, !!inp.pixel)
   } else {
     cover = await placeholderCover(book.title, resolution)
     placeholders.push('cover')

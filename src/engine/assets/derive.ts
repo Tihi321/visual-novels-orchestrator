@@ -1,19 +1,34 @@
-import type { AssetEntry, AssetKind, CanonicalExpression, ProjectSettings, VnBook, VnScene } from '../../shared/vn'
-import { coverId, musicId, normText, sheetId, spriteId, voiceRefId } from '../vn/ids'
+import type { AssetEntry, AssetKind, ImageEntry, ProjectSettings, SoundEntry, VnBook, VnScene } from '../../shared/vn'
+import { ambId, cgId, coverId, musicId, normText, sfxId, sheetId, spriteId, voiceRefId } from '../vn/ids'
 
 /** Asset ids: one place formats them (`vn/ids.ts`); this object keeps the names the asset code uses. */
 export const assetIds = {
   sheet: sheetId,
   sprite: spriteId,
   cover: () => coverId,
+  cg: cgId,
+  sfx: sfxId,
+  amb: ambId,
   music: musicId,
   voiceRef: voiceRefId
 }
 export const NARRATOR_KEY = 'narrator'
 
-/** Generation sizes: landscape for backgrounds, portrait for sheets, sprites and the cover. */
+/** Generation sizes: landscape for backgrounds, CGs and the cover (the menu picture), portrait for sheets and sprites, square for an insert. */
 export const LANDSCAPE = { w: 1664, h: 928 }
 export const PORTRAIT = { w: 928, h: 1664 }
+export const SQUARE = { w: 1024, h: 1024 }
+
+/** The picture of the book that an asset id `cg_<key>` names. */
+export const imageOfAsset = (book: Pick<VnBook, 'images'>, id: string): ImageEntry | undefined => book.images?.find((i) => cgId(i.key) === id)
+/** The sound of the book that an asset id `sfx_<key>` or `amb_<key>` names. */
+export const soundOfAsset = (book: Pick<VnBook, 'sounds'>, id: string): SoundEntry | undefined => book.sounds?.find((s) => (s.kind === 'sfx' ? sfxId(s.key) : ambId(s.key)) === id)
+
+/** The framing words of a cover: the main menu shows it full screen with the buttons on the left. */
+export const COVER_FRAMING = 'wide 16:9 key art, landscape composition, keep the left third calm for the menu, full-bleed artwork, no border, no frame, no text, no lettering'
+
+/** The framing words of an insert (an object or a document shown small in the middle). */
+export const INSERT_FRAMING = 'object or document close-up, centered, plain background'
 
 export const DEFAULT_NEGATIVE = 'text, letters, words, watermark, signature, logo, blurry, low quality, deformed, extra limbs, extra fingers, border, frame, open book'
 
@@ -37,8 +52,9 @@ function stub(partial: Pick<AssetEntry, 'id' | 'kind' | 'engine' | 'size'> & { r
  * The asset list a book needs, as stubs with empty prompts (the art-director fills them):
  * one background per distinct `scene.backgroundId`, one sheet per character that appears in a cast or a line,
  * one sprite per (character, expression) used in lines (plus `neutral` for every character shown in a cast beat),
- * a cover, `settings.music.tracks` music tracks, and, only when voice is enabled, a voice reference per speaking
- * character and the narrator. Order is by first appearance, so the output is deterministic.
+ * a cover, `settings.music.tracks` music tracks, a CG or insert per `images` entry a beat shows, a sound effect or ambience per `sounds`
+ * entry a beat or scene plays, and, only when voice is enabled, a voice reference per speaking character and the narrator.
+ * Order is by first appearance, so the output is deterministic.
  */
 export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntry[] {
   const out: AssetEntry[] = []
@@ -46,11 +62,14 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
   const castChars: string[] = []
   const speakers: string[] = []
   const appearing: string[] = []
-  const spriteKeys = new Map<string, Set<CanonicalExpression>>()
+  const spriteKeys = new Map<string, Set<string>>()
+  const pictures: string[] = []
+  const effects: string[] = []
+  const ambiences: string[] = []
   const note = (list: string[], key: string) => {
     if (!list.includes(key)) list.push(key)
   }
-  const useExpression = (charKey: string, expression: CanonicalExpression) => {
+  const useExpression = (charKey: string, expression: string) => {
     let set = spriteKeys.get(charKey)
     if (!set) spriteKeys.set(charKey, (set = new Set()))
     set.add(expression)
@@ -59,7 +78,11 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
   for (const chapter of book.chapters) {
     for (const scene of chapter.scenes) {
       if (scene.backgroundId) backgrounds.add(scene.backgroundId)
+      if (scene.ambience) note(ambiences, scene.ambience)
       for (const beat of scene.beats) {
+        if (beat.image) note(pictures, beat.image)
+        if (beat.sfx) note(effects, beat.sfx)
+        if (beat.ambience) note(ambiences, beat.ambience)
         if (beat.type === 'cast') {
           for (const c of beat.cast) {
             note(appearing, c.charKey)
@@ -75,6 +98,10 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
     }
   }
 
+  // the characters of a picture have sheets (they are its references)
+  const imageEntries = pictures.flatMap((k) => book.images?.find((i) => i.key === k) ?? [])
+  for (const img of imageEntries) for (const c of (img.characters ?? []).slice(0, 3)) if (book.characters.some((x) => x.key === c)) note(appearing, c)
+
   const art = settings.art
   for (const id of backgrounds) out.push(stub({ id, kind: 'background', engine: art.generator, size: { ...LANDSCAPE } }))
   for (const key of appearing) out.push(stub({ id: assetIds.sheet(key), kind: 'sheet', engine: art.generator, size: { ...PORTRAIT } }))
@@ -83,8 +110,15 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
       out.push(stub({ id: assetIds.sprite(key, expression), kind: 'sprite', engine: art.editor, size: { ...PORTRAIT }, refs: [assetIds.sheet(key)] }))
     }
   }
-  out.push(stub({ id: assetIds.cover(), kind: 'cover', engine: art.generator, size: { ...PORTRAIT } }))
+  for (const img of imageEntries) {
+    const refs = (img.characters ?? []).filter((c) => book.characters.some((x) => x.key === c)).slice(0, 3).map((c) => assetIds.sheet(c))
+    // a picture with characters is made by the edit engine from their sheets, one without by the generator
+    out.push(stub({ id: assetIds.cg(img.key), kind: 'cg', engine: refs.length ? art.editor : art.generator, size: { ...(img.display === 'insert' ? SQUARE : LANDSCAPE) }, ...(refs.length ? { refs } : {}) }))
+  }
+  out.push(stub({ id: assetIds.cover(), kind: 'cover', engine: art.generator, size: { ...LANDSCAPE } }))
   for (let n = 1; n <= settings.music.tracks; n++) out.push(stub({ id: assetIds.music(n), kind: 'music', engine: settings.music.engine, size: null }))
+  for (const k of effects) if (book.sounds?.some((s) => s.key === k && s.kind === 'sfx')) out.push(stub({ id: assetIds.sfx(k), kind: 'sfx', engine: settings.sound.sfxEngine ?? '', size: null }))
+  for (const k of ambiences) if (book.sounds?.some((s) => s.key === k && s.kind === 'ambience')) out.push(stub({ id: assetIds.amb(k), kind: 'ambience', engine: settings.sound.ambienceEngine, size: null }))
   if (settings.voice.enabled) {
     const engine = settings.voice.engines[settings.primaryLang] ?? settings.voice.engines[book.primaryLang] ?? ''
     for (const key of speakers) out.push(stub({ id: assetIds.voiceRef(key), kind: 'voiceRef', engine, size: null }))
@@ -126,6 +160,11 @@ export function resolveStylePrompt(book: Pick<VnBook, 'format' | 'genre'>, setti
 
 const VISUAL_WORDS =
   /\b(hair|braid|eyes?|wears?|wearing|dress|coat|raincoat|jacket|hat|cap|boots?|shoes?|jeans|shirt|onesie|skirt|cloak|robe|scarf|tall|small|tiny|big|chubby|wiry|round|skin|scales?|wings?|tail|horns?|claws?|beard|glasses|bow tie|freckles?|face|smile|fur|satchel|belt|years old|red|orange|green|blue|yellow|purple|brown|grey|gray|black|white|pink|golden|blonde|amber|silver)\b/i
+/** The words of a text that name something visible (hair, colours, clothes ...): lower case, without repeats. */
+export function visualWords(text: string | undefined): Set<string> {
+  return new Set([...(text ?? '').matchAll(new RegExp(VISUAL_WORDS.source, 'gi'))].map((m) => m[0].toLowerCase()))
+}
+
 const PERSONALITY_WORDS =
   /\b(brave|quick to|loves?|likes?|hates?|fears?|afraid|favou?rite|friendly|curious|grumpy|kind|helpful|precise|shy|clever|noisy|giggly|funny|collector|guards|runs the|always|never|story|voice|says)\b/i
 
@@ -172,6 +211,12 @@ function styleLine(book: VnBook, opts: { pixel?: boolean; stylePrompt?: string }
   return [style, book.genre?.trim()].filter(Boolean).join(', ')
 }
 
+/** The first scene with a beat that shows the picture `key`. */
+function sceneShowing(book: VnBook, key: string): VnScene | undefined {
+  for (const ch of book.chapters) for (const s of ch.scenes) if (s.beats.some((b) => b.image === key)) return s
+  return undefined
+}
+
 function sceneOf(book: VnBook, backgroundId: string): VnScene | undefined {
   for (const ch of book.chapters) for (const s of ch.scenes) if (s.backgroundId === backgroundId) return s
   return undefined
@@ -188,9 +233,9 @@ function splitSpriteId(id: string): { charKey: string; expression: string } {
   return at < 0 ? { charKey: rest, expression: 'neutral' } : { charKey: rest.slice(0, at), expression: rest.slice(at + 1) }
 }
 
-/** The fixed negative prompt for a kind of asset. Music and voice have none. */
+/** The fixed negative prompt for a kind of asset. Audio has none. */
 export function fallbackNegative(kind: AssetKind): string {
-  if (kind === 'music' || kind === 'voiceRef') return ''
+  if (kind === 'music' || kind === 'voiceRef' || kind === 'sfx' || kind === 'ambience') return ''
   if (kind === 'sheet' || kind === 'sprite') return `${DEFAULT_NEGATIVE}, character sheet, turnaround, model sheet, multiple views, collage, panels, labels, captions, multiple characters`
   if (kind === 'background') return `${DEFAULT_NEGATIVE}, person, people, character, creature, animal`
   return DEFAULT_NEGATIVE
@@ -222,7 +267,22 @@ export function fallbackPrompt(asset: Pick<AssetEntry, 'id' | 'kind'>, book: VnB
       return ['Same character as the reference image', spriteFraming(expression), visualLooks(c?.looks)].filter(Boolean).join('. ')
     }
     case 'cover':
-      return [style, 'single key-art illustration', book.title, book.coverBrief, 'portrait composition, full-bleed artwork, no border, no frame, no text, no lettering'].filter(Boolean).join(', ')
+      return [style, 'single key-art illustration', book.title, book.coverBrief, COVER_FRAMING].filter(Boolean).join(', ')
+    case 'cg': {
+      const img = imageOfAsset(book, asset.id)
+      if (!img) return [style, asset.id.replace(/^cg_/, '').replace(/_/g, ' ')].join(', ')
+      if (img.display === 'insert') return [style, img.description, INSERT_FRAMING].filter(Boolean).join(', ')
+      const scene = sceneShowing(book, img.key)
+      const place = scene?.placeKey ? book.places.find((p) => p.key === scene.placeKey) : undefined
+      const people = (img.characters ?? []).map((k) => visualLooks(lookupChar(book, k)?.looks)).filter(Boolean)
+      return [style, img.description, ...people, withoutCharacterSentences(place?.looks, book), 'cinematic illustration, full-bleed artwork filling the whole frame, no border, no frame, no text'].filter(Boolean).join(', ')
+    }
+    case 'ambience': {
+      const s = soundOfAsset(book, asset.id)
+      return ['ambient soundscape', s?.description ?? asset.id.replace(/^amb_/, '').replace(/_/g, ' '), 'no melody, no drums, seamless loop'].join(', ')
+    }
+    case 'sfx':
+      return soundOfAsset(book, asset.id)?.description ?? asset.id.replace(/^sfx_/, '').replace(/_/g, ' ')
     case 'music': {
       const tint = GENRE_MUSIC.find(([re]) => re.test(`${book.genre ?? ''} ${book.format} ${book.style}`))?.[1]
       const n = Number(asset.id.replace(/^music_/, '')) || 1

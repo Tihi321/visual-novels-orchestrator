@@ -58,6 +58,8 @@ export interface ProviderSummary {
   available: boolean
   /** Why it isn't available: switched off, or no key. */
   reason?: string
+  /** The key comes from another tool's credential store (`the scriptorium credential store`). */
+  keyFrom?: string
   /** It can list its models (`GET /models`, OpenAI-style providers). */
   canList: boolean
   /** Requests at once. With `concurrencyAuto` the server sets it (Strata, LM Studio), so it can't be changed here. */
@@ -560,6 +562,8 @@ export interface ProjectSettingsPatch {
   /** `null` clears an optional field (`provider`, `chip`). */
   music?: Partial<Omit<ProjectSettings['music'], 'provider' | 'chip'>> & { provider?: ProjectSettings['music']['provider'] | null; chip?: ProjectSettings['music']['chip'] | null }
   voice?: Partial<ProjectSettings['voice']>
+  /** Sound effects and ambiences. `null` clears `sfxEngine`. */
+  sound?: { ambienceEngine?: string; sfxEngine?: string | null }
 }
 
 /** The commands about VN projects (handled by `VnService`). */

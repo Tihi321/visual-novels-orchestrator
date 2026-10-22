@@ -91,6 +91,8 @@ export interface VibeTtsOptions {
   /** Timeout of one synthesize_batch call. */
   batchTimeoutMs?: number
   fetchImpl?: typeof fetch
+  /** The bearer token of VibeTTS's MCP server (`VIBETTS_MCP_TOKEN`). */
+  token?: string | null
 }
 
 export const DEFAULT_VIBETTS_URL = 'http://127.0.0.1:7723/mcp'
@@ -100,7 +102,7 @@ export function createVibeTtsClient(opts: VibeTtsOptions = {}): VibeTtsClient {
   const timeoutMs = opts.timeoutMs ?? 15_000
   const voiceTimeoutMs = opts.voiceTimeoutMs ?? 180_000
   const batchTimeoutMs = opts.batchTimeoutMs ?? 900_000
-  const mcp = createMcpClient({ url, label: 'VibeTTS', notRunningHint: NOT_RUNNING_HINT, timeoutMs, fetchImpl: opts.fetchImpl })
+  const mcp = createMcpClient({ url, label: 'VibeTTS', notRunningHint: NOT_RUNNING_HINT, timeoutMs, fetchImpl: opts.fetchImpl, token: opts.token, tokenVar: 'VIBETTS_MCP_TOKEN' })
 
   async function call<T>(name: string, args: object, ms: number, signal?: AbortSignal): Promise<T> {
     try {

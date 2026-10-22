@@ -160,7 +160,7 @@ describe('stage and build', () => {
     const cues = defaultCues(vn)
     const ch = vn.chapters[0]!
     const castBeat = ch.scenes.flatMap((s) => s.beats).find((b) => b.type === 'cast')!
-    const m = mergeChapterCues(cues, ch, { music: 'music_99', scenes: [{ id: 'nope', transition: 'fade', pause: 9 }], casts: [{ beatId: castBeat.id, slots: [{ charKey: 'ghost', slot: 'left' }] }] }, ['music_01'])
+    const m = mergeChapterCues(cues, ch, { music: 'music_99', scenes: [{ id: 'nope', transition: 'fade', pause: 9 }], casts: [{ beatId: castBeat.id, slots: [{ charKey: 'ghost', slot: 'left' }] }], sfx: [], ambience: [] }, ['music_01'])
     expect(m.cues.casts[castBeat.id]).toEqual(cues.casts[castBeat.id])
     expect(m.notes.join(' ')).toMatch(/unknown music/)
     expect(m.notes.join(' ')).toMatch(/unknown scene/)

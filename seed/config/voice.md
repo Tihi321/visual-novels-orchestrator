@@ -4,6 +4,8 @@ kind: voice
 # download Supertonic in VibeTTS Settings > Supertonic). Its MCP server must be running:
 # `python -m vibetts --mcp-only` in C:\projects\Personal\vibe-tts-flow, or Settings > Agents (MCP) in the app.
 vibettsUrl: http://127.0.0.1:7723/mcp
+# Bearer token, only when VibeTTS asks for one. The environment variable VIBETTS_MCP_TOKEN and the credential store win over this field.
+vibettsToken: ''
 # Speech speed, 0.5 to 2.
 speed: 1
 # Format of the clips: mp3 (small) or wav.
