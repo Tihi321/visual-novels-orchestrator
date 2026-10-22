@@ -17,3 +17,7 @@ Changes to the generated files:
 Two files are written next to the template by the build, only when needed: `vno_fonts.rpy` (a `translate <language> python:` block with a font for each language whose script the theme font lacks, see `src/engine/renpy/fonts.ts`) and `vno_rtl.rpy` (`config.rtl` and the mirrored `gui.*` layout of the right-to-left languages, `src/engine/renpy/rtl.ts`).
 
 Languages: Ren'Py's source language (`None`) holds the primary text. For an English primary book `None` is English and `tl/croatian/` holds the Croatian edition. For a Croatian primary book the template UI is translated by `tl/croatian/ui.rpy` and `config.default_language` is `"croatian"`; an English edition is `tl/english/`.
+
+## Puzzles
+
+A book with a `puzzle` beat also gets the puzzle library from `templates/puzzles/game/` (copied by the build, not part of this template): `vno_puzzle.rpy` (the grid and accusation screens and the label `vno_puzzle_play`), `python-packages/vno_puzzles/` (the generator, solver and play helpers; stdlib only) and `vno_puzzles_data.rpy` (written per book: `define vno_puzzle_data`, with names and clues as `_("...")` strings). A book with no puzzle beat has none of these files. See `templates/puzzles/README.md`.

@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { CANONICAL_EXPRESSIONS, EXPRESSION_RE, langSchema, vnBookSchema } from '../../shared/vn'
+import { CANONICAL_EXPRESSIONS, EXPRESSION_RE, hasText, langSchema, vnBookSchema } from '../../shared/vn'
+import { puzzleCoreSchema, puzzleEntrySchema } from '../../shared/puzzle'
 import type { Edition, Lang, VnBeat, VnBook, VnChapter, VnScene } from '../../shared/vn'
 import { aliasIndex } from './aliases'
 import { expressionsOf, mapExpression } from './expressions'
@@ -31,7 +32,8 @@ export const beatInputSchema = z.object({
   text: z.string().optional().describe('The words of a line or a narration'),
   image: z.string().nullable().optional().describe('A picture of images (its key): shown from this beat on, over the scene. null hides the picture. Goes on a beat with text, a speaker or a cast'),
   sfx: z.string().optional().describe('A sound effect of sounds (its key), played when this beat starts'),
-  ambience: z.string().nullable().optional().describe('An ambience of sounds (its key), started looped from this beat. null stops it')
+  ambience: z.string().nullable().optional().describe('An ambience of sounds (its key), started looped from this beat. null stops it'),
+  puzzle: z.string().optional().describe('A puzzle of puzzles (its key; vno_puzzle_set makes it): the player solves it here and the story goes on. Stands alone on its beat (a picture, sound or ambience cue is allowed with it)')
 })
 export type BeatInput = z.infer<typeof beatInputSchema>
 
@@ -147,6 +149,11 @@ function freeKey(wanted: string, taken: string[]): string {
 
 function makeBeat(ctx: Ctx, id: string, input: BeatInput): VnBeat {
   const cues = cuesOf(input)
+  if (input.puzzle !== undefined) {
+    if (input.cast !== undefined || input.speaker !== undefined || input.text !== undefined || input.type !== undefined) throw new Error(`beat ${id}: a puzzle beat has only a puzzle key (and cues), not a cast, speaker or text`)
+    if (!input.puzzle.trim()) throw new Error(`beat ${id}: a puzzle beat needs the key of a puzzle`)
+    return { id, type: 'puzzle', puzzle: input.puzzle.trim(), ...cues }
+  }
   if (Object.keys(cues).length && input.type === undefined && input.cast === undefined && input.speaker === undefined && input.text === undefined) {
     throw new Error(`beat ${id}: an image, sfx or ambience goes on a beat with text, a speaker or a cast; it cannot stand alone`)
   }
@@ -339,6 +346,35 @@ export function validateBook(book: VnBook): { errors: string[]; warnings: string
     for (const c of i.characters ?? []) if (!chars.has(c)) errors.push(`image "${i.key}": character "${c}" is not a character`)
   }
   for (const s of book.sounds ?? []) if (!KEY_RE.test(s.key)) errors.push(`sound key "${s.key}" must be lowercase letters, digits and underscores, starting with a letter`)
+  // puzzles: a puzzle beat names a puzzle of the book, a puzzle is played by one beat, the clues are found before it is played
+  const puzzleKeys = new Set((book.puzzles ?? []).map((p) => p.key))
+  dupes('puzzle key', (book.puzzles ?? []).map((p) => p.key))
+  const order = new Map<string, number>()
+  book.chapters.forEach((c) => c.scenes.forEach((s) => s.beats.forEach((b) => order.set(b.id, order.size))))
+  const players = new Map<string, string>()
+  for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.type === 'puzzle') {
+    if (!puzzleKeys.has(b.puzzle)) warnings.push(`${b.id}: puzzle "${b.puzzle}" is not made yet (${puzzleKeys.size ? `puzzles: ${[...puzzleKeys].join(', ')}; ` : ''}vno_puzzle_set makes it); the build skips the beat until it is`)
+    else if (players.has(b.puzzle)) errors.push(`puzzle "${b.puzzle}" is played by two beats (${players.get(b.puzzle)} and ${b.id})`)
+    else players.set(b.puzzle, b.id)
+  }
+  for (const p of book.puzzles ?? []) {
+    if (!KEY_RE.test(p.key)) errors.push(`puzzle key "${p.key}" must be lowercase letters, digits and underscores, starting with a letter`)
+    const items = p.data.categories.flatMap((c) => c.items)
+    for (const it of items) if (!p.names[it]?.trim()) errors.push(`puzzle "${p.key}": item ${it} has no name`)
+    for (const c of [...p.data.clues.map((x) => x.id), 'murder']) if (!p.text[c]?.trim()) errors.push(`puzzle "${p.key}": ${c === 'murder' ? 'the murder note' : `clue ${c}`} has no text`)
+    for (const [it, l] of Object.entries(p.links ?? {})) {
+      if (!items.includes(it)) errors.push(`puzzle "${p.key}": link of unknown item ${it}`)
+      else if (l.type === 'character' ? !chars.has(l.key) : l.type === 'place' ? !places.has(l.key) : !images.has(l.key)) errors.push(`puzzle "${p.key}": ${it} links to ${l.type} "${l.key}", which the book does not have`)
+    }
+    const mine = players.get(p.key)
+    for (const [clue, at] of Object.entries(p.clueAt ?? {})) {
+      if (!p.data.clues.some((c) => c.id === clue)) errors.push(`puzzle "${p.key}": clueAt names unknown clue ${clue}`)
+      else if (!order.has(at)) errors.push(`puzzle "${p.key}": clue ${clue} is found at beat ${at}, which does not exist`)
+      else if (mine && order.get(at)! >= order.get(mine)!) errors.push(`puzzle "${p.key}": clue ${clue} is found at ${at}, which is not before the puzzle beat ${mine}`)
+    }
+    if (p.onFail?.mode === 'chapter' && !chapterNs.has(p.onFail.to ?? -1)) errors.push(`puzzle "${p.key}": onFail chapter ${p.onFail.to ?? '(missing)'} does not exist`)
+    if (!players.has(p.key)) warnings.push(`puzzle "${p.key}" is not played by any beat (vno_beat_add {puzzle: "${p.key}"})`)
+  }
   const known = (what: string, keys: Set<string>) => (keys.size ? `known ${what}: ${[...keys].join(', ')}` : `the book has no ${what}`)
   const unknownSpeakers = new Set<string>()
   let unplaced = 0
@@ -398,7 +434,7 @@ export function storySummary(book: VnBook): { slug: string; title: string; kind:
  * and adds the name of a new character (in the primary language) so the build has one. Translated text that is still valid stays.
  */
 export function syncEdition(ed: Edition, book: VnBook): Edition {
-  const beatIds = new Set(book.chapters.flatMap((c) => c.scenes.flatMap((s) => s.beats.filter((b) => b.type !== 'cast').map((b) => b.id))))
+  const beatIds = new Set(book.chapters.flatMap((c) => c.scenes.flatMap((s) => s.beats.filter(hasText).map((b) => b.id))))
   const pick = <T>(rec: Record<string, T>, keep: (k: string) => boolean): Record<string, T> => Object.fromEntries(Object.entries(rec).filter(([k]) => keep(k)))
   const chapter = (k: string) => book.chapters.find((c) => c.n === Number(k))
   const characterNames: Record<string, string> = {}
@@ -419,7 +455,20 @@ export function syncEdition(ed: Edition, book: VnBook): Edition {
       return Number(i) < (chapter(n!)?.choices.length ?? 0)
     }),
     endings: pick(ed.endings, (k) => !!chapter(k)?.ending),
-    characterNames
+    characterNames,
+    // the words of a puzzle stay while the puzzle (and its item or clue) is there
+    ...(ed.puzzles
+      ? {
+          puzzles: Object.fromEntries(
+            (book.puzzles ?? [])
+              .filter((p) => ed.puzzles![p.key])
+              .map((p) => {
+                const e = ed.puzzles![p.key]!
+                return [p.key, { names: pick(e.names, (k) => k in p.names), text: pick(e.text, (k) => k in p.text) }]
+              })
+          )
+        }
+      : {})
   }
 }
 
@@ -462,6 +511,19 @@ export const storyOpSchema = z.discriminatedUnion('op', [
     description: z.string().optional().describe('What it sounds like (needed for a new one)')
   }),
   z.object({ op: z.literal('sound.remove'), key: z.string(), kind: z.enum(['sfx', 'ambience']).optional(), force: z.boolean().optional().describe('Also clear the cues that play it') }),
+  z.object({
+    op: z.literal('puzzle.set'),
+    key: z.string().describe('An existing key to change, or the key of a new puzzle'),
+    data: puzzleCoreSchema.optional().describe('The puzzle core (vno_puzzle_generate makes one). Needed for a new puzzle'),
+    names: z.record(z.string(), z.string()).optional().describe('Item id -> name (s1: Colonel Ash). Needed for a new puzzle'),
+    text: z.record(z.string(), z.string()).optional().describe('Clue id (and murder) -> the clue in prose. Needed for a new puzzle'),
+    links: z.record(z.string(), z.object({ type: z.enum(['character', 'place', 'image']), key: z.string() })).nullable().optional(),
+    clueAt: z.record(z.string(), z.string()).nullable().optional().describe('Clue id -> the beat id where the clue is found; the puzzle lists only the clues found by then'),
+    onFail: puzzleEntrySchema.shape.onFail.nullable(),
+    hints: z.boolean().nullable().optional(),
+    verified: puzzleEntrySchema.shape.verified.optional().describe('What the code proved (set by vno_puzzle_set, not by hand)')
+  }),
+  z.object({ op: z.literal('puzzle.remove'), key: z.string(), force: z.boolean().optional().describe('Also remove the beat that plays it') }),
   z.object({ op: z.literal('character.remove'), key: z.string(), force: z.boolean().optional().describe('Also remove its cast entries and make its lines speakerless') }),
   z.object({ op: z.literal('place.set'), key: z.string().optional().describe('An existing key to change, or the key of a new place'), name: z.string().optional(), looks: z.string().optional() }),
   z.object({ op: z.literal('place.remove'), key: z.string(), force: z.boolean().optional().describe('The scenes keep the place text but lose the place') }),
@@ -509,7 +571,7 @@ export const storyOpSchema = z.discriminatedUnion('op', [
 ])
 export type StoryOp = z.infer<typeof storyOpSchema>
 
-export type StoryPart = 'book' | 'characters' | 'places' | 'images' | 'sounds' | 'chapters' | 'scenes' | 'beats'
+export type StoryPart = 'book' | 'characters' | 'places' | 'images' | 'sounds' | 'puzzles' | 'chapters' | 'scenes' | 'beats'
 
 export interface Affected {
   /** Keys of the characters whose name or looks changed (or that are new): their sheet and sprites need new prompts. */
@@ -723,6 +785,53 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
           changed.add('sounds')
           break
         }
+        case 'puzzle.set': {
+          const key = op.key.trim()
+          if (!KEY_RE.test(key)) throw new Error(`puzzle key "${key}" must be lowercase letters, digits and underscores, starting with a letter`)
+          const puzzles = (book.puzzles ??= [])
+          let p = puzzles.find((x) => x.key === key)
+          if (!p) {
+            if (!op.data || !op.names || !op.text || !op.verified) throw new Error(`no puzzle "${key}": give data, names, text and verified to create it (vno_puzzle_set does this)`)
+            p = puzzleEntrySchema.parse({ key, kind: op.data.kind, data: op.data, names: op.names, text: op.text, verified: op.verified })
+            puzzles.push(p)
+            created.push(`puzzle ${key}`)
+          } else {
+            if (op.data) p.data = op.data
+            if (op.names) p.names = { ...p.names, ...op.names }
+            if (op.text) p.text = { ...p.text, ...op.text }
+            if (op.verified) p.verified = op.verified
+            else if (op.data || op.text) p.verified = { ...p.verified, textChecked: false }
+          }
+          const opt = <K extends 'links' | 'clueAt' | 'onFail' | 'hints'>(k: K) => {
+            const v = op[k] as unknown
+            if (v === null) delete p![k]
+            else if (v !== undefined) (p as Record<string, unknown>)[k] = v
+          }
+          opt('links')
+          opt('clueAt')
+          opt('onFail')
+          opt('hints')
+          changed.add('puzzles')
+          break
+        }
+        case 'puzzle.remove': {
+          const key = op.key.trim()
+          if (!book.puzzles?.some((p) => p.key === key)) throw new Error(`no puzzle "${key}"`)
+          const users: string[] = []
+          eachBeat(book, (b) => {
+            if (b.type === 'puzzle' && b.puzzle === key) users.push(b.id)
+          })
+          if (users.length && !op.force) throw new Error(`puzzle "${key}" is played by beat ${users.join(', ')}: remove the beat first, or pass force to remove it too`)
+          for (const id of users) {
+            const { scene, index } = locateBeat(book, id)
+            scene.beats.splice(index, 1)
+          }
+          book.puzzles = book.puzzles.filter((p) => p.key !== key)
+          if (!book.puzzles.length) delete book.puzzles
+          changed.add('puzzles')
+          if (users.length) changed.add('beats')
+          break
+        }
         case 'character.remove': {
           if (!book.characters.some((c) => c.key === op.key)) throw new Error(`no character "${op.key}"`)
           let uses = 0
@@ -857,7 +966,7 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
           const { beat } = locateBeat(book, op.beatId)
           const bad = (field: string) => new Error(`a ${beat.type} beat has no ${field}`)
           if (op.text !== undefined) {
-            if (beat.type === 'cast') throw bad('text')
+            if (!hasText(beat)) throw bad('text')
             if (!op.text.trim()) throw new Error('the text cannot be empty (remove the beat instead)')
             beat.text = op.text
           }

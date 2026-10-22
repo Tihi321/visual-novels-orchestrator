@@ -1,4 +1,5 @@
-import type { Edition, Lang, VnBeat, VnBook, VnScene } from '../../shared/vn'
+import { hasText } from '../../shared/vn'
+import type { Edition, Lang, TextBeat, VnBook, VnScene } from '../../shared/vn'
 import { parseRawBook } from './import'
 import type { ParsedFolder } from './import'
 import { normText } from './ids'
@@ -24,8 +25,7 @@ export interface AlignResult {
   report: AlignReport
 }
 
-type TextBeat = Exclude<VnBeat, { type: 'cast' }>
-const isText = (b: VnBeat): b is TextBeat => b.type !== 'cast'
+const isText = hasText
 
 const sim = (a: string, b: string) => {
   const x = a.length

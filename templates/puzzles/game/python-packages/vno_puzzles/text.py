@@ -93,7 +93,7 @@ def step_text(p, step, names=None):
     if rule == "clue":
         cl = next((c for c in p["clues"] if c["id"] == step.get("clue")), None)
         num = cl["id"][1:] if cl else "?"
-        return "Clue %s says: %s So %s %s %s." % (num, clue_text(p, cl, nm) if cl else "", A, "goes with" if yes else "cannot go with", B)
+        return "Clue %s says: %s So %s %s %s." % (num, _clue_prose(p, cl, nm), A, "goes with" if yes else "cannot go with", B)
     if rule == "elim":
         f = step["from"][0]
         return "%s goes with %s, so %s cannot go with %s." % (_the_name(p, f[0], nm, cap=True), _the_name(p, f[1], nm), A, B)
@@ -102,11 +102,18 @@ def step_text(p, step, names=None):
     if rule == "either":
         cl = next((c for c in p["clues"] if c["id"] == step.get("clue")), None)
         num = cl["id"][1:] if cl else "?"
-        return "Clue %s says: %s One of the two is ruled out, so %s goes with %s." % (num, clue_text(p, cl, nm) if cl else "", A, B)
+        return "Clue %s says: %s One of the two is ruled out, so %s goes with %s." % (num, _clue_prose(p, cl, nm), A, B)
     if rule == "trans":
         f1, f2 = step["from"]
         return "%s and %s are linked through %s, so %s %s %s." % (A, B, _the_name(p, _shared(f1, f2), nm), A, "goes with" if yes else "cannot go with", B)
     return "%s %s %s." % (A, "goes with" if yes else "cannot go with", B)
+
+
+def _clue_prose(p, clue, nm):
+    """The clue as the player reads it: the prose of the book when it has one, else the canonical sentence."""
+    if not clue:
+        return ""
+    return p.get("text", {}).get(clue["id"]) or clue_text(p, clue, nm)
 
 
 def _shared(c1, c2):
@@ -130,8 +137,17 @@ def fill(p, names=None):
     return p
 
 
+def render_text(p, names=None):
+    """{names, text}: the canonical sentences of a puzzle core with these names (default: the PoC names). The puzzle is not changed."""
+    q = dict(p)
+    q.pop("text", None)
+    q.pop("names", None)
+    fill(q, names)
+    return {"names": q["names"], "text": q["text"]}
+
+
 def all_sentences(p):
     return list(p.get("text", {}).values()) + list(p.get("names", {}).values())
 
 
-__all__ = ["POC_NAMES", "LABELS", "safe_text", "default_names", "clue_text", "murder_text", "step_text", "fill", "all_sentences", "category_index"]
+__all__ = ["render_text", "POC_NAMES", "LABELS", "safe_text", "default_names", "clue_text", "murder_text", "step_text", "fill", "all_sentences", "category_index"]

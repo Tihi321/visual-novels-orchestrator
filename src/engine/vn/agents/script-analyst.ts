@@ -75,7 +75,7 @@ export function describeItems(book: VnBook, items: Uncertain[]): Record<string, 
     base.scene = { place: scene.placeText, placeKey: scene.placeKey, time: scene.time, description: clip(scene.description, 160) }
     const at = u.beatId ? scene.beats.findIndex((b) => b.id === u.beatId) : -1
     const around = at >= 0 ? scene.beats.slice(Math.max(0, at - 2), at + 3) : scene.beats.slice(0, 3)
-    base.around = around.map((b) => (b.type === 'cast' ? `[on screen: ${b.cast.map((c) => c.charKey).join(', ')}]` : b.type === 'line' ? `${b.speakerLabel}${b.rawExpression ? ` (${b.rawExpression})` : ''}: ${clip(b.text, 120)}` : `[narration] ${clip(b.text, 120)}`))
+    base.around = around.map((b) => (b.type === 'cast' ? `[on screen: ${b.cast.map((c) => c.charKey).join(', ')}]` : b.type === 'puzzle' ? `[puzzle ${b.puzzle}]` : b.type === 'line' ? `${b.speakerLabel}${b.rawExpression ? ` (${b.rawExpression})` : ''}: ${clip(b.text, 120)}` : `[narration] ${clip(b.text, 120)}`))
     return base
   })
 }

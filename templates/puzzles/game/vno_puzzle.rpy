@@ -56,11 +56,26 @@ init python:
             st["struck"] = st["struck"] + [clue_id]
         renpy.restart_interaction()
 
+    def vno_clue_found(pid, clue_id):
+        """A clue of a puzzle is found in the story (a `CLUE:` beat): the puzzle screen lists it from now on."""
+        found = vno_clues_found.get(pid, [])
+        if clue_id not in found:
+            vno_clues_found[pid] = found + [clue_id]
+
+    def vno_max_tries(p):
+        """How many wrong accusations end the puzzle: 0 (never) for `retry`, else onFail.maxTries (default 3)."""
+        fail = p.get("onFail")
+        if not fail or fail.get("mode", "retry") == "retry":
+            return 0
+        return fail.get("maxTries", 3)
+
     def vno_dev_line(p):
         d = p["difficulty"]
         return "steps %d, score %d, rules %s" % (d["steps"], d["score"], ", ".join("%s %d" % (k, v) for k, v in sorted(d["rules"].items())))
 
 default vno_puzzle_state = {}
+default vno_clues_found = {}
+default vno_puzzle_failed = {}
 default persistent.vno_auto_cross = True
 
 ## One cell of the grid: a button that shows nothing, a check mark or a cross.
@@ -88,7 +103,8 @@ screen vno_murdle(pid, p):
     $ weapons = p["categories"][1]["items"]
     $ places = p["categories"][2]["items"]
     add Solid("#0d0d16ee")
-    text ("seed %s, %s" % (p["seed"], p["band"])) size 18 color "#8888aa" xalign 1.0 xoffset -12 yoffset 6
+    if "seed" in p:
+        text ("seed %s, %s" % (p["seed"], p["band"])) size 18 color "#8888aa" xalign 1.0 xoffset -12 yoffset 6
     if config.developer:
         text vno_dev_line(p) size 18 color "#8888aa" xalign 1.0 xoffset -12 yoffset 28
     hbox:
@@ -101,11 +117,13 @@ screen vno_murdle(pid, p):
             text "Who did it, with what, and where?" size 40
             text p["text"]["murder"] size 30 color "#f0d890"
             text "Click a clue to strike it out." size 20 color "#8888aa"
-            for c in p["clues"]:
+            $ found = vno_clues_found.get(pid, [])
+            for c in [x for x in p["clues"] if "at" not in x or x["id"] in found]:
                 $ struck = c["id"] in st["struck"]
-                textbutton (("{s}" + p["text"][c["id"]] + "{/s}") if struck else p["text"][c["id"]]):
+                textbutton p["text"][c["id"]]:
                     action Function(vno_strike, pid, c["id"])
                     text_size 28
+                    text_strikethrough struck
                     text_color ("#777788" if struck else "#ffffff")
                     text_hover_color "#f0d890"
                     xsize 660
@@ -135,7 +153,8 @@ screen vno_murdle(pid, p):
             null height 18
             hbox:
                 spacing 24
-                textbutton "Hint" action Return("hint")
+                if p.get("hints", True):
+                    textbutton "Hint" action Return("hint")
                 textbutton "Undo" action Function(vno_undo, pid) sensitive bool(st["history"])
                 textbutton "Clear" action Function(vno_clear, pid) sensitive bool(st["marks"])
                 textbutton "Accuse" action Return("accuse") text_color "#f0d890"
@@ -180,6 +199,7 @@ screen vno_accuse(p):
 label vno_puzzle_play(pid, p):
     $ vno_ps(pid)
     $ vno_result = None
+    $ vno_limit = vno_max_tries(p)
     while vno_result is None:
         call screen vno_murdle(pid, p)
         $ vno_action = _return
@@ -197,7 +217,10 @@ label vno_puzzle_play(pid, p):
                     $ vno_ps(pid)["tries"] += 1
                     $ vno_n_wrong = len(vno_check["wrong"])
                     narrator "Not quite. [vno_n_wrong] of the three parts of that accusation are wrong."
-                    if vno_ps(pid)["tries"] >= 2:
+                    if vno_limit and vno_ps(pid)["tries"] >= vno_limit:
+                        narrator "That was the last chance."
+                        $ vno_result = False
+                    elif p.get("hints", True) and vno_ps(pid)["tries"] >= 2:
                         menu:
                             "Would you like a hint?"
                             "Yes, a hint please":
@@ -208,5 +231,7 @@ label vno_puzzle_play(pid, p):
                                 pass
         elif vno_action == "giveup":
             $ vno_result = False
+    if vno_result is False:
+        $ vno_puzzle_failed[pid] = True
     $ renpy.block_rollback()
     return vno_result

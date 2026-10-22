@@ -1,6 +1,6 @@
 # Puzzle library (phase 1, proof of concept)
 
-Logic puzzles for visual novels: a generator and solver in Python, and the Ren'Py screens that play them. Nothing here is part of a normal build yet (phase 2 copies `game/` into a book that has a puzzle beat). Plan: the hub ticket HUB-10, `C:\projects\Personal\creative-hub\.claude\tickets\HUB-10-puzzle-visual-novels\plan.md`. VN Studio ticket: `.claude/tickets/VNO-12-puzzles-poc/`.
+Logic puzzles for visual novels: a generator and solver in Python, and the Ren'Py screens that play them. A normal build does not include it: the build copies `game/` into a book that has a puzzle beat (VNO-13), with `vno_puzzles_data.rpy` written from the book's puzzles. `poc/` is never copied into a book. Plan: the hub ticket HUB-10, `C:\projects\Personal\creative-hub\.claude\tickets\HUB-10-puzzle-visual-novels\plan.md`. VN Studio ticket: `.claude/tickets/VNO-12-puzzles-poc/`.
 
 ```
 game/python-packages/vno_puzzles/   the library (pure Python, standard library only)
@@ -9,7 +9,8 @@ game/python-packages/vno_puzzles/   the library (pure Python, standard library o
   generator.py  generate(kind, size, seed, band) and verify(puzzle)
   text.py       canonical English sentences, the PoC names, the sentences of the hints
   play.py       game-time helpers (cycle_mark, auto_cross, check_accusation, check_marks, hint)
-  cli.py        JSON in and out: generate, solve, check
+  verify.py     check_text: does the prose still mean the same clues (the flavour check)
+  cli.py        JSON in and out: generate, solve, check, check-text, render-text
 game/vno_puzzle.rpy                 the screens vno_murdle and vno_accuse, the label vno_puzzle_play
 poc/puzzle_poc.rpy                  the proof of concept story: intro, a puzzle, an accusation, "another puzzle"
 poc/puzzle_poc_test.rpy             a Ren'Py test case (scripts/puzzle-poc.ts --selftest)

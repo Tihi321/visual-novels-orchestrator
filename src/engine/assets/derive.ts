@@ -99,6 +99,9 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
     }
   }
 
+  // an item of a puzzle that is a picture of the story (an insert: a weapon, a letter) is made too, even when no beat shows it
+  for (const p of book.puzzles ?? []) for (const l of Object.values(p.links ?? {})) if (l.type === 'image' && book.images?.some((i) => i.key === l.key)) note(pictures, l.key)
+
   // the characters of a picture have sheets (they are its references)
   const imageEntries = pictures.flatMap((k) => book.images?.find((i) => i.key === k) ?? [])
   for (const img of imageEntries) for (const c of (img.characters ?? []).slice(0, 3)) if (book.characters.some((x) => x.key === c)) note(appearing, c)

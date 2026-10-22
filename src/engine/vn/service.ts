@@ -21,7 +21,7 @@ import type {
   VnCommand
 } from '../../shared/protocol'
 import { assertKnownLang } from '../../shared/languages'
-import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, hasText, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
 import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
 import { importAssetFile } from '../assets/import'
@@ -74,6 +74,8 @@ import { chiptuneClientFor, flowClientFor, flowStartHint, loadStudiosConfig, pix
 import type { StudioId, StudiosConfig } from '../studios/config'
 import type { ChiptuneClient } from '../studios/chiptune'
 import type { FlowClient } from '../studios/flow'
+import { packagesDirOf } from '../puzzles/python'
+import type { PuzzlePython } from '../puzzles/python'
 import type { ServiceStarter } from '../studios/autostart'
 import type { PixelClient } from '../studios/pixel'
 import type { Watch } from '../studios/launch'
@@ -889,7 +891,7 @@ export class VnService {
   async setEdition(
     slug: string,
     lang: Lang,
-    patch: Partial<Pick<Edition, 'title' | 'chapterTitles' | 'choiceTexts' | 'endings' | 'characterNames' | 'beats'>> & { replace?: boolean }
+    patch: Partial<Pick<Edition, 'title' | 'chapterTitles' | 'choiceTexts' | 'endings' | 'characterNames' | 'beats'>> & { puzzles?: Record<string, { names?: Record<string, string>; text?: Record<string, string> }>; replace?: boolean }
   ): Promise<{ edition: Edition; missing: { beats: string[]; other: string[] } }> {
     await this.knownLang(lang)
     const r = await this.store.withLock(slug, async () => {
@@ -897,7 +899,7 @@ export class VnService {
       if (lang === settings.primaryLang) throw new Error(`${lang} is the primary language of ${slug}: edit its text with the story tools (vno_beat_update ...)`)
       const book = await this.store.loadBook(slug)
       const textBeats = new Set<string>()
-      for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.type !== 'cast') textBeats.add(b.id)
+      for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (hasText(b)) textBeats.add(b.id)
       const chapters = new Set(book.chapters.map((c) => String(c.n)))
       const choices = new Set(book.chapters.flatMap((c) => c.choices.map((_, i) => `${c.n}:${i}`)))
       const endings = new Set(book.chapters.filter((c) => c.ending).map((c) => String(c.n)))
@@ -913,6 +915,15 @@ export class VnService {
       check('choice', patch.choiceTexts && Object.keys(patch.choiceTexts), choices)
       check('ending of chapter', patch.endings && Object.keys(patch.endings), endings)
       check('character', patch.characterNames && Object.keys(patch.characterNames), chars)
+      for (const [key, words] of Object.entries(patch.puzzles ?? {})) {
+        const pz = book.puzzles?.find((p) => p.key === key)
+        if (!pz) {
+          errors.push(`no puzzle ${key} in ${slug}${book.puzzles?.length ? ` (puzzles: ${book.puzzles.map((p) => p.key).join(', ')})` : ''}`)
+          continue
+        }
+        check(`item of puzzle ${key}`, words.names && Object.keys(words.names), new Set(Object.keys(pz.names)))
+        check(`clue of puzzle ${key}`, words.text && Object.keys(words.text), new Set(Object.keys(pz.text)))
+      }
       if (errors.length) throw new Error(errors.join('; '))
       const cur: Edition = (!patch.replace && (await this.store.loadEdition(slug, lang).catch(() => null))) || { lang, title: book.title, chapterTitles: {}, choiceTexts: {}, endings: {}, characterNames: {}, beats: {} }
       const edition: Edition = {
@@ -924,13 +935,19 @@ export class VnService {
         characterNames: { ...cur.characterNames, ...(patch.characterNames ?? {}) },
         beats: { ...cur.beats, ...(patch.beats ?? {}) }
       }
+      if (cur.puzzles || patch.puzzles) {
+        const merged: Record<string, { names: Record<string, string>; text: Record<string, string> }> = { ...(cur.puzzles ?? {}) }
+        for (const [key, words] of Object.entries(patch.puzzles ?? {})) merged[key] = { names: { ...(merged[key]?.names ?? {}), ...(words.names ?? {}) }, text: { ...(merged[key]?.text ?? {}), ...(words.text ?? {}) } }
+        edition.puzzles = merged
+      }
       await this.store.saveEdition(slug, edition)
       if (!settings.editions.includes(lang)) await this.store.saveSettings({ ...settings, editions: [...settings.editions, lang].sort() })
       const other = [
         ...[...chapters].filter((n) => !edition.chapterTitles[Number(n)]).map((n) => `chapter ${n} title`),
         ...[...choices].filter((k) => !edition.choiceTexts[k]).map((k) => `choice ${k}`),
         ...[...endings].filter((n) => !edition.endings[Number(n)]).map((n) => `ending ${n}`),
-        ...[...chars].filter((k) => !edition.characterNames[k]).map((k) => `name of ${k}`)
+        ...[...chars].filter((k) => !edition.characterNames[k]).map((k) => `name of ${k}`),
+        ...(book.puzzles ?? []).flatMap((p) => [...Object.keys(p.names).filter((k) => !edition.puzzles?.[p.key]?.names[k]).map((k) => `puzzle ${p.key} name of ${k}`), ...Object.keys(p.text).filter((k) => !edition.puzzles?.[p.key]?.text[k]).map((k) => `puzzle ${p.key} ${k === 'murder' ? 'murder note' : `clue ${k}`}`)])
       ]
       return { edition, missing: { beats: [...textBeats].filter((id) => !edition.beats[id]?.trim()), other } }
     })
@@ -950,7 +967,7 @@ export class VnService {
       await this.store.saveEdition(slug, ed)
       // the primary text lives in vn.json too: keep the two in step
       if (lang === settings.primaryLang) {
-        for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.id === beatId && b.type !== 'cast') b.text = text
+        for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.id === beatId && hasText(b)) b.text = text
         await this.store.saveBook(slug, book)
       }
       const rep = await this.store.loadAlignReport(slug, lang)
@@ -1319,6 +1336,11 @@ export class VnService {
       flow: this.deps.flow ?? flowClientFor(config),
       config
     }
+  }
+
+  /** The Ren'Py SDK's Python and the puzzle library, for the `vno_puzzle_*` tools. */
+  async puzzlePython(): Promise<PuzzlePython> {
+    return { sdkPath: (await loadRenpyConfig(this.dataDir)).sdkPath, packagesDir: packagesDirOf(this.dirs.templates) }
   }
 
   /** Asks both studios for their tools. Never throws: an unreachable studio is `ok: false` with the message (and how to start it). */

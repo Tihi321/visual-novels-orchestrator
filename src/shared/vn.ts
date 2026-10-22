@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { BUILTIN_LANGUAGES, LEGACY_LANGS } from './languages'
+import { editionPuzzleSchema, puzzleEntrySchema } from './puzzle'
 
 /**
  * The VN data contract: the book structure (`vn.json`), editions (`editions/<lang>.json`), the per-project settings
@@ -69,8 +70,19 @@ export const narrationBeatSchema = z.object({
   ...beatCues
 })
 
-export const vnBeatSchema = z.discriminatedUnion('type', [castBeatSchema, lineBeatSchema, narrationBeatSchema])
+/** A puzzle the player solves here (a key of the book's `puzzles`). The story goes on when it is solved (or given up, or failed: see the puzzle's `onFail`). */
+export const puzzleBeatSchema = z.object({
+  id: z.string(),
+  type: z.literal('puzzle'),
+  puzzle: z.string(),
+  ...beatCues
+})
+
+export const vnBeatSchema = z.discriminatedUnion('type', [castBeatSchema, lineBeatSchema, narrationBeatSchema, puzzleBeatSchema])
 export type VnBeat = z.infer<typeof vnBeatSchema>
+/** A beat with words: a line or a narration (a cast and a puzzle have none). */
+export type TextBeat = Extract<VnBeat, { text: string }>
+export const hasText = (b: VnBeat): b is TextBeat => b.type === 'line' || b.type === 'narration'
 
 // ---- scenes, chapters, book ----
 
@@ -155,6 +167,8 @@ export const vnBookSchema = z.object({
   images: z.array(imageEntrySchema).optional(),
   /** Sound effects and ambiences the story plays (`sfx_<key>`, `amb_<key>`). */
   sounds: z.array(soundEntrySchema).optional(),
+  /** Logic puzzles between story scenes (a `puzzle` beat plays one). */
+  puzzles: z.array(puzzleEntrySchema).optional(),
   coverBrief: z.string().optional(),
   chapters: z.array(vnChapterSchema),
   /** Problems found while importing (a bad branch, an unknown speaker ...). */
@@ -177,7 +191,9 @@ export const editionSchema = z.object({
   /** Character key -> display name. */
   characterNames: z.record(z.string(), z.string()),
   /** Beat id -> text. */
-  beats: z.record(z.string(), z.string())
+  beats: z.record(z.string(), z.string()),
+  /** Puzzle key -> the names and clue texts in this language. */
+  puzzles: z.record(z.string(), editionPuzzleSchema).optional()
 })
 export type Edition = z.infer<typeof editionSchema>
 

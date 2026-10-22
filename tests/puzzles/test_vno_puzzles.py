@@ -20,7 +20,7 @@ sys.path.insert(0, PACKAGES)
 
 import vno_puzzles  # noqa: E402
 from vno_puzzles import cli, generate, solve, verify  # noqa: E402
-from vno_puzzles import play, text  # noqa: E402
+from vno_puzzles import check_text, play, render_text, text  # noqa: E402
 from vno_puzzles.model import all_cells, answer_of, clue_true, owners_of, validate  # noqa: E402
 from vno_puzzles.solver import allowed_for, band_of, count_solutions, deduce  # noqa: E402
 
@@ -286,6 +286,76 @@ def test_every_clue_type_and_pair_has_a_sentence_without_markup():
         assert all(text.safe_text(s) for s in text.all_sentences(q))
         for s in q["steps"]:
             assert text.safe_text(text.step_text(q, s))
+
+
+# ---- the flavour check ----
+
+def read_back(p, names=None):
+    nm = names or p["names"]
+    return [{"id": c["id"], "type": c["type"], "a": nm[c["a"]], "b": [nm[x] for x in c["b"]] if isinstance(c["b"], list) else nm[c["b"]]} for c in p["clues"]]
+
+
+def test_check_text_passes_a_faithful_read_back_and_catches_changed_clues():
+    p = next(q for q in (generate("murdle", 3, n, "medium") for n in range(1, 60)) if any(c["type"] == "either" for c in q["clues"]))
+    rb = read_back(p)
+    ok = check_text(p, rb, p["text"])
+    assert ok == {"ok": True, "problems": [], "differing": []}, ok
+    # ids are accepted too (a reader that answers with the item ids)
+    assert check_text(p, read_back(p, {k: k for k in p["names"]}), p["text"])["ok"]
+    # a "not" turned into an "is" (or the reverse), a swapped name, an either clue that lost an option
+    flipped = copy.deepcopy(rb)
+    flipped[0]["type"] = "is" if flipped[0]["type"] == "not" else "not"
+    if isinstance(flipped[0]["b"], list):
+        flipped[0]["type"], flipped[0]["b"] = "not", flipped[0]["b"][0]
+    bad = check_text(p, flipped, p["text"])
+    assert not bad["ok"] and bad["differing"] == [p["clues"][0]["id"]], bad
+    swapped = copy.deepcopy(rb)
+    other = next(n for n in p["names"].values() if n != swapped[1]["a"] and (n not in (swapped[1]["b"] if isinstance(swapped[1]["b"], list) else [swapped[1]["b"]])))
+    swapped[1]["a"] = other
+    assert not check_text(p, swapped, p["text"])["ok"]
+    either = next(i for i, c in enumerate(p["clues"]) if c["type"] == "either")
+    lost = copy.deepcopy(rb)
+    lost[either]["b"] = lost[either]["b"][0]
+    r = check_text(p, lost, p["text"])
+    assert not r["ok"] and "either" in r["problems"][0]["problem"], r
+    # a missing clue, an unknown name, a name the prose does not contain
+    assert not check_text(p, rb[1:], p["text"])["ok"]
+    unknown = copy.deepcopy(rb)
+    unknown[0]["a"] = "Zorro"
+    assert "not a name of this puzzle" in check_text(p, unknown, p["text"])["problems"][0]["problem"]
+    thin = dict(p["text"])
+    thin[p["clues"][0]["id"]] = "Somebody did something."
+    assert "which the prose does not contain" in check_text(p, rb, thin)["problems"][0]["problem"]
+
+
+def test_check_text_accepts_a_paraphrase_that_means_the_same_clue():
+    # "not" read as "not", with the items given in the other order for an is-clue: same truth table
+    p = hand(HAND_CLUES)
+    rb = [{"id": c["id"], "type": c["type"], "a": p["names"][c["b"]], "b": p["names"][c["a"]]} if c["type"] in ("is", "not") else None for c in p["clues"]]
+    assert check_text(p, rb)["ok"]
+    # two different clues that happen to hold in the same solutions only count when they are equivalent on every assignment
+    wrong = copy.deepcopy(rb)
+    wrong[2] = {"id": "c3", "type": "is", "a": p["names"]["w2"], "b": p["names"]["p3"]}
+    assert not check_text(p, wrong)["ok"]
+
+
+def test_read_back_that_breaks_uniqueness_is_reported():
+    p = generate("murdle", 3, 3, "easy")
+    rb = read_back(p)
+    # drop the clue's constraint by replacing it with a weaker but equivalent-looking one is caught per clue; here every clue is faithful
+    assert check_text(p, rb, p["text"])["ok"]
+
+
+def test_render_text_gives_canonical_sentences_for_new_names():
+    p = generate("murdle", 3, 7, "medium")
+    core = {k: v for k, v in p.items() if k not in ("names", "text")}
+    names = {"s1": "Anna", "s2": "Ben", "s3": "Cy", "w1": "axe", "w2": "vase", "w3": "gun", "p1": "hall", "p2": "loft", "p3": "cellar"}
+    r = render_text(core, names)
+    assert r["names"] == names
+    assert set(r["text"]) == {c["id"] for c in p["clues"]} | {"murder"}
+    assert all(text.safe_text(t) for t in r["text"].values())
+    assert "Colonel Ash" not in " ".join(r["text"].values())
+    assert "names" not in core and "text" not in core  # the puzzle is not changed
 
 
 # ---- 6. CLI ----

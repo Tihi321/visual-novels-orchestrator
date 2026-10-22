@@ -87,12 +87,12 @@ export function storyTools(svc: VnService, def: ToolDef): Tool[] {
     one('vno_scene_add', 'scene.add', 'Add a scene to a chapter: place (a key, a name or free text), time, description, breakBefore and its beats. at is its position in the chapter (from 0, default the end).'),
     one('vno_scene_update', 'scene.update', 'Change a scene: place, time (the background follows them), description, breakBefore.'),
     one('vno_scene_remove', 'scene.remove', 'Remove a scene with its beats.'),
-    one('vno_beat_add', 'beat.add', 'Add beats to a scene: cast ({ cast: [keys] }), lines ({ speaker, expression, text }) or narration ({ text }). at is the position (from 0) or after is a beat id; default the end.'),
+    one('vno_beat_add', 'beat.add', 'Add beats to a scene: cast ({ cast: [keys] }), lines ({ speaker, expression, text }), narration ({ text }) or a puzzle the player solves here ({ puzzle: key }, see vno_puzzle_set). at is the position (from 0) or after is a beat id; default the end.'),
     one('vno_beat_update', 'beat.update', 'Change a beat: text (line or narration), speaker and expression (line), cast (cast beat: the new list of who is on screen).'),
     one('vno_beat_remove', 'beat.remove', 'Remove beats by id (beatIds).'),
     def(
       'vno_edition_set',
-      `Write the text of another language yourself (no book folder needed): a new edition, or entries merged into the existing one (replace: start from an empty one). beats maps text beat ids to their text; chapterTitles and endings map chapter numbers; choiceTexts maps "<chapter>:<choice index from 0>"; characterNames maps character keys. Every key must exist in the book (vno_get_story). Text you leave out stays in the primary language; the result lists what is missing. For the primary language use the story tools. ${BUILD_HINT}`,
+      `Write the text of another language yourself (no book folder needed): a new edition, or entries merged into the existing one (replace: start from an empty one). beats maps text beat ids to their text; chapterTitles and endings map chapter numbers; choiceTexts maps "<chapter>:<choice index from 0>"; characterNames maps character keys; puzzles maps a puzzle key to { names: item id -> name, text: clue id (and murder) -> clue in prose } in that language (check it with vno_puzzle_check_text {lang}). Every key must exist in the book (vno_get_story). Text you leave out stays in the primary language; the result lists what is missing. For the primary language use the story tools. ${BUILD_HINT}`,
       z.object({
         slug,
         lang: langSchema.describe('The language code of the edition (vno_languages)'),
@@ -102,6 +102,7 @@ export function storyTools(svc: VnService, def: ToolDef): Tool[] {
         endings: z.record(z.string(), z.string()).optional(),
         characterNames: z.record(z.string(), z.string()).optional(),
         beats: z.record(z.string(), z.string()).optional(),
+        puzzles: z.record(z.string(), z.object({ names: z.record(z.string(), z.string()).optional(), text: z.record(z.string(), z.string()).optional() })).optional(),
         replace: z.boolean().optional()
       }),
       async ({ slug: s, lang, ...patch }) => {

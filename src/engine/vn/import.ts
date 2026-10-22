@@ -1,5 +1,5 @@
 import { basename } from 'node:path'
-import { vnBookSchema } from '../../shared/vn'
+import { hasText, vnBookSchema } from '../../shared/vn'
 import type { Edition, ImageEntry, Lang, SoundEntry, VnBook, VnChapter } from '../../shared/vn'
 import { mergeBibleAliases } from './aliases'
 import type { AliasMerge } from './aliases'
@@ -73,7 +73,7 @@ export function textSample(chapters: VnChapter[]): string {
   const parts: string[] = []
   for (const c of chapters) {
     parts.push(c.title)
-    for (const s of c.scenes) for (const b of s.beats) if (b.type !== 'cast') parts.push(b.text)
+    for (const s of c.scenes) for (const b of s.beats) if (hasText(b)) parts.push(b.text)
   }
   return parts.join('\n')
 }
@@ -88,7 +88,7 @@ export function buildEdition(lang: Lang, title: string, chapters: VnChapter[], c
     chapterTitles[c.n] = c.title
     c.choices.forEach((ch, i) => (choiceTexts[`${c.n}:${i}`] = ch.text))
     if (c.ending) endings[c.n] = c.ending
-    for (const s of c.scenes) for (const b of s.beats) if (b.type !== 'cast') beats[b.id] = b.text
+    for (const s of c.scenes) for (const b of s.beats) if (hasText(b)) beats[b.id] = b.text
   }
   const characterNames: Record<string, string> = {}
   for (const ch of characters) characterNames[ch.key] = ch.name

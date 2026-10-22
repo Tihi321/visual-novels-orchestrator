@@ -4,6 +4,7 @@ An Electron + TypeScript desktop app that takes a visual-novel book written in [
 
 - A book can be in any of 37 languages (the 31 that VibeTTS Supertonic reads plus Book Translator's; more in `config/languages.md`), and the language is detected. A translated edition (a translated book folder, or text written over MCP) reuses every asset and only replaces the text. There is no machine translation inside VN Studio.
 - A story can also be written straight into VN Studio over MCP (`vno_create_project` and the story tools), with no Scriptorium folder.
+- A story can stop for a logic puzzle (a 3x3 Murdle so far): code makes and proves it, a `puzzle` beat plays it (`vno_puzzle_*` tools, `docs/mcp-guide.md` "Puzzles").
 - Models: local ones (LM Studio, Strata) plus every Scriptorium provider (DeepSeek, Anthropic, Gemini, OpenRouter, other OpenAI-compatible APIs), and the `client` provider (on by default, used only when you pick it): set a role to `client/claude-code` and an MCP client (Claude Code) answers its model calls itself, for free (`vno_get_task` / `vno_submit_task`). Pick the models on the Models page and a model per agent on the Agents page.
 - The engine core (model router, job queue, agents) is a plain copy of Scriptorium's. The plan is in `.claude/tickets/VNO-01-visual-novel-studio-scriptorium-book-ren/plan.md`.
 

@@ -8,7 +8,8 @@ from .generator import generate, verify
 from .model import FORMAT, PuzzleError, validate
 from .play import auto_cross, check_accusation, check_marks, cycle_mark, hint, is_complete, set_mark
 from .solver import band_of, count_solutions, deduce
-from .text import clue_text, murder_text, step_text
+from .text import clue_text, murder_text, render_text, step_text
+from .verify import check_text
 
 __version__ = "1.0"
 
@@ -30,6 +31,6 @@ def solve(p):
 
 
 __all__ = [
-    "FORMAT", "PuzzleError", "__version__", "auto_cross", "band_of", "check_accusation", "check_marks", "clue_text", "count_solutions",
+    "FORMAT", "PuzzleError", "__version__", "auto_cross", "band_of", "check_accusation", "check_marks", "check_text", "clue_text", "render_text", "count_solutions",
     "cycle_mark", "deduce", "generate", "hint", "is_complete", "murder_text", "set_mark", "solve", "step_text", "validate", "verify",
 ]

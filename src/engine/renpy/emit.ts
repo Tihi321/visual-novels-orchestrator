@@ -1,9 +1,10 @@
 import path from 'node:path'
-import type { Edition, Lang, VnBook, VnChapter, VnScene } from '../../shared/vn'
+import type { Edition, Lang, VnBeat, VnBook, VnChapter, VnScene } from '../../shared/vn'
 import { aliasIndex } from '../vn/aliases'
 import { ambId, sfxId } from '../vn/ids'
 import { renpyPlainString, renpyString, renpyText, slugify } from './escape'
 import { bgImageName, cgImageName, pickColor, spriteImageName, type UsedImages } from './images'
+import { emitPuzzleData, puzzleStrings } from './puzzles'
 import { assignSlots, type Slot, type StageCues } from './stage'
 
 /**
@@ -256,7 +257,7 @@ function emitScene(w: Writer, ctx: ChapterCtx, scene: VnScene): void {
     return 'neutral'
   }
 
-  scene.beats.forEach((beat, idx) => {
+  const emitOne = (beat: VnBeat, idx: number): void => {
     // the cues of this beat (the cues you set win over the story's): a picture, a sound effect, an ambience
     const bc = cues.beats?.[beat.id]
     const image = bc?.image !== undefined ? bc.image : beat.image
@@ -279,6 +280,22 @@ function emitScene(w: Writer, ctx: ChapterCtx, scene: VnScene): void {
       else ctx.warnings.push(`${beat.id}: sound effect ${sfx} has no file yet: skipped`)
     }
     if (ambience !== undefined) emitAmbience(w, ctx, beat.id, ambience)
+    if (beat.type === 'puzzle') {
+      const pz = ctx.book.puzzles?.find((p) => p.key === beat.puzzle)
+      if (!pz) {
+        ctx.warnings.push(`${beat.id}: puzzle ${beat.puzzle} is not in the book: skipped`)
+        return
+      }
+      w.push(`    # beat:${beat.id} puzzle:${pz.key}`)
+      w.push(`    call vno_puzzle_play(${renpyPlainString(pz.key)}, vno_puzzle_data[${renpyPlainString(pz.key)}])`)
+      if (pz.onFail?.mode === 'chapter' && pz.onFail.to) {
+        if (ctx.book.chapters.some((c) => c.n === pz.onFail!.to)) {
+          w.push('    if not _return:')
+          w.push(`        jump ${chapterLabel(pz.onFail.to)}`)
+        } else ctx.warnings.push(`${beat.id}: puzzle ${pz.key} sends a failed player to chapter ${pz.onFail.to}, which does not exist: the story goes on`)
+      }
+      return
+    }
     if (beat.type === 'cast') {
       const keys = [...new Set(beat.cast.map((c) => c.charKey))].filter((k) => {
         if (ctx.table.known.has(k)) return true
@@ -327,6 +344,13 @@ function emitScene(w: Writer, ctx: ChapterCtx, scene: VnScene): void {
     }
 
     emitSay(w, ctx, beat.id, '', beat.text, voice)
+  }
+  // a clue of a puzzle is found at its beat (`clueAt`): the puzzle screen lists the clues found by then
+  const found = new Map<string, string[]>()
+  for (const p of ctx.book.puzzles ?? []) for (const [clue, at] of Object.entries(p.clueAt ?? {})) found.set(at, [...(found.get(at) ?? []), `    $ vno_clue_found(${renpyPlainString(p.key)}, ${renpyPlainString(clue)})`])
+  scene.beats.forEach((beat, idx) => {
+    emitOne(beat, idx)
+    for (const line of found.get(beat.id) ?? []) w.push(line)
   })
 }
 
@@ -400,6 +424,8 @@ export function emitScripts(inp: EmitInput): EmitResult {
 
   for (const [label, v] of table.extra) warnings.push(`speaker "${label}" is not in the bible; uses the ad hoc character ${v}`)
 
+  const puzzleData = emitPuzzleData(book)
+  if (puzzleData) files['vno_puzzles_data.rpy'] = puzzleData
   files['characters.rpy'] = emitCharacters(book, inp.editions ?? [], voiceOn, !!inp.lightTheme, !!inp.uniformNames)
 
   const chapters = [...book.chapters].sort((a, b) => a.n - b.n)
@@ -451,6 +477,7 @@ export function translatableStrings(book: VnBook, primaryNames: Record<string, s
     })
     if (ch.ending && ch.ending.trim()) out.push({ old: renpyText(ch.ending), pick: (e) => e.endings[ch.n], what: `chapter ${ch.n} ending` })
   }
+  out.push(...puzzleStrings(book).map((s) => ({ ...s, pick: (e: Edition) => s.pick(e) })))
   const used = collectCharacters(book).aliasUsed
   for (const c of book.characters) {
     out.push({ old: renpyText(primaryNames[c.key]?.trim() || c.name), pick: (e) => e.characterNames[c.key], what: `name of ${c.key}` })

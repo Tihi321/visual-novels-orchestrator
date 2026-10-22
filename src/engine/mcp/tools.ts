@@ -10,6 +10,7 @@ import { clientTools } from './tools-client'
 import { importTools } from './tools-import'
 import { langTools } from './tools-lang'
 import { planTools } from './tools-plan'
+import { puzzleTools } from './tools-puzzle'
 import { storyTools } from './tools-story'
 
 /**
@@ -346,6 +347,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     // ---- story: make and edit a visual novel without a book folder ----
     ...storyTools(svc, def),
+    ...puzzleTools(svc, def),
 
     // ---- plans, music, cues, library ----
     ...planTools(svc, def, opts),

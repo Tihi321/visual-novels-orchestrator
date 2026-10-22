@@ -6,6 +6,8 @@ import { buildGame, type BuildGameResult } from '../src/engine/renpy/build'
 import { DEFAULT_SDK_PATH, lint, sdkExists } from '../src/engine/renpy/run'
 import { buildEdition, importBook } from '../src/engine/vn/import'
 import { buildBook, storyInputSchema } from '../src/engine/vn/story'
+import { puzzleCoreSchema, puzzleEntrySchema } from '../src/shared/puzzle'
+import { hasText } from '../src/shared/vn'
 import type { Edition, VnBook } from '../src/shared/vn'
 import { loadBook, loadEdition, loadSettings, type FixtureName } from './fixtures/vn/load'
 
@@ -52,7 +54,7 @@ function hrPrimary(): { book: VnBook; hr: Edition; en: Edition } {
     ch.title = hr.chapterTitles[ch.n] ?? ch.title
     ch.choices.forEach((c, i) => (c.text = hr.choiceTexts[`${ch.n}:${i}`] ?? c.text))
     if (ch.ending) ch.ending = hr.endings[ch.n] ?? ch.ending
-    for (const sc of ch.scenes) for (const b of sc.beats) if (b.type !== 'cast') b.text = hr.beats[b.id] ?? b.text
+    for (const sc of ch.scenes) for (const b of sc.beats) if (hasText(b)) b.text = hr.beats[b.id] ?? b.text
   }
   return { book, hr, en }
 }
@@ -174,6 +176,51 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     const l = await lint(r.gameDir, { sdkPath })
     expect(l.messages).toEqual([])
     expect(l.ok).toBe(true)
+  })
+
+  it('a book with a puzzle beat, a clue found earlier and an HR edition with translated clues: the library, the data, the tl strings, lint clean (and a book with no puzzle has none of it)', { timeout: T }, async () => {
+    const fixture = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'murdle-medium-1.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+    const base = buildBook(
+      storyInputSchema.parse({
+        title: 'The Cold Dinner',
+        characters: [{ name: 'Hartley', looks: 'a tired detective' }],
+        places: [{ name: 'Manor', looks: 'a dark dining room' }],
+        chapters: [
+          { title: 'The Body', choices: [{ text: 'Go on', to: 2 }], scenes: [{ place: 'manor', beats: [{ cast: ['hartley'] }, { speaker: 'Hartley', text: 'The dinner went cold.' }, { text: 'A rope lay on the floor.' }, { puzzle: 'dinner' }, { text: 'It was over.' }] }] },
+          { title: 'The Bad End', ending: 'Nobody was caught.', scenes: [{ place: 'manor', beats: [{ text: 'The culprit left.' }] }] }
+        ]
+      }),
+      { slug: 'dinner', lang: 'en' }
+    ).book
+    const book = { ...base, puzzles: [puzzleEntrySchema.parse({ key: 'dinner', kind: 'murdle', data: puzzleCoreSchema.parse(fixture), names: fixture.names, text: fixture.text, clueAt: { c1: 'ch01.s01.b003' }, onFail: { mode: 'chapter', to: 2, maxTries: 3 }, verified: { unique: true, deducible: true, score: 37, textChecked: true, by: 'test' } })] }
+    const en = buildEdition('en', book.title, book.chapters, book.characters)
+    const hrNames = Object.fromEntries(Object.entries(fixture.names).map(([k, v]) => [k, `${v} (hr)`]))
+    const hrText = Object.fromEntries(Object.entries(fixture.text).map(([k, v]) => [k, `${v} Na hrvatskom.`]))
+    const hr = { ...en, lang: 'hr', title: 'Hladna večera', chapterTitles: { 1: 'Tijelo', 2: 'Loš kraj' }, choiceTexts: { '1:0': 'Dalje' }, endings: { 2: 'Nitko nije uhvaćen.' }, beats: { 'ch01.s01.b002': 'Večera se ohladila.', 'ch01.s01.b003': 'Uže je ležalo na podu.', 'ch01.s01.b005': 'Bilo je gotovo.', 'ch02.s01.b001': 'Ubojica je otišao.' }, puzzles: { dinner: { names: hrNames, text: hrText } } }
+    const r = await buildGame({ projectDir: path.join(root, 'puzzle-book'), book, editions: [en, hr], settings: loadSettings(book, { editions: ['en', 'hr'] }), resolveAsset: () => null, sdkPath })
+    const game = path.join(r.gameDir, 'game')
+    expect(r.translated).toEqual(['croatian'])
+    expect(fs.existsSync(path.join(game, 'python-packages', 'vno_puzzles', 'solver.py'))).toBe(true)
+    expect(fs.existsSync(path.join(game, 'vno_puzzle.rpy'))).toBe(true)
+    expect(fs.existsSync(path.join(game, 'poc'))).toBe(false)
+    expect(fs.existsSync(path.join(game, 'puzzle_poc.rpy'))).toBe(false)
+    const ch = fs.readFileSync(path.join(game, 'ch01.rpy'), 'utf8')
+    expect(ch).toContain('call vno_puzzle_play("dinner", vno_puzzle_data["dinner"])\n    if not _return:\n        jump ch_02')
+    expect(ch).toContain('$ vno_clue_found("dinner", "c1")')
+    const data = fs.readFileSync(path.join(game, 'vno_puzzles_data.rpy'), 'utf8')
+    expect(data).toContain(`_("${fixture.text.c1}")`)
+    const tl = fs.readdirSync(path.join(game, 'tl', 'croatian')).map((f) => fs.readFileSync(path.join(game, 'tl', 'croatian', f), 'utf8')).join('\n')
+    expect(tl).toContain(`old "${fixture.text.c1}"\n    new "${hrText.c1}"`)
+    expect(tl).toContain(`old "${fixture.names.s1}"\n    new "${hrNames.s1}"`)
+    expect(tl).toContain(`old "${fixture.text.murder}"\n    new "${hrText.murder}"`)
+    const l = await lint(r.gameDir, { sdkPath })
+    expect(l.messages).toEqual([])
+    expect(l.ok).toBe(true)
+    // a book with no puzzle has neither the library nor the data
+    const plain = await build('linear', 'linear-nopuzzle', { hr: false })
+    expect(fs.existsSync(path.join(plain.gameDir, 'game', 'python-packages'))).toBe(false)
+    expect(fs.existsSync(path.join(plain.gameDir, 'game', 'vno_puzzle.rpy'))).toBe(false)
+    expect(fs.existsSync(path.join(plain.gameDir, 'game', 'vno_puzzles_data.rpy'))).toBe(false)
   })
 
   it('the puzzle proof of concept: the library in python-packages, the screens and the PoC story, lint clean', { timeout: T }, async () => {
