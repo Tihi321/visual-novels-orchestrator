@@ -343,3 +343,52 @@ describe('the cover is planned landscape (V9)', () => {
     expect(await sharp(path.join(svc().store.dir(slug), 'assets', 'cover', e.versions[0]!.file)).metadata()).toMatchObject({ width: 1920, height: 1080 })
   })
 })
+
+describe('scene music and ambience over MCP', () => {
+  it('vno_set_cues sets, keeps and clears the music and ambience of a scene', async () => {
+    await runTask(TASKS.musicPlan)
+    const b = await svc().store.loadBook(slug)
+    const sceneId = b.chapters[0]!.scenes[0]!.id
+    expect(await error('vno_set_cues', { slug, scenes: { [sceneId]: { ambience: 'rain' } } })).toMatch(/no ambiences: vno_sound_set adds one/)
+    await ok('vno_sound_set', { slug, key: 'rain', kind: 'ambience', description: 'steady rain' })
+    expect(await error('vno_set_cues', { slug, scenes: { [sceneId]: { music: 'music_99' } } })).toMatch(/not a music track/)
+    expect(await error('vno_set_cues', { slug, scenes: { [sceneId]: { ambience: 'storm' } } })).toMatch(/"storm" is not an ambience/)
+
+    const set = await ok('vno_set_cues', { slug, scenes: { [sceneId]: { music: 'music_02', ambience: 'rain' } } })
+    expect(set.cues.scenes[sceneId]).toMatchObject({ music: 'music_02', ambience: 'rain' })
+    // a new transition keeps them; the stage step keeps them too
+    await ok('vno_set_cues', { slug, scenes: { [sceneId]: { transition: 'fade' } } })
+    await runTask(TASKS.stage)
+    const saved = JSON.parse(await readFile(svc().store.file(slug, 'cues.json'), 'utf8')) as StageCues
+    expect(saved.scenes[sceneId]).toMatchObject({ transition: 'fade', music: 'music_02', ambience: 'rain' })
+    // null is silence and stops the ambience
+    const off = await ok('vno_set_cues', { slug, scenes: { [sceneId]: { music: null, ambience: null } } })
+    expect(off.cues.scenes[sceneId]).toMatchObject({ music: null, ambience: null })
+  }, 60_000)
+
+  it('vno_set_music sets scene music, drops an entry with an empty string, and the stage step puts it in the cues once the track has a file', async () => {
+    await runTask(TASKS.musicPlan)
+    const b = await svc().store.loadBook(slug)
+    const [first, second] = b.chapters.flatMap((c) => c.scenes.map((s) => s.id))
+    expect(await error('vno_set_music', { slug, scenes: { 'ch99.s01': 'music_01' } })).toMatch(/no scene "ch99.s01"/)
+    expect(await error('vno_set_music', { slug, scenes: { [first!]: 'music_99' } })).toMatch(/not a music track/)
+
+    const set = await ok('vno_set_music', { slug, scenes: { [first!]: 'music_02', [second!]: null } })
+    expect(set.plan.scenes).toEqual({ [first!]: 'music_02', [second!]: null })
+    const staged = async () => {
+      await runTask(TASKS.stage)
+      return JSON.parse(await readFile(svc().store.file(slug, 'cues.json'), 'utf8')) as StageCues
+    }
+    // a track with no file yet is skipped; silence needs no file
+    const early = await staged()
+    expect(early.scenes[first!]).not.toHaveProperty('music')
+    expect(early.scenes[second!]).toMatchObject({ music: null })
+    await ok('vno_asset_generate', { slug, kind: 'music', wait: true })
+    const cues = await staged()
+    expect(cues.scenes[first!]).toMatchObject({ music: 'music_02' })
+    expect(cues.scenes[second!]).toMatchObject({ music: null })
+
+    const dropped = await ok('vno_set_music', { slug, scenes: { [first!]: '', [second!]: '' } })
+    expect(dropped.plan.scenes).toBeUndefined()
+  }, 60_000)
+})

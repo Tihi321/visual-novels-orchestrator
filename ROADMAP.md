@@ -14,9 +14,10 @@ Branch `VNO-17-18_roadmap-tasks`, one commit per ticket (`.claude/tickets/VNO-17
 
 | # | Ticket | What | Plan |
 |---|---|---|---|
-| 1 | VNO-17 | Tests: VNO-08 phase 6 has fewer unit tests than planned. Story ops and Ren'Py output for media cues are covered by `tests/vn-media-cues.test.ts` and one Ren'Py integration case only | `VNO-17-media-cue-tests` |
 | 2 | VNO-18 | Tests: the hand-mode test does not cover `key` background removal | `VNO-18-hand-mode-key-test` |
 
 When a ticket is done, its changelog sits next to its plan and its row moves to "Done" below.
 
 ## Done
+
+- **VNO-17** (2026-10-22): unit tests for media cues and expression sets: story, import, derive, generate, Ren'Py output (snapshots `media-ch01.rpy`, `media-ch02.rpy`), cue precedence and the MCP tools. 739 tests pass. No bug found.
