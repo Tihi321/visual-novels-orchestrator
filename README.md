@@ -30,6 +30,7 @@ yarn install
 | `yarn test` | Vitest |
 | `yarn typecheck` | `tsc` for the node and web projects |
 | `yarn lint` | ESLint |
+| `npx tsx scripts/puzzle-poc.ts --lint --play` | Builds the puzzle proof of concept (`templates/puzzles/`, a 3x3 Murdle grid) into `.claude/temp/puzzle-poc/`, lints it and opens it; `--selftest` clicks through it with Ren'Py's test runner |
 
 API keys come from environment variables or the Windows credential store (service `vn-studio`), never from files. A key that is not found there is also looked for under the services `scriptorium` and `book-translator`, so the keys of those tools work here; `VNO_SHARED_KEYS=0` turns that off. The Models page says when a key comes from another store. Studio tokens (`PIXEL_STUDIO_MCP_TOKEN`, `CHIPTUNE_STUDIO_MCP_TOKEN`, `VIBETTS_MCP_TOKEN`) are looked up the same way.
 

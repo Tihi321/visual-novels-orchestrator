@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { buildPuzzlePoc } from '../scripts/puzzle-poc'
 import { buildGame, type BuildGameResult } from '../src/engine/renpy/build'
 import { DEFAULT_SDK_PATH, lint, sdkExists } from '../src/engine/renpy/run'
 import { buildEdition, importBook } from '../src/engine/vn/import'
@@ -170,6 +171,17 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     expect(fs.existsSync(path.join(game, 'images', 'natasha neutral.webp'))).toBe(true)
     expect(fs.readFileSync(path.join(game, 'ch01.rpy'), 'utf8')).toContain('natasha "Ты опоздал."')
     expect(fs.readFileSync(path.join(game, 'tl', 'russian', 'ui.rpy'), 'utf8')).toContain('new "Начать"')
+    const l = await lint(r.gameDir, { sdkPath })
+    expect(l.messages).toEqual([])
+    expect(l.ok).toBe(true)
+  })
+
+  it('the puzzle proof of concept: the library in python-packages, the screens and the PoC story, lint clean', { timeout: T }, async () => {
+    const r = await buildPuzzlePoc(path.join(root, 'puzzle-poc'), sdkPath)
+    const game = path.join(r.gameDir, 'game')
+    expect(fs.existsSync(path.join(game, 'python-packages', 'vno_puzzles', 'solver.py'))).toBe(true)
+    expect(fs.readFileSync(path.join(game, 'vno_puzzle.rpy'), 'utf8')).toContain('screen vno_murdle(pid, p):')
+    expect(fs.readFileSync(path.join(game, 'script.rpy'), 'utf8')).toContain('jump puzzle_poc')
     const l = await lint(r.gameDir, { sdkPath })
     expect(l.messages).toEqual([])
     expect(l.ok).toBe(true)
