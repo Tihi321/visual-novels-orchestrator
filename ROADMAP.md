@@ -19,3 +19,11 @@ None open. New work gets the next free number (VNO-19), a plan in `.claude/ticke
 - **VNO-18** (2026-10-22): the hand-mode test imports a sprite through `vno_asset_import` in both art styles; the flat-colour `key` cuts it out and ComfyUI is never called. 741 tests pass.
 - **VNO-16** (2026-10-22): a `CG:` or `INSERT:` image from an imported script gets `characters`: the bible characters whose name or alias is in the cue text (at most 3, in text order), so the art director has their looks and sheets. No match leaves it unset.
 - **VNO-19** (2026-10-22): `sound.sfxEngine: "chiptune"` makes sound effects with Chiptune Studio `compose_sfx`, and `sound.ambienceEngine: "chiptune"` makes ambiences as its loops; sounds are matched to its sound names by key and description. Explicit settings only (no default, also not for pixel books). `vno_update_settings` takes `sound`.
+- **VNO-11** (2026-10-22): VN Studio starts Pixel Studio, Chiptune Studio and ComfyUI when a job finds them down (`config/autostart.md`, commands from the hub's `services.json`, `VNO_AUTOSTART=0` turns it off). Never Scriptorium, Strata, VibeTTS or LM Studio; ComfyUI not while Strata answers. Live check from the hub still to do.
+
+## Later (not planned yet)
+
+- Start buttons on the Generators page, and an MCP tool to start a service.
+- VibeTTS auto-start, if the user wants it (it is a tray app with its MCP switch in its own settings).
+- "Open in Pixel Studio / Chiptune Studio" while a headless studio holds the studio's `engine.lock`: the window cannot take the data folder, but the launch already reported success (true with `hub.ps1 start` too).
+- A hard kill of VN Studio leaves the services it started running, even with `stopOnExit: true`.

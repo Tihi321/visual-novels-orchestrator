@@ -142,6 +142,8 @@ export interface ChiptuneClientOptions {
   mcp?: McpHttpClient
   /** The bearer token of Chiptune Studio's MCP server (`CHIPTUNE_STUDIO_MCP_TOKEN`). */
   token?: string | null
+  /** Starts the studio when nothing answers (see `McpHttpOptions.ensureUp`). */
+  ensureUp?: (signal?: AbortSignal) => Promise<true | string>
 }
 
 function need<T>(json: Record<string, unknown> | null, tool: string, key: string): T {
@@ -152,7 +154,7 @@ function need<T>(json: Record<string, unknown> | null, tool: string, key: string
 export function createChiptuneClient(opts: ChiptuneClientOptions): ChiptuneClient {
   const timeoutMs = opts.timeoutMs ?? 15_000
   const renderMs = opts.renderTimeoutMs ?? 300_000
-  const mcp = opts.mcp ?? createMcpClient({ url: opts.url, label: 'Chiptune Studio', notRunningHint: opts.notRunningHint, timeoutMs, fetchImpl: opts.fetchImpl, token: opts.token, tokenVar: 'CHIPTUNE_STUDIO_MCP_TOKEN' })
+  const mcp = opts.mcp ?? createMcpClient({ url: opts.url, label: 'Chiptune Studio', notRunningHint: opts.notRunningHint, timeoutMs, fetchImpl: opts.fetchImpl, token: opts.token, tokenVar: 'CHIPTUNE_STUDIO_MCP_TOKEN', ensureUp: opts.ensureUp })
   const call = (tool: string, args: object, ms: number, signal?: AbortSignal) => asStudioError(() => mcp.callTool(tool, args, { timeoutMs: ms, signal }))
   return {
     url: mcp.url,

@@ -85,10 +85,15 @@ export function studioToken(c: StudiosConfig, id: StudioId, env: NodeJS.ProcessE
   return id === 'pixel' ? resolveToken('PIXEL_STUDIO_MCP_TOKEN', c.pixelStudioToken, env, getKey) : resolveToken('CHIPTUNE_STUDIO_MCP_TOKEN', c.chiptuneStudioToken, env, getKey)
 }
 
-export function pixelClientFor(c: StudiosConfig): PixelClient {
-  return createPixelClient({ url: c.pixelStudioUrl, token: studioToken(c, 'pixel'), notRunningHint: startHint(c, 'pixel'), timeoutMs: c.timeoutS * 1000, importTimeoutMs: c.importTimeoutS * 1000 })
+export interface ClientHooks {
+  /** Starts the studio when a call finds nothing at its URL (`ServiceStarter.ensure`). Only job paths pass it. */
+  ensureUp?: (signal?: AbortSignal) => Promise<true | string>
 }
 
-export function chiptuneClientFor(c: StudiosConfig): ChiptuneClient {
-  return createChiptuneClient({ url: c.chiptuneStudioUrl, token: studioToken(c, 'chiptune'), notRunningHint: startHint(c, 'chiptune'), timeoutMs: c.timeoutS * 1000, renderTimeoutMs: c.renderTimeoutS * 1000 })
+export function pixelClientFor(c: StudiosConfig, o: ClientHooks = {}): PixelClient {
+  return createPixelClient({ url: c.pixelStudioUrl, token: studioToken(c, 'pixel'), notRunningHint: startHint(c, 'pixel'), ensureUp: o.ensureUp, timeoutMs: c.timeoutS * 1000, importTimeoutMs: c.importTimeoutS * 1000 })
+}
+
+export function chiptuneClientFor(c: StudiosConfig, o: ClientHooks = {}): ChiptuneClient {
+  return createChiptuneClient({ url: c.chiptuneStudioUrl, token: studioToken(c, 'chiptune'), notRunningHint: startHint(c, 'chiptune'), ensureUp: o.ensureUp, timeoutMs: c.timeoutS * 1000, renderTimeoutMs: c.renderTimeoutS * 1000 })
 }

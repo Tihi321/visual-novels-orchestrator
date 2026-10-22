@@ -367,8 +367,8 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const entry = manifest.assets.find((a) => a.id === id)
     if (!entry) throw new Error(`project ${slug} has no asset "${id}"`)
     const music = await store.readJson<MusicPlan>(slug, 'music.json')
-    const comfy = await svc.comfy()
-    const studios = await svc.studios()
+    const comfy = await svc.comfy({ autoStart: true, log: ctx.log })
+    const studios = await svc.studios({ autoStart: true, log: ctx.log })
     const res = renpy.resolution
     const projectDir = store.dir(slug)
     const r = await comfySem.run(
@@ -692,7 +692,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       }
       const config = await loadComfyConfigFor(deps.dataDir)
       comfySem.setPermits(lanesOf(config).length)
-      const comfy = await svc.comfy()
+      const comfy = await svc.comfy({ autoStart: true, log: ctx.log })
       const dir = voiceDir(slug, lang)
       await fs.mkdir(dir, { recursive: true })
       const index = await readVoiceIndex(slug, lang)

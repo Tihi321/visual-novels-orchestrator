@@ -32,6 +32,11 @@ export interface McpHttpOptions {
   token?: string | null
   /** The variable that holds the token, named in the message when the app answers 401. */
   tokenVar?: string
+  /**
+   * Called once per call when nothing answers at the URL (kind `unreachable`; never for a timeout, an HTTP error or a tool error). It may start
+   * the service: `true` means it answers now and the call is retried once; a string is the reason it does not, appended to the error.
+   */
+  ensureUp?: (signal?: AbortSignal) => Promise<true | string>
 }
 
 /**
@@ -186,12 +191,23 @@ export function createMcpClient(opts: McpHttpOptions): McpHttpClient {
   }
 
   async function request(method: string, params: object, ms: number, signal?: AbortSignal): Promise<unknown> {
-    await init(signal)
-    try {
-      return await rpc(method, params, ms, signal)
-    } catch (e) {
-      if (e instanceof McpHttpError && e.kind === 'unreachable') ready = null
-      throw e
+    let asked = false
+    for (;;) {
+      try {
+        await init(signal)
+        try {
+          return await rpc(method, params, ms, signal)
+        } catch (e) {
+          if (e instanceof McpHttpError && e.kind === 'unreachable') ready = null
+          throw e
+        }
+      } catch (e) {
+        if (!(e instanceof McpHttpError) || e.kind !== 'unreachable' || !opts.ensureUp || asked) throw e
+        asked = true
+        const up = await opts.ensureUp(signal)
+        if (up !== true) throw new McpHttpError(`${e.message} (auto-start: ${up})`, 'unreachable')
+        ready = null
+      }
     }
   }
 

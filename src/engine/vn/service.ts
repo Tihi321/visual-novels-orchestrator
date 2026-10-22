@@ -72,6 +72,7 @@ import type { VibeTtsClient } from '../voice/vibetts'
 import { chiptuneClientFor, loadStudiosConfig, pixelClientFor, startHint, studioRepo, studioUrl, STUDIO_NAMES } from '../studios/config'
 import type { StudioId, StudiosConfig } from '../studios/config'
 import type { ChiptuneClient } from '../studios/chiptune'
+import type { ServiceStarter } from '../studios/autostart'
 import type { PixelClient } from '../studios/pixel'
 import type { Watch } from '../studios/launch'
 import { openAssetInStudio } from './roundtrip'
@@ -108,6 +109,8 @@ export interface VnDeps {
   pixel?: PixelClient
   /** A Chiptune Studio client (tests pass a fake). Default: one made from `config/studios.md`. */
   chiptune?: ChiptuneClient
+  /** Starts Pixel Studio, Chiptune Studio and ComfyUI when a job finds them down (tests pass a fake, or none). */
+  starter?: ServiceStarter
   /** The folders that ship with the app. Default: found relative to this code. */
   dirs?: Partial<AppDirs>
 }
@@ -180,10 +183,26 @@ export class VnService {
     return this.deps.getScriptoriumDir?.() ?? path.join(process.env.USERPROFILE ?? process.env.HOME ?? '.', 'Scriptorium')
   }
 
-  async comfy(): Promise<ComfyClient> {
-    const o = this.comfyOverride
-    if (o) return typeof o === 'function' ? o() : o
-    return createComfyClient({ config: await loadComfyConfigFor(this.dataDir), dataDir: this.dataDir })
+  /**
+   * The ComfyUI client. With `autoStart` (job paths only, never a status check) a lane that does not answer at all is started first, when
+   * `config/autostart.md` allows it. A client given to the engine (tests) is used as it is.
+   */
+  async comfy(o: { autoStart?: boolean; log?: (m: string) => void } = {}): Promise<ComfyClient> {
+    const override = this.comfyOverride
+    if (override) return typeof override === 'function' ? override() : override
+    const starter = o.autoStart ? this.deps.starter : undefined
+    return createComfyClient({
+      config: await loadComfyConfigFor(this.dataDir),
+      dataDir: this.dataDir,
+      ...(starter
+        ? {
+            ensureLane: async (lane: string, signal?: AbortSignal) => {
+              const id = await starter.idForUrl(lane)
+              return id ? starter.ensure(id, lane, { signal, log: o.log }) : 'not a service VN Studio starts'
+            }
+          }
+        : {})
+    })
   }
 
   /** Stops the file watchers of the studio round trips (the engine is stopping). */
@@ -1049,12 +1068,12 @@ export class VnService {
     const { settings } = await this.store.loadSettings(slug)
     const book = await this.store.loadBook(slug)
     const res = (await loadRenpyConfig(this.dataDir)).resolution
-    const studios = await this.studios()
+    const studios = await this.studios({ autoStart: true, log: this.deps.log })
     const ctx = {
       book,
       settings,
       projectDir: this.store.dir(slug),
-      comfy: await this.comfy(),
+      comfy: await this.comfy({ autoStart: true, log: this.deps.log }),
       palettesDir: dataFolders(this.dataDir).palettes,
       pixel: studios.pixel,
       sizes: { background: { w: res.w, h: res.h }, cover: { w: res.w, h: res.h }, spriteHeight: Math.round(res.h * 0.9) }
@@ -1279,9 +1298,15 @@ export class VnService {
   // ---- Pixel Studio and Chiptune Studio ----
 
   /** The studio clients and `config/studios.md` (the clients are the ones the engine was given, else made from the config). */
-  async studios(): Promise<{ pixel: PixelClient; chiptune: ChiptuneClient; config: StudiosConfig }> {
+  async studios(o: { autoStart?: boolean; log?: (m: string) => void } = {}): Promise<{ pixel: PixelClient; chiptune: ChiptuneClient; config: StudiosConfig }> {
     const config = await loadStudiosConfig(this.dataDir)
-    return { pixel: this.deps.pixel ?? pixelClientFor(config), chiptune: this.deps.chiptune ?? chiptuneClientFor(config), config }
+    const starter = o.autoStart ? this.deps.starter : undefined
+    const hook = (id: string, url: string) => (starter ? { ensureUp: (signal?: AbortSignal) => starter.ensure(id, url, { signal, log: o.log }) } : {})
+    return {
+      pixel: this.deps.pixel ?? pixelClientFor(config, hook('pixel-studio', config.pixelStudioUrl)),
+      chiptune: this.deps.chiptune ?? chiptuneClientFor(config, hook('chiptune-studio', config.chiptuneStudioUrl)),
+      config
+    }
   }
 
   /** Asks both studios for their tools. Never throws: an unreachable studio is `ok: false` with the message (and how to start it). */
