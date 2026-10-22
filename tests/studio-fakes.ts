@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
-import type { ChiptuneClient, ComposeArgs, RenderArgs } from '../src/engine/studios/chiptune'
+import type { ChiptuneClient, ComposeArgs, ComposeSfxArgs, RenderArgs } from '../src/engine/studios/chiptune'
 import { StudioError } from '../src/engine/studios/chiptune'
 import type { ImportArgs, ExportItem, PixelClient } from '../src/engine/studios/pixel'
 
@@ -84,6 +84,16 @@ export class FakeChiptune implements ChiptuneClient {
     this.calls.push({ tool: 'compose_track', args })
     const id = `song-${++this.n}`
     return { songId: id, name: args.name ?? id, chip: args.chip ?? 'snes', bpm: args.bpm ?? 72, key: args.key ?? 'C', mood: args.mood, bars: args.bars ?? 16, seed: args.seed ?? 4242, durationSec: 41.5, loop: { startBar: 1, endBar: args.bars ?? 16 }, channels: ['a', 'b'] }
+  }
+  async composeSfx(args: ComposeSfxArgs) {
+    this.check()
+    this.calls.push({ tool: 'compose_sfx', args })
+    const id = `song-${++this.n}`
+    const actual = this.noFfmpeg ? args.path.replace(/\.[^.]+$/, '.wav') : args.path
+    await mkdir(path.dirname(actual), { recursive: true })
+    await writeFile(actual, Buffer.from(`SFX:${args.kind}:${args.sound}`))
+    const ambience = args.kind === 'ambience'
+    return { songId: id, kind: args.kind, sound: args.sound, chip: args.chip ?? (ambience ? 'snes' : 'nes'), seed: args.seed ?? 777, durationSec: ambience ? (args.seconds ?? 16) : 0.4, loop: ambience ? { startBar: 1, endBar: 8 } : null, path: actual, loopStartSec: ambience ? 0 : null, loopEndSec: ambience ? (args.seconds ?? 16) : null, ...(this.noFfmpeg ? { warning: 'ffmpeg not found: wrote wav' } : {}) }
   }
   async renderAudio(args: RenderArgs) {
     this.check()

@@ -277,7 +277,11 @@ export const projectSettingsSchema = z.object({
       voices: z.preprocess(legacyVoices, z.record(z.string(), z.record(langSchema, z.string()))).default({})
     })
     .default({ enabled: false, langs: [], provider: 'vibetts', engines: {}, voices: {} }),
-  /** Sound effects and ambiences. There is no sound-effect engine by default: an effect without a file waits for `vno_asset_import`, unless `sfxEngine` is a `custom:<workflow>`. */
+  /**
+   * Sound effects and ambiences. `ambienceEngine` is a ComfyUI music engine (the default) or `chiptune` (Chiptune Studio's `compose_sfx` ambience loops).
+   * There is no sound-effect engine by default: an effect without a file waits for `vno_asset_import`, unless `sfxEngine` is `chiptune`
+   * (Chiptune Studio's `compose_sfx`) or a `custom:<workflow>`.
+   */
   sound: z
     .object({
       ambienceEngine: z.string().default('ace-step-v1-instrumental'),

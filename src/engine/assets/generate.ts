@@ -6,7 +6,7 @@ import type { AssetEntry, AssetManifest, AssetVersion, ProjectSettings, VnBook }
 import type { ComfyClient, ComfyProgress, ComfyResult } from '../comfy/client'
 import { randomSeed } from '../comfy/graphs'
 import { renameRetry } from '../store/atomic'
-import { fallbackNegative, fallbackPrompt, imageOfAsset, LANDSCAPE, PORTRAIT, SQUARE } from './derive'
+import { fallbackNegative, fallbackPrompt, imageOfAsset, LANDSCAPE, PORTRAIT, SQUARE, soundOfAsset } from './derive'
 import { addVersion, assetDir, getEntry, nextVersionN, replaceEntry, resolveFile, saveManifest } from './manifest'
 import { loadPalette, type Rgb } from './palettes'
 import { fitBackground, keepMainSubject, keyOutFlatBackground, pixelate, prepareSprite, toWebp, transparentShare } from './postprocess'
@@ -15,7 +15,8 @@ import type { ModelReply } from '../studios/draw'
 import { fallbackChipPlan } from '../studios/chip-plan'
 import type { ChipTrackPlan } from '../studios/chip-plan'
 import type { ChiptuneClient } from '../studios/chiptune'
-import { makeChiptuneTrack } from '../studios/music'
+import { pickChipSound } from '../studios/chip-sound'
+import { makeChiptuneSound, makeChiptuneTrack } from '../studios/music'
 import { pixelateWithStudio } from '../studios/pixelate'
 import type { PixelClient } from '../studios/pixel'
 
@@ -370,6 +371,17 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     let out: { bytes: Buffer; ext: string }
     let rawOut: { bytes: Buffer; ext: string } | undefined
     let chiptune: Awaited<ReturnType<typeof makeChiptuneTrack>> | undefined
+    /** A sound effect or an ambience made by Chiptune Studio's `compose_sfx`: the sound is picked from the key and the description. */
+    const chipSound = async (kind: 'sfx' | 'ambience', seconds: number | undefined) => {
+      if (!ctx.chiptune) throw new Error('Chiptune Studio is not configured')
+      const sound = soundOfAsset(ctx.book, edited.id)
+      const pick = pickChipSound(kind, sound?.key ?? edited.id.replace(/^[a-z]+_/, ''), `${sound?.description ?? ''} ${edited.prompt}`)
+      progress('comfy', `compose ${pick.sound} with Chiptune Studio`)
+      const track = await makeChiptuneSound(ctx.chiptune, { dir: assetDir(ctx.projectDir, edited.id), n: nextVersionN(edited), kind, sound: pick.sound, chip: ctx.settings.music.chip, seconds, seed: edited.seed ?? undefined, name: `${ctx.book.title} ${edited.id}`, signal: ctx.signal })
+      if (pick.guessed) warn(`no Chiptune Studio sound matches "${sound?.key ?? edited.id}": used ${pick.sound}. Import a file (vno_asset_import) for the real sound`)
+      for (const w of track.warnings) warn(w)
+      return track
+    }
     switch (edited.kind) {
       case 'background': {
         const r = await ctx.comfy.generate({ ...base, width: size.w, height: size.h })
@@ -425,12 +437,22 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
         break
       }
       case 'ambience': {
+        if (edited.engine === CHIPTUNE_ENGINE) {
+          chiptune = await chipSound('ambience', sizes.ambienceSeconds ?? 60)
+          out = { bytes: Buffer.alloc(0), ext: path.extname(chiptune.file).slice(1) }
+          break
+        }
         const r: ComfyResult = await ctx.comfy.generate({ engine: edited.engine, prompt, seed, seconds: sizes.ambienceSeconds ?? 60, format: sizes.musicFormat, onProgress, signal: ctx.signal })
         out = { bytes: r.bytes, ext: r.ext }
         break
       }
       case 'sfx': {
-        // there is no sound-effect engine by default: a custom ComfyUI workflow (sound.sfxEngine) makes it, else the file is imported
+        // there is no sound-effect engine by default: Chiptune Studio (`chiptune`) or a custom ComfyUI workflow (sound.sfxEngine) makes it, else the file is imported
+        if (edited.engine === CHIPTUNE_ENGINE) {
+          chiptune = await chipSound('sfx', undefined)
+          out = { bytes: Buffer.alloc(0), ext: path.extname(chiptune.file).slice(1) }
+          break
+        }
         if (!edited.engine.startsWith('custom:')) return { ok: true, skipped: true, entry, reason: 'no SFX engine: import a file (vno_asset_import)' }
         const r: ComfyResult = await ctx.comfy.generate({ engine: edited.engine, prompt, seed, seconds: sizes.sfxSeconds ?? 5, format: sizes.musicFormat, onProgress, signal: ctx.signal })
         out = { bytes: r.bytes, ext: r.ext }

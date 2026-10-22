@@ -52,6 +52,38 @@ export interface ComposeResult {
   channels: string[]
 }
 
+export interface ComposeSfxArgs {
+  kind: 'sfx' | 'stinger' | 'ambience'
+  /** A name valid for the kind (see `chip-sound.ts`). */
+  sound: string
+  chip?: Chip
+  key?: string
+  /** Ambience length, 4..120. */
+  seconds?: number
+  seed?: number
+  songName?: string
+  /** Absolute path: the studio renders the sound there in the same call. */
+  path: string
+  format?: 'ogg' | 'wav' | 'mp3'
+}
+
+export interface ComposeSfxResult {
+  songId: string
+  kind: string
+  sound: string
+  chip: string
+  seed: number
+  durationSec: number
+  loop: { startBar: number; endBar: number } | null
+  /** The file actually written (a `.wav` next to the requested path when the studio has no ffmpeg). */
+  path: string
+  format?: string
+  sampleRate?: number
+  loopStartSec?: number | null
+  loopEndSec?: number | null
+  warning?: string
+}
+
 export interface RenderArgs {
   song?: string
   /** Absolute path. */
@@ -88,6 +120,8 @@ export interface SongInfo {
 export interface ChiptuneClient {
   readonly url: string
   composeTrack(args: ComposeArgs, signal?: AbortSignal): Promise<ComposeResult>
+  /** `compose_sfx` with `path`: a sound effect or an ambience loop, composed and rendered in one call. */
+  composeSfx(args: ComposeSfxArgs, signal?: AbortSignal): Promise<ComposeSfxResult>
   renderAudio(args: RenderArgs, signal?: AbortSignal): Promise<RenderResult>
   saveSong(args: { song?: string; path: string }, signal?: AbortSignal): Promise<{ songId: string; path: string }>
   listSongs(signal?: AbortSignal): Promise<SongInfo[]>
@@ -123,6 +157,7 @@ export function createChiptuneClient(opts: ChiptuneClientOptions): ChiptuneClien
   return {
     url: mcp.url,
     composeTrack: async (args, signal) => need<ComposeResult>((await call('compose_track', { loop: true, ...args }, renderMs, signal)).json, 'compose_track', 'songId'),
+    composeSfx: async (args, signal) => need<ComposeSfxResult>((await call('compose_sfx', { format: 'ogg', ...args }, renderMs, signal)).json, 'compose_sfx', 'path'),
     renderAudio: async (args, signal) => need<RenderResult>((await call('render_audio', { format: 'ogg', ...args }, renderMs, signal)).json, 'render_audio', 'path'),
     saveSong: async (args, signal) => need<{ songId: string; path: string }>((await call('save_song', args, timeoutMs, signal)).json, 'save_song', 'path'),
     listSongs: async (signal) => ((await call('list_songs', {}, timeoutMs, signal)).json?.songs as SongInfo[] | undefined) ?? [],
