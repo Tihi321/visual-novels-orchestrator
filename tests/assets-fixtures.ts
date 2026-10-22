@@ -58,3 +58,24 @@ export const book: VnBook = {
 
 export const settings = (over: Partial<ProjectSettings> = {}): ProjectSettings =>
   projectSettingsSchema.parse({ slug: 'soother', source: 'x', primaryLang: 'en', ...over })
+
+/** `book` with a CG of Petra and the Wizard, an insert, a sound effect, an ambience and a `smug` expression Petra uses. */
+export const mediaBook = (): VnBook => {
+  const b = structuredClone(book)
+  b.characters[0]!.expressions = ['smug']
+  b.images = [
+    { key: 'farewell', description: 'Petra waves to the Wizard', display: 'full', characters: ['petra', 'wizard'] },
+    { key: 'letter', description: 'a torn letter', display: 'insert' }
+  ]
+  b.sounds = [
+    { key: 'bell', kind: 'sfx', description: 'a ship bell' },
+    { key: 'waves', kind: 'ambience', description: 'waves on the pier' }
+  ]
+  const scene = b.chapters[0]!.scenes[0]!
+  scene.ambience = 'waves'
+  const beats = scene.beats
+  Object.assign(beats[1]!, { image: 'farewell', sfx: 'bell' })
+  Object.assign(beats[2]!, { image: 'letter' })
+  Object.assign(beats[3]!, { expression: 'smug', image: null })
+  return b
+}

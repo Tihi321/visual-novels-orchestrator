@@ -8,7 +8,7 @@ import { generateAll, generateAsset, QWEN_REMOVE_BG_PROMPT, type GenerateContext
 import { assetDir, getEntry, loadManifest, resolveFile, saveManifest, setCustom } from '../src/engine/assets/manifest'
 import type { ComfyClient, ComfyRequest, ComfyResult } from '../src/engine/comfy/client'
 import type { AssetEntry } from '../src/shared/vn'
-import { book, settings } from './assets-fixtures'
+import { book, mediaBook, settings } from './assets-fixtures'
 
 sharp.cache(false)
 
@@ -279,6 +279,56 @@ describe('generateAsset', () => {
     const pixel = settings({ art: { style: 'pixel', generator: 'z-image-turbo', editor: 'qwen-image-2.1-edit', palette: 'gameboy', review: false, bgRemoval: 'birefnet' } })
     const r = await generateAsset(ctx({ settings: pixel }), stub('cover'))
     expect(r).toMatchObject({ ok: false })
+  })
+
+  describe('media cues', () => {
+    const mctx = (over: Partial<GenerateContext> = {}) => ctx({ book: mediaBook(), ...over })
+    const mstub = (id: string, s = settings()) => deriveAssets(mediaBook(), s).find((a) => a.id === id)!
+
+    it('a cg with characters is edited from their sheet files and fitted to the screen; an insert is asked for square and kept at its size', async () => {
+      const petra = path.join(dir, 'petra.png')
+      const wizard = path.join(dir, 'wizard.png')
+      await writeFile(petra, await figure())
+      await writeFile(wizard, await figure())
+      const files: Record<string, string> = { sheet_petra: petra, sheet_wizard: wizard }
+      const r = await generateAsset(mctx({ resolveRef: (id) => files[id] ?? null }), mstub('cg_farewell'))
+      if (!r.ok || r.skipped) throw new Error(`expected a version: ${JSON.stringify(r)}`)
+      expect(comfy.requests[0]).toMatchObject({ engine: 'qwen-image-2.1-edit', references: [petra, wizard] })
+      expect(await sharp(await readFile(resolveFile(dir, r.entry)!)).metadata()).toMatchObject({ width: 1920, height: 1080 })
+
+      const insert = await generateAsset(mctx(), mstub('cg_letter'))
+      if (!insert.ok || insert.skipped) throw new Error('expected a version')
+      expect(comfy.requests[1]).toMatchObject({ engine: 'qwen-image-2.1' })
+      expect(comfy.requests[1]!.references).toBeUndefined()
+      expect(comfy.requests[1]!.width).toBe(comfy.requests[1]!.height) // asked for a square
+      expect(await sharp(await readFile(resolveFile(dir, insert.entry)!)).metadata()).toMatchObject({ format: 'webp', width: 800, height: 400 }) // kept at the size it came in, not fitted
+    })
+
+    it('a cg whose sheets have no file yet fails without calling ComfyUI', async () => {
+      const r = await generateAsset(mctx({ resolveRef: () => null }), mstub('cg_farewell'))
+      expect(r).toMatchObject({ ok: false })
+      expect(JSON.stringify(r)).toMatch(/sheet_petra, sheet_wizard\) have no file yet/)
+      expect(comfy.requests).toHaveLength(0)
+    })
+
+    it('an sfx without an engine is skipped with the reason; a custom engine makes it', async () => {
+      const r = await generateAsset(mctx(), mstub('sfx_bell'))
+      expect(r).toMatchObject({ ok: true, skipped: true, reason: 'no SFX engine: import a file (vno_asset_import)' })
+      expect(comfy.requests).toHaveLength(0)
+
+      const custom = settings({ sound: { ambienceEngine: 'ace-step-v1-instrumental', sfxEngine: 'custom:foley' } })
+      const made = await generateAsset(mctx({ settings: custom }), mstub('sfx_bell', custom))
+      if (!made.ok || made.skipped) throw new Error(`expected a version: ${JSON.stringify(made)}`)
+      expect(comfy.requests[0]).toMatchObject({ engine: 'custom:foley', prompt: 'a ship bell', seconds: 5 })
+    })
+
+    it('an ambience calls the audio engine for a minute of sound', async () => {
+      const r = await generateAsset(mctx(), mstub('amb_waves'))
+      if (!r.ok || r.skipped) throw new Error('expected a version')
+      expect(r.version.file).toBe('v1.mp3')
+      expect(comfy.requests[0]).toMatchObject({ engine: 'ace-step-v1-instrumental', seconds: 60 })
+      expect(comfy.requests[0]!.prompt).toMatch(/^ambient soundscape, waves on the pier/)
+    })
   })
 })
 

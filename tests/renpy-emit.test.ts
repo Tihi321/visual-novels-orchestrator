@@ -2,6 +2,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { chapterLabel, characterColor, emitScripts, translatableStrings, voicePath, type VoiceSource } from '../src/engine/renpy/emit'
 import { defaultCues } from '../src/engine/renpy/stage'
+import { applyStoryOps } from '../src/engine/vn/story'
 import { bookLanguages, languageTable, languageWarnings } from '../src/engine/renpy/build'
 import { registerLanguages, resetLanguages } from '../src/shared/languages'
 import { fixturesDir, loadBook, loadEdition } from './fixtures/vn/load'
@@ -47,6 +48,67 @@ describe('emitter snapshots: choice book', () => {
   })
   it('script.rpy', async () => {
     await expect(r.files['script.rpy']).toMatchFileSnapshot(snap('choice-script.rpy'))
+  })
+})
+
+/** The linear book with a CG, an insert, a sound effect, an ambience and scene music (the chapters play music_02). */
+function mediaBook() {
+  return applyStoryOps(loadBook('linear'), [
+    { op: 'image.set', key: 'ledger', description: 'an open ledger', display: 'insert' },
+    { op: 'image.set', key: 'farewell', description: 'Mara waves from the wall' },
+    { op: 'sound.set', key: 'door', kind: 'sfx', description: 'a door creaks' },
+    { op: 'sound.set', key: 'rain', kind: 'ambience', description: 'steady rain' },
+    { op: 'scene.update', sceneId: 'ch01.s01', ambience: 'rain' },
+    { op: 'beat.update', beatId: 'ch01.s01.b002', image: 'ledger', sfx: 'door' },
+    { op: 'beat.update', beatId: 'ch01.s01.b005', image: 'farewell' },
+    { op: 'beat.update', beatId: 'ch01.s01.b006', image: 'none' },
+    { op: 'beat.update', beatId: 'ch01.s01.b007', image: 'farewell' },
+    { op: 'scene.update', sceneId: 'ch01.s02', music: 'music_01', ambience: 'none' },
+    { op: 'beat.update', beatId: 'ch01.s02.b002', image: 'none' },
+    { op: 'scene.update', sceneId: 'ch02.s01', music: 'none' }
+  ]).book
+}
+const SOUNDS = { sfx_door: 'audio/sfx_door.ogg', amb_rain: 'audio/amb_rain.ogg' }
+function emitMedia(cues = defaultCues(mediaBook(), { musicIds: ['music_01', 'music_02'] })) {
+  return emitScripts({ book: mediaBook(), editions: [loadEdition('linear', 'en')], cues, music: MUSIC, sounds: SOUNDS })
+}
+
+describe('emitter snapshots: media cues', () => {
+  const r = emitMedia()
+  it('ch01.rpy', async () => {
+    await expect(r.files['ch01.rpy']).toMatchFileSnapshot(snap('media-ch01.rpy'))
+  })
+  it('ch02.rpy', async () => {
+    await expect(r.files['ch02.rpy']).toMatchFileSnapshot(snap('media-ch02.rpy'))
+  })
+  it('shows and hides the picture, plays the sounds and the scene music', () => {
+    const ch1 = r.files['ch01.rpy']!
+    expect(ch1).toContain('show cg ledger as vn_cg at vn_insert zorder 50')
+    expect(ch1).toContain('show cg farewell as vn_cg zorder 50')
+    expect(ch1.match(/hide vn_cg/g)).toHaveLength(1) // the second hide comes after a new scene, which cleared the picture already
+    expect(ch1).toContain('play sound "audio/sfx_door.ogg"')
+    expect(ch1).toContain('play ambience "audio/amb_rain.ogg" fadein 1.5')
+    expect(ch1).toContain('stop ambience fadeout 1.5')
+    expect(ch1).toContain('play music "audio/music_01.ogg" fadein 2.0 loop if_changed')
+    expect(r.files['ch02.rpy']).toContain('stop music fadeout 2.0')
+    expect(r.used.cgs).toEqual(expect.arrayContaining([{ key: 'ledger', display: 'insert' }, { key: 'farewell', display: 'full' }]))
+    expect(r.warnings.filter((w) => /music|sound|ambience/.test(w))).toEqual([]) // every track and sound has a file
+  })
+  it('the cues win over the story: scene music, ambience, the picture and the sound of a beat', () => {
+    const cues = defaultCues(mediaBook(), { musicIds: ['music_01', 'music_02'] })
+    cues.scenes['ch01.s02'] = { ...cues.scenes['ch01.s02']!, music: null }
+    cues.scenes['ch01.s01'] = { ...cues.scenes['ch01.s01']!, ambience: null }
+    cues.beats = { 'ch01.s01.b002': { image: null, sfx: 'door' }, 'ch01.s01.b005': { image: 'ledger' } }
+    const ch1 = emitMedia(cues).files['ch01.rpy']!
+    expect(ch1).not.toContain('play music "audio/music_01.ogg"')
+    expect(ch1).toContain('stop music fadeout 2.0')
+    expect(ch1).not.toContain('play ambience')
+    const b005 = ch1.slice(ch1.indexOf('# beat:ch01.s01.b003'), ch1.indexOf('# beat:ch01.s01.b005'))
+    expect(b005).toContain('show cg ledger as vn_cg at vn_insert zorder 50')
+    expect(b005).not.toContain('show cg farewell')
+    const b002 = ch1.slice(0, ch1.indexOf('# beat:ch01.s01.b002'))
+    expect(b002).not.toContain('show cg')
+    expect(b002).toContain('play sound "audio/sfx_door.ogg"')
   })
 })
 

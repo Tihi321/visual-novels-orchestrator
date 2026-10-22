@@ -329,3 +329,43 @@ describe('ON SCREEN props and loose names (V7)', () => {
     expect(classifyOnScreen('Mara, A very long entry that goes on and on forever', bible)).toBe('prop')
   })
 })
+
+describe('media cue lines', () => {
+  const bible = parseBible('## Characters\n- **Mara**: A girl.\n\n## Places\n- **Hall**: A hall.\n')
+  const parse = (body: string) => parseChapterScript(`SCENE: The hall, night\nA quiet hall.\n${body}\n`, { chapter: 1, bible })
+
+  it('CG, INSERT, SFX and AMBIENCE lines become catalogue entries and cues on the next beat, not speakers', () => {
+    const p = parse('CG: The ledger page lies open on the desk\nAMBIENCE: Steady rain on the roof\nMARA (worried): What is this?\nSFX: A door creaks\nINSERT: A torn letter\nShe reads.')
+    expect(p.images).toEqual([
+      { key: 'ledger_page_lies_open', description: 'The ledger page lies open on the desk', display: 'full' },
+      { key: 'torn_letter', description: 'A torn letter', display: 'insert' }
+    ])
+    expect(p.sounds).toEqual([
+      { key: 'steady_rain_roof', kind: 'ambience', description: 'Steady rain on the roof' },
+      { key: 'door_creaks', kind: 'sfx', description: 'A door creaks' }
+    ])
+    const beats = p.scenes[0]!.beats
+    expect(beats.map((b) => b.type)).toEqual(['narration', 'line', 'narration'])
+    expect(beats[1]).toMatchObject({ speakerKey: 'mara', image: 'ledger_page_lies_open', ambience: 'steady_rain_roof' })
+    expect(beats[2]).toMatchObject({ text: 'She reads.', image: 'torn_letter', sfx: 'door_creaks' })
+    expect(beats.some((b) => b.type === 'line' && /^(CG|SFX|INSERT|AMBIENCE)$/i.test(b.speakerLabel))).toBe(false)
+    expect(p.warnings).toEqual([])
+  })
+
+  it('CG: none, END CG and AMBIENCE: none clear; Croatian lines work; a reused description keeps one entry', () => {
+    const p = parse('CG: A torn letter\nMARA: One.\nCG: none\nAMBIENCE: none\nMARA: Two.\nSLIKA: A torn letter\nZVUK: Zvono zvoni\nMARA: Three.\nEND CG\nMARA: Four.')
+    const lines = p.scenes[0]!.beats.filter((b) => b.type === 'line')
+    expect(lines[0]).toMatchObject({ image: 'torn_letter' })
+    expect(lines[1]).toMatchObject({ image: null, ambience: null })
+    expect(lines[2]).toMatchObject({ image: 'torn_letter', sfx: 'zvono_zvoni' })
+    expect(lines[3]).toMatchObject({ image: null })
+    expect(p.images).toHaveLength(1)
+    expect(p.sounds).toEqual([{ key: 'zvono_zvoni', kind: 'sfx', description: 'Zvono zvoni' }])
+  })
+
+  it('a cue with no beat after it in its scene is dropped with a warning', () => {
+    const p = parse('MARA: Hello.\nSFX: A door creaks')
+    expect(p.scenes[0]!.beats.every((b) => !('sfx' in b))).toBe(true)
+    expect(p.warnings).toEqual([expect.stringMatching(/a SFX line .* has no beat after it in its scene: dropped/)])
+  })
+})

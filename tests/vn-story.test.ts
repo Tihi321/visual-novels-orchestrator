@@ -462,3 +462,102 @@ describe('the service and the tools', () => {
     expect(after.characterNames['kessler#1']).toBeUndefined()
   })
 })
+
+describe('media cues and expression sets in the story', () => {
+  /** The small book with a picture, a sound effect, an ambience, scene music and a `smug` expression for Old Tom only. */
+  const media = (): StoryInput => {
+    const i = input()
+    i.characters[1]!.expressions = ['smug']
+    i.images = [{ key: 'ledger', description: 'an open ledger', display: 'insert', characters: ['mara'] }]
+    i.sounds = [
+      { key: 'gulls', kind: 'sfx', description: 'gulls cry' },
+      { key: 'waves', kind: 'ambience', description: 'waves on stone' }
+    ]
+    const scene = i.chapters[0]!.scenes[0]!
+    scene.music = 'music_02'
+    scene.ambience = 'waves'
+    scene.beats[1] = { ...scene.beats[1]!, image: 'ledger', sfx: 'gulls' }
+    scene.beats[2] = { ...scene.beats[2]!, expression: 'smug' }
+    scene.beats[3] = { ...scene.beats[3]!, image: null, ambience: null }
+    return i
+  }
+  const apply = (ops: object[], book: VnBook) => applyStoryOps(book, ops.map((o) => storyOpSchema.parse(o)))
+
+  it('a story with images, sounds, cues, scene music and a character expression builds', () => {
+    const { book } = buildBook(media(), { slug: 'harbour', lang: 'en' })
+    expect(book.images).toEqual([{ key: 'ledger', description: 'an open ledger', display: 'insert', characters: ['mara'] }])
+    expect(book.sounds?.map((s) => `${s.kind}:${s.key}`)).toEqual(['sfx:gulls', 'ambience:waves'])
+    expect(book.characters[1]).toMatchObject({ key: 'tom', expressions: ['smug'] })
+    const scene = book.chapters[0]!.scenes[0]!
+    expect(scene).toMatchObject({ music: 'music_02', ambience: 'waves' })
+    expect(scene.beats[1]).toMatchObject({ image: 'ledger', sfx: 'gulls' })
+    expect(scene.beats[2]).toMatchObject({ speakerKey: 'tom', expression: 'smug' })
+    expect(scene.beats[3]).toMatchObject({ image: null, ambience: null })
+    expect(validateBook(book).errors).toEqual([])
+  })
+
+  it('refuses an unknown cue key, an expression outside the set, a cue-only beat and music that is not a track', () => {
+    const build = (change: (i: StoryInput) => void) => () => {
+      const i = media()
+      change(i)
+      return buildBook(i, { slug: 'harbour', lang: 'en' })
+    }
+    expect(build((i) => (i.chapters[0]!.scenes[0]!.beats[1]!.image = 'nope'))).toThrow(/image "nope" is not in images/)
+    expect(build((i) => (i.chapters[0]!.scenes[0]!.beats[1]!.sfx = 'waves'))).toThrow(/sfx "waves" is not in sounds as a sound effect/)
+    expect(build((i) => (i.chapters[0]!.scenes[0]!.ambience = 'gulls'))).toThrow(/ambience "gulls" is not in sounds/)
+    expect(build((i) => (i.chapters[0]!.scenes[0]!.music = 'loud'))).toThrow(/music "loud" is not a track id/)
+    expect(build((i) => i.chapters[0]!.scenes[0]!.beats.push({ sfx: 'gulls' }))).toThrow(/cannot stand alone/)
+    // smug belongs to Old Tom: Mara's smug line is mapped to the nearest word of the book set, never kept as smug
+    const { book } = buildBook({ ...media(), chapters: [{ title: 'A', scenes: [{ place: 'harbour', beats: [{ speaker: 'Mara', expression: 'smug', text: 'Hm.' }] }] }] }, { slug: 'harbour', lang: 'en' })
+    expect(book.chapters[0]!.scenes[0]!.beats[0]).not.toMatchObject({ expression: 'smug' })
+    const bad = structuredClone(book)
+    const line = bad.chapters[0]!.scenes[0]!.beats[0]!
+    if (line.type === 'line') line.expression = 'smug'
+    expect(validateBook(bad).errors.join('\n')).toMatch(/smug/)
+    expect(() => buildBook({ ...media(), expressions: ['happy', 'sad'] }, { slug: 'harbour', lang: 'en' })).toThrow(/neutral/)
+  })
+
+  it('image.remove and sound.remove refuse a used entry, and with force clear its cues', () => {
+    const { book } = buildBook(media(), { slug: 'harbour', lang: 'en' })
+    expect(() => apply([{ op: 'image.remove', key: 'ledger' }], book)).toThrow(/shown by 1 beat/)
+    expect(() => apply([{ op: 'sound.remove', key: 'waves' }], book)).toThrow(/ambience "waves" is played by 1 cue/)
+    const r = apply(
+      [
+        { op: 'image.remove', key: 'cg_ledger', force: true },
+        { op: 'sound.remove', key: 'amb_waves', force: true },
+        { op: 'sound.remove', key: 'gulls', kind: 'sfx', force: true }
+      ],
+      book
+    )
+    expect(r.book.images).toBeUndefined()
+    expect(r.book.sounds).toBeUndefined()
+    const scene = r.book.chapters[0]!.scenes[0]!
+    expect(scene.ambience).toBeUndefined()
+    expect(scene.beats.some((b) => b.image !== undefined && b.image !== null)).toBe(false)
+    expect(scene.beats.some((b) => b.sfx !== undefined || (b.ambience !== undefined && b.ambience !== null))).toBe(false)
+    expect(validateBook(r.book).errors).toEqual([])
+  })
+
+  it('image.set and sound.set make and change entries; book.update and character.set change the expression sets', () => {
+    const { book } = buildBook(media(), { slug: 'harbour', lang: 'en' })
+    const r = apply(
+      [
+        { op: 'image.set', key: 'ledger', display: 'full', characters: ['mara', 'tom'] },
+        { op: 'image.set', key: 'map', description: 'an old sea map' },
+        { op: 'sound.set', key: 'bell', kind: 'sfx', description: 'a ship bell' },
+        { op: 'book.update', expressions: ['neutral', 'happy', 'grim'] },
+        { op: 'character.set', key: 'tom', expressions: null }
+      ],
+      buildBook({ ...media(), chapters: [{ title: 'A', scenes: [{ place: 'harbour', beats: [{ text: 'x' }] }] }] }, { slug: 'harbour', lang: 'en' }).book
+    )
+    expect(r.book.images).toEqual([
+      { key: 'ledger', description: 'an open ledger', display: 'full', characters: ['mara', 'tom'] },
+      { key: 'map', description: 'an old sea map', display: 'full' }
+    ])
+    expect(r.book.sounds?.map((s) => s.key)).toEqual(['gulls', 'waves', 'bell'])
+    expect(r.book.expressions).toEqual(['neutral', 'happy', 'grim'])
+    expect(r.book.characters[1]!.expressions).toBeUndefined()
+    expect(() => apply([{ op: 'sound.set', key: 'horn' }], book)).toThrow(/give its kind/)
+    expect(() => apply([{ op: 'image.set', key: 'horn' }], book)).toThrow(/give a description/)
+  })
+})

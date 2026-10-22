@@ -16,7 +16,7 @@ import {
   unlock
 } from '../src/engine/assets/manifest'
 import type { AssetEntry } from '../src/shared/vn'
-import { book, settings } from './assets-fixtures'
+import { book, mediaBook, settings } from './assets-fixtures'
 
 describe('deriveAssets', () => {
   it('derives backgrounds, sheets, sprites, cover and music in a stable order', () => {
@@ -168,5 +168,34 @@ describe('manifest', () => {
   it('resolves to null when there is no file', () => {
     expect(resolveFile(dir, entry())).toBeNull()
     expect(resolveFile(dir, addVersion(entry(), version(1)))).toBeNull() // recorded, but not on disk
+  })
+})
+
+describe('deriveAssets: media cues and expression sets', () => {
+  it('derives a cg with the sheets of its characters, sfx and ambience stubs, and a sprite for a character expression', () => {
+    const assets = deriveAssets(mediaBook(), settings())
+    const byId = new Map(assets.map((a) => [a.id, a]))
+    expect(byId.get('cg_farewell')).toMatchObject({ kind: 'cg', engine: 'qwen-image-2.1-edit', refs: ['sheet_petra', 'sheet_wizard'] })
+    expect(byId.get('cg_letter')).toMatchObject({ kind: 'cg', engine: 'qwen-image-2.1' })
+    expect(byId.get('cg_letter')!.refs).toBeUndefined()
+    expect(byId.get('cg_letter')!.size).toEqual({ w: byId.get('cg_letter')!.size!.w, h: byId.get('cg_letter')!.size!.w }) // an insert is square
+    expect(byId.get('sfx_bell')).toMatchObject({ kind: 'sfx', engine: '', size: null })
+    expect(byId.get('amb_waves')).toMatchObject({ kind: 'ambience', engine: 'ace-step-v1-instrumental', size: null })
+    expect(byId.get('sprite_petra_smug')).toMatchObject({ kind: 'sprite', refs: ['sheet_petra'] })
+    // a custom sfx engine is kept on the stub; an entry no beat uses gets no asset
+    const custom = deriveAssets(mediaBook(), settings({ sound: { ambienceEngine: 'ace-step-v1-instrumental', sfxEngine: 'custom:foley' } }))
+    expect(custom.find((a) => a.id === 'sfx_bell')!.engine).toBe('custom:foley')
+    const unused = mediaBook()
+    unused.chapters[0]!.scenes[0]!.beats[2]!.image = undefined
+    expect(deriveAssets(unused, settings()).some((a) => a.id === 'cg_letter')).toBe(false)
+  })
+
+  it('the fallback prompts of a cg and an ambience', () => {
+    const b = mediaBook()
+    const assets = deriveAssets(b, settings())
+    const cg = fallbackPrompt(assets.find((a) => a.id === 'cg_farewell')!, b)
+    expect(cg).toMatch(/Petra waves to the Wizard, .*red braids.*grey beard.*wooden pier.*full-bleed/)
+    expect(fallbackPrompt(assets.find((a) => a.id === 'cg_letter')!, b)).toMatch(/a torn letter, .*close-up/)
+    expect(fallbackPrompt(assets.find((a) => a.id === 'amb_waves')!, b)).toBe('ambient soundscape, waves on the pier, no melody, no drums, seamless loop')
   })
 })
