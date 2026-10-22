@@ -4,11 +4,11 @@ import { z } from 'zod'
  * The puzzle data (format 1), shared by the engine and the renderer. It is what `templates/puzzles/game/python-packages/vno_puzzles` makes
  * and reads (see its README): plain JSON-shaped data, no classes. The puzzle core is kept apart from the flavour (`names`, `text`), which a
  * model may rewrite without touching the logic. A core has a `kind`: `murdle` (a grid of who, with what, where and why), `knights`
- * (Knights and Knaves), and the kinds the later commits of VNO-14 add.
+ * (Knights and Knaves), `testimony` (a cross-examination: press, then present the evidence that proves a statement false), and the kinds the later commits of VNO-14 add.
  */
 
 export const PUZZLE_FORMAT = 1
-export const PUZZLE_KINDS = ['murdle', 'knights'] as const
+export const PUZZLE_KINDS = ['murdle', 'knights', 'testimony'] as const
 export type PuzzleKind = (typeof PUZZLE_KINDS)[number]
 export const PUZZLE_BANDS = ['easy', 'medium', 'hard'] as const
 
@@ -86,19 +86,49 @@ export const knightsCoreSchema = z.object({
   solution: z.record(z.string(), z.enum(['knight', 'knave']))
 })
 
-export const puzzleCoreSchema = z.discriminatedUnion('kind', [murdleCoreSchema, knightsCoreSchema])
+const factPair = z.object({ key: z.string().regex(/^[a-z][a-z0-9_]*$/, 'a key such as clock'), value: z.string().min(1) })
+
+/**
+ * Testimony: a witness makes statements, the player may press one for more and must present the one piece of evidence that clashes with a
+ * statement. A claim (what a statement says) and a fact (what evidence shows) clash when they are about the same key with different values.
+ */
+export const testimonyCoreSchema = z.object({
+  ...common,
+  kind: z.literal('testimony'),
+  size: z.number().int().min(2).max(10),
+  witness: z.literal('wit'),
+  /** The vocabulary: a key, the values it can have, and the English templates ({v} is the value) of the default prose. */
+  keys: z
+    .array(z.object({ key: factPair.shape.key, label: z.string().optional(), values: z.array(z.string().min(1)).min(2), item: z.string().optional(), claim: z.string().optional(), fact: z.string().optional() }))
+    .min(1),
+  statements: z
+    .array(z.object({ id: z.string().regex(/^t\d+$/, 'a statement id such as t1'), claims: z.array(factPair).min(1), press: z.object({ claims: z.array(factPair).min(1) }).optional() }))
+    .min(2),
+  evidence: z.array(z.object({ id: z.string().regex(/^e\d+$/, 'an evidence id such as e1'), facts: z.array(factPair).min(1) })).min(1),
+  /** The statement to contradict, the evidence that does it, and whether the statement must be pressed first. */
+  solution: z.object({ statement: z.string(), evidence: z.string(), press: z.boolean().optional() })
+})
+
+export const puzzleCoreSchema = z.discriminatedUnion('kind', [murdleCoreSchema, knightsCoreSchema, testimonyCoreSchema])
 export type PuzzleCore = z.infer<typeof puzzleCoreSchema>
 export type MurdleCore = z.infer<typeof murdleCoreSchema>
 export type KnightsCore = z.infer<typeof knightsCoreSchema>
+export type TestimonyCore = z.infer<typeof testimonyCoreSchema>
 
-/** Every id of a core that needs a name: the items of a grid, the speakers of Knights and Knaves. */
-export const puzzleEntityIds = (core: PuzzleCore): string[] => (core.kind === 'knights' ? core.speakers : core.categories.flatMap((c) => c.items))
+/** Every id of a core that needs a name: the items of a grid, the speakers of Knights and Knaves, the witness and the evidence of a testimony. */
+export const puzzleEntityIds = (core: PuzzleCore): string[] =>
+  core.kind === 'knights' ? core.speakers : core.kind === 'testimony' ? [core.witness, ...core.evidence.map((e) => e.id)] : core.categories.flatMap((c) => c.items)
 
-/** Every id of a core that needs prose: the clues and the murder note, or the statements and the intro. */
-export const puzzleTextIds = (core: PuzzleCore): string[] => (core.kind === 'knights' ? [...core.statements.map((s) => s.id), 'intro'] : [...core.clues.map((c) => c.id), 'murder'])
+/** Every id of a core that needs prose: the clues and the murder note, the statements and the intro, or a testimony's statements (and what a pressed one adds), evidence and intro. */
+export const puzzleTextIds = (core: PuzzleCore): string[] =>
+  core.kind === 'knights'
+    ? [...core.statements.map((s) => s.id), 'intro']
+    : core.kind === 'testimony'
+      ? [...core.statements.flatMap((s) => (s.press ? [s.id, `${s.id}.press`] : [s.id])), ...core.evidence.map((e) => e.id), 'intro']
+      : [...core.clues.map((c) => c.id), 'murder']
 
-/** The ids of the things the player finds in the story (`clueAt`): a grid puzzle's clues (the statements of Knights and Knaves are all there from the start). */
-export const puzzleFindableIds = (core: PuzzleCore): string[] => (core.kind === 'murdle' ? core.clues.map((c) => c.id) : [])
+/** The ids of the things the player finds in the story (`clueAt`): a grid puzzle's clues, and a testimony's evidence (the statements of Knights and Knaves and of a testimony are all there from the start). */
+export const puzzleFindableIds = (core: PuzzleCore): string[] => (core.kind === 'murdle' ? core.clues.map((c) => c.id) : core.kind === 'testimony' ? core.evidence.map((e) => e.id) : [])
 
 /** What the python CLI returns: the core plus the canonical English flavour. */
 export const puzzleGeneratedSchema = z.intersection(
@@ -164,6 +194,8 @@ export const readBackClueSchema = z.union([
     a: z.string(),
     b: z.union([z.string(), z.array(z.string()).length(2)])
   }),
-  z.object({ id: z.string(), speaker: z.string(), claim: z.record(z.string(), z.unknown()) })
+  z.object({ id: z.string(), speaker: z.string(), claim: z.record(z.string(), z.unknown()) }),
+  /** Testimony: the claims of a statement (`t1`, `t1.press`) or the facts of a piece of evidence (`e1`). */
+  z.object({ id: z.string(), claims: z.array(z.object({ key: z.string(), value: z.string() })).optional(), facts: z.array(z.object({ key: z.string(), value: z.string() })).optional() })
 ])
 export type ReadBackClue = z.infer<typeof readBackClueSchema>

@@ -85,8 +85,13 @@ def is_complete(p, marks):
     return all(marks.get(c) == v for c, v in t.items())
 
 
-def hint(p, marks):
-    """{kind, text, cell}. A wrong mark first; else the first deduction step the grid does not show yet; else: accuse."""
+def hint(p, marks, hints=0):
+    """{kind, text, cell}. A wrong mark first; else the first deduction step the grid does not show yet; else: accuse.
+    Testimony: `hints` (how many were given already) says how much the hint gives away."""
+    if p.get("kind") == "testimony":
+        from .testimony import hint as hint_testimony
+
+        return hint_testimony(p, marks, hints)
     if p.get("kind") == "knights":
         from .knights import hint as hint_knights
 

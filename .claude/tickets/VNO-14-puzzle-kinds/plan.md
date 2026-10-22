@@ -8,6 +8,6 @@ Each kind: a Python module in `templates/puzzles/game/python-packages/vno_puzzle
 
 - [x] 1. Bigger Murdle: size 3 or 4, a fourth category (motive), attribute clues (an item pointed at by a trait), the search-based `count_solutions` (brute force kept as the oracle), the fast deduction closure used by the generator, pictures in the grid headers (generic scrolling staircase grid).
 - [x] 2. Knights and Knaves.
-- [ ] 3. Testimony (Ace Attorney).
+- [x] 3. Testimony (Ace Attorney): press, present, court record with evidence pictures, penalty bar.
 - [ ] 4. Puzzle Baron logic grids.
 - [ ] The user plays one puzzle of each kind.

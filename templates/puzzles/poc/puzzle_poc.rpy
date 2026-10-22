@@ -13,6 +13,8 @@ init python:
             return vno_puzzles.generate("murdle", 4, vno_poc_seed, vno_poc_band, motive=True, attrs=True)
         if vno_poc_kind == "knights":
             return vno_puzzles.generate("knights", 4, vno_poc_seed, vno_poc_band)
+        if vno_poc_kind == "testimony":
+            return vno_puzzles.generate("testimony", None, vno_poc_seed, vno_poc_band)
         return vno_puzzles.generate(vno_poc_kind, None, vno_poc_seed, vno_poc_band)
 
     def vno_poc_reveal(p, won):
@@ -21,6 +23,9 @@ init python:
         if p["kind"] == "knights":
             lines = ["%s is a %s" % (names[k], v) for k, v in p["solution"].items()]
             return ("That is right. " if won else "You give up. ") + "; ".join(lines) + "."
+        if p["kind"] == "testimony":
+            sol = p["solution"]
+            return ("That is it. " if won else "You give up. ") + "The %s proves statement %s false." % (names[sol["evidence"]], sol["statement"][1:])
         a = p["murder"]["answer"]
         why = (", out of " + names[a["motive"]]) if "motive" in a else ""
         fact = "%s did it, with the %s, in the %s%s." % (names[a["suspect"]], names[a["weapon"]], names[a["place"]], why)
@@ -47,6 +52,10 @@ label puzzle_poc_play:
         "A bigger Murdle (4x4, with a motive and clues about traits)":
             $ vno_poc_kind = "murdle"
             $ vno_poc_big = True
+            $ vno_poc_seed = renpy.random.randint(1, 10**9)
+            jump puzzle_poc_make
+        "Testimony (cross-examination)":
+            $ vno_poc_kind = "testimony"
             $ vno_poc_seed = renpy.random.randint(1, 10**9)
             jump puzzle_poc_make
         "Knights and Knaves":
@@ -91,4 +100,12 @@ label puzzle_poc_knights:
     $ vno_poc_big = False
     $ vno_poc_band = "medium"
     $ vno_poc_seed = 3
+    jump puzzle_poc_make
+
+## For the self-test: a cross-examination.
+label puzzle_poc_testimony:
+    $ vno_poc_kind = "testimony"
+    $ vno_poc_big = False
+    $ vno_poc_band = "medium"
+    $ vno_poc_seed = 4
     jump puzzle_poc_make

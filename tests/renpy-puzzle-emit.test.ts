@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { emitScripts, translatableStrings } from '../src/engine/renpy/emit'
 import { emitPuzzleData, playedPuzzles, puzzlePics } from '../src/engine/renpy/puzzles'
 import { defaultCues } from '../src/engine/renpy/stage'
-import { knightsCoreSchema, puzzleCoreSchema, puzzleEntrySchema } from '../src/shared/puzzle'
+import { knightsCoreSchema, puzzleCoreSchema, puzzleEntrySchema, testimonyCoreSchema } from '../src/shared/puzzle'
 import type { PuzzleEntry } from '../src/shared/puzzle'
 import { buildBook, storyInputSchema } from '../src/engine/vn/story'
 import { editionSchema, vnBookSchema } from '../src/shared/vn'
@@ -143,5 +143,30 @@ describe('a Knights and Knaves puzzle in the script', () => {
     const strings = translatableStrings(withKk()).filter((s) => s.what.startsWith('puzzle dinner'))
     expect(strings.length).toBe(Object.keys(kk.names).length + Object.keys(kk.text).length)
     expect(strings.some((s) => s.what === 'puzzle dinner clue intro')).toBe(true)
+  })
+})
+
+describe('a testimony in the script', () => {
+  const tm = JSON.parse(readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'testimony-medium-4.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+  const withTm = (over: Partial<PuzzleEntry> = {}): VnBook => {
+    const b = book()
+    b.puzzles = [puzzleEntrySchema.parse({ key: 'dinner', kind: 'testimony', data: testimonyCoreSchema.parse(tm), names: tm.names, text: tm.text, verified: { unique: true, deducible: true, score: 5, textChecked: true, by: 'test' }, ...over })]
+    return b
+  }
+
+  it('is plain data with the statements, names and evidence texts as translatable strings; a piece of evidence found earlier has its beat in at', () => {
+    const r = emit(withTm({ clueAt: { e2: 'ch01.s01.b002' }, links: { wit: { type: 'character', key: 'hartley' } } }))
+    expect(r.files['ch01.rpy']).toContain('call vno_puzzle_play("dinner", vno_puzzle_data["dinner"])')
+    expect(r.files['ch01.rpy']).toContain('$ vno_clue_found("dinner", "e2")')
+    const data = r.files['vno_puzzles_data.rpy']!
+    expect(data).toContain('"kind": "testimony"')
+    expect(data).toContain('"statements": [{"id": "t1"')
+    expect(data).toContain('"solution": {"statement": "t5", "evidence": "e1", "press": True}')
+    expect(data).toContain('{"id": "e2", "facts"')
+    expect(data).toMatch(/"at": "ch01.s01.b002"/)
+    expect(data).toContain(`"intro": _("${tm.text.intro}")`)
+    expect(data).toContain('"pics": {"wit": "hartley neutral"}')
+    const strings = translatableStrings(withTm()).filter((s) => s.what.startsWith('puzzle dinner'))
+    expect(strings.length).toBe(Object.keys(tm.names).length + Object.keys(tm.text).length)
   })
 })

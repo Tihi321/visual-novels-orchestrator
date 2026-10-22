@@ -5,7 +5,7 @@ import type { ToolResult } from '../src/engine/mcp/tools'
 import { checkPuzzleText, generatePuzzle, packagesDirOf, renderPuzzleText, solvePuzzle } from '../src/engine/puzzles/python'
 import type { PuzzlePython } from '../src/engine/puzzles/python'
 import { DEFAULT_SDK_PATH, sdkPython } from '../src/engine/renpy/run'
-import { knightsCoreSchema, murdleCoreSchema, puzzleCoreSchema, puzzleGeneratedSchema } from '../src/shared/puzzle'
+import { knightsCoreSchema, murdleCoreSchema, puzzleCoreSchema, puzzleGeneratedSchema, testimonyCoreSchema } from '../src/shared/puzzle'
 import type { KnightsClaim, MurdleCore, PuzzleEntry, PuzzleGenerated } from '../src/shared/puzzle'
 import { makeVnEnv } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
@@ -322,5 +322,65 @@ describe.skipIf(!sdkPython(sdkPath))('Knights and Knaves through the bridge and 
     await call('vno_edition_set', { slug, lang: 'hr', puzzles: { island: { names: hrNames, text: hrText } } })
     const hrRb = rb.map((s) => JSON.parse(JSON.stringify(s).replace(new RegExp(Object.values(nm).join('|'), 'g'), (m) => `${m}ko`)))
     expect(await call('vno_puzzle_check_text', { slug, key: 'island', lang: 'hr', readBack: hrRb })).toMatchObject({ ok: true, lang: 'hr' })
+  })
+})
+
+describe.skipIf(!sdkPython(sdkPath))('a testimony through the bridge and the tools', () => {
+  let env: VnEnv
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type Data = Record<string, any>
+  const call = async (name: string, args: object): Promise<Data> => {
+    const r: ToolResult = await callTool(buildTools(env.engine.vn), name, args)
+    if (r.isError) throw new Error(r.content[0]?.text)
+    return r.structuredContent as Data
+  }
+  beforeEach(async () => {
+    env = await makeVnEnv({ sdk: undefined })
+  })
+  afterEach(async () => {
+    await env.cleanup()
+  })
+
+  it('generate in under 2 s: keys, statements, evidence, a solution, canonical text; solve proves one clash', async () => {
+    const t0 = Date.now()
+    const g = await call('vno_puzzle_generate', { kind: 'testimony', band: 'hard', seed: 8 })
+    expect(Date.now() - t0).toBeLessThan(2000)
+    const core = testimonyCoreSchema.parse(g.core)
+    expect(core.statements.length).toBeGreaterThanOrEqual(5)
+    expect(Object.keys(g.names).sort()).toEqual(['wit', ...core.evidence.map((e) => e.id)].sort())
+    const proof = await solvePuzzle(py, core)
+    expect(proof).toMatchObject({ unique: true, deducible: true, band: 'hard', solutions: 1 })
+  })
+
+  it('vno_puzzle_set with generate, the read-back task, a faithful read-back, a changed one and an edition', async () => {
+    const r = await call('vno_create_project', { book: { title: 'Court', characters: [{ name: 'Hartley', looks: 'a detective' }], places: [{ name: 'Court', looks: 'a courtroom' }], chapters: [{ title: 'c', scenes: [{ place: 'court', beats: [{ text: 'Hi.' }] }] }] } })
+    const slug = r.slug as string
+    await call('vno_beat_add', { slug, sceneId: 'ch01.s01', beats: [{ puzzle: 'court' }] })
+    const set = await call('vno_puzzle_set', { slug, key: 'court', generate: { kind: 'testimony', band: 'medium', seed: 4 }, links: { wit: { type: 'character', key: 'hartley' } } })
+    expect(set.verified).toMatchObject({ unique: true, deducible: true, textChecked: true })
+    const got = await call('vno_puzzle_get', { slug, key: 'court' })
+    expect(got.readBackTask).toMatch(/courtroom puzzle/)
+    expect(got.readBackTask).toContain('t1: ')
+    expect(got.readBackTask).toContain('e1: ')
+    expect(got.readBackTask).not.toContain('"solution"')
+    const p = (await env.engine.vn.store.loadBook(slug)).puzzles![0]!
+    const core = testimonyCoreSchema.parse(p.data)
+    const rb: Record<string, unknown>[] = []
+    for (const s of core.statements) {
+      rb.push({ id: s.id, claims: s.claims })
+      if (s.press) rb.push({ id: `${s.id}.press`, claims: s.press.claims })
+    }
+    for (const e of core.evidence) rb.push({ id: e.id, facts: e.facts })
+    expect(await call('vno_puzzle_check_text', { slug, key: 'court', readBack: rb })).toMatchObject({ ok: true, textChecked: true })
+    const solId = core.solution.evidence
+    const bad = rb.map((x) => (x.id === solId ? { id: solId, facts: [{ key: core.evidence.find((e) => e.id === solId)!.facts[0]!.key, value: 'nonsense' }] } : x))
+    const failed = await call('vno_puzzle_check_text', { slug, key: 'court', readBack: bad })
+    expect(failed.ok).toBe(false)
+    expect(failed.differing).toEqual([solId])
+    // an edition: the words change, the structure does not
+    const hrNames = Object.fromEntries(Object.entries(p.names).map(([k, v]) => [k, `${v} hr`]))
+    const hrText = Object.fromEntries(Object.entries(p.text).map(([k, v]) => [k, `${v} (hr)`]))
+    await call('vno_edition_set', { slug, lang: 'hr', puzzles: { court: { names: hrNames, text: hrText } } })
+    expect(await call('vno_puzzle_check_text', { slug, key: 'court', lang: 'hr', readBack: rb })).toMatchObject({ ok: true, lang: 'hr' })
   })
 })

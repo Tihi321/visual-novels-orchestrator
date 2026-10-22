@@ -46,7 +46,11 @@ def main(argv=None):
             out = render_text(data["puzzle"], data.get("names"))
         else:
             data = json.load(sys.stdin)
-            if data["puzzle"].get("murder"):
+            if data["puzzle"].get("kind") == "testimony":
+                from vno_puzzles.testimony import check_present
+
+                out = check_present(data["puzzle"], data.get("statement", ""), data.get("evidence", ""), data.get("pressed", []))
+            elif data["puzzle"].get("murder"):
                 out = {"accusation": check_accusation(data["puzzle"], data.get("accusation", {})), "wrong_marks": check_marks(data["puzzle"], data.get("marks", {}))}
             else:
                 out = {"solution": check_solution(data["puzzle"], data.get("marks", {})), "wrong_marks": check_marks(data["puzzle"], data.get("marks", {}))}

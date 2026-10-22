@@ -49,3 +49,25 @@ testcase puzzle_smoke_knights:
     click "Submit"
     advance until screen "vno_knights"
     assert eval vno_puzzle_state["poc"]["tries"] == 1
+
+testcase puzzle_smoke_testimony:
+    pause 1.0
+    click "Start"
+    advance until screen "vno_murdle"
+    run Jump("puzzle_poc_testimony")
+    pause 1.0
+    advance until screen "vno_testimony"
+    assert eval vno_poc["kind"] == "testimony"
+    click "Press"
+    assert eval list(vno_puzzle_state["poc"]["marks"].values()) == ["pressed"]
+    click "Next >"
+    assert eval vno_puzzle_state["poc"]["at"] == 1
+    click "Hint"
+    advance until screen "vno_testimony"
+    assert eval vno_puzzle_state["poc"]["hints"] == 1
+    click "Present"
+    pause 0.5
+    click "photograph"
+    pause 0.5
+    advance until screen "vno_testimony"
+    assert eval vno_puzzle_state["poc"]["tries"] == 1

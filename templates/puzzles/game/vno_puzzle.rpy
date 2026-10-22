@@ -7,6 +7,7 @@
 init python:
     import vno_puzzles
     from vno_puzzles import play as vno_play
+    from vno_puzzles import testimony as vno_tm
 
     def vno_ps(pid):
         """The state of one puzzle: the player's marks, the struck-out clues, the undo history, the tries and hints used."""
@@ -55,6 +56,27 @@ init python:
         st["marks"] = vno_play.set_mark(st["marks"], who, "" if st["marks"].get(who) == value else value)
         renpy.restart_interaction()
 
+    def vno_tm_at(pid):
+        """Testimony: the number of the statement on show (0 is the first)."""
+        return vno_ps(pid).get("at", 0)
+
+    def vno_tm_go(pid, p, step):
+        """Testimony: to the next statement (step 1) or the one before (step -1); the witness goes round."""
+        st = vno_ps(pid)
+        st["at"] = (st.get("at", 0) + step) % len(p["statements"])
+        renpy.restart_interaction()
+
+    def vno_tm_press(pid, p):
+        """Testimony: press the statement on show. It stays pressed (and its extra words stay on screen)."""
+        st = vno_ps(pid)
+        sid = p["statements"][st.get("at", 0)]["id"]
+        st["marks"] = vno_play.set_mark(st["marks"], sid, "pressed")
+        renpy.restart_interaction()
+
+    def vno_tm_lives(p):
+        """Testimony: the length of the penalty bar (onFail.maxTries, else 5)."""
+        return vno_max_tries(p) or 5
+
     def vno_strike(pid, clue_id):
         st = vno_ps(pid)
         if clue_id in st["struck"]:
@@ -86,6 +108,8 @@ init python:
         return {"suspect": "Who did it?", "weapon": "With what?", "place": "Where?", "motive": "Why?"}.get(key, key)
 
     def vno_wrong_message(p, check):
+        if p.get("kind") == "testimony":
+            return "Objection overruled. That does not contradict the statement."
         n = len(check["wrong"])
         if p.get("murder"):
             return "Not quite. %d of the %d parts of that accusation are wrong." % (n, len(p["murder"]["answer"]))
@@ -287,6 +311,91 @@ screen vno_knights(pid, p):
                 textbutton "Submit" action Return("accuse") text_color "#f0d890"
                 textbutton "Give up" action Return("giveup")
 
+## Testimony: the witness on show, a statement at a time. Press it for more, open the court record and present a piece of evidence. Returns
+## "hint", "giveup" or ("present", evidence id).
+screen vno_testimony(pid, p):
+    modal True
+    zorder 100
+    default record = False
+    $ st = vno_ps(pid)
+    $ nm = p["names"]
+    $ pics = p.get("pics", {})
+    $ found = vno_clues_found.get(pid, [])
+    $ at = vno_tm_at(pid)
+    $ s = p["statements"][at]
+    $ pressed = st["marks"].get(s["id"]) == "pressed"
+    $ lives = vno_tm_lives(p)
+    $ left = max(0, lives - st["tries"])
+    add Solid("#0d0d16ee")
+    if "seed" in p:
+        text ("seed %s, %s" % (p["seed"], p["band"])) size 18 color "#8888aa" xalign 1.0 xoffset -12 yoffset 6
+    if config.developer:
+        text vno_dev_line(p) size 18 color "#8888aa" xalign 1.0 xoffset -12 yoffset 28
+    vbox:
+        xpos 60
+        ypos 30
+        xsize 1760
+        spacing 20
+        text vno_title(p) size 30 xsize 1500
+        hbox:
+            spacing 16
+            text "Penalty" size 24 color "#f0d890" yalign 0.5
+            for i in range(lives):
+                add Solid("#d04040" if i < left else "#40262a") xysize (44, 22) yalign 0.5
+        hbox:
+            spacing 40
+            if "wit" in pics:
+                add pics["wit"] fit "contain" xysize (300, 460) yalign 0.0
+            vbox:
+                spacing 18
+                text nm["wit"] size 26 color "#f0d890"
+                text ("%d / %d" % (at + 1, len(p["statements"]))) size 22 color "#8888aa"
+                frame:
+                    padding (30, 24)
+                    xsize 1200
+                    vbox:
+                        spacing 16
+                        text p["text"][s["id"]] size 32 xsize 1140
+                        if pressed:
+                            if (s["id"] + ".press") in p["text"]:
+                                text p["text"][s["id"] + ".press"] size 30 xsize 1140 color "#f0d890"
+                            else:
+                                text _("I have nothing to add.") size 30 color "#f0d890"
+                hbox:
+                    spacing 28
+                    textbutton "< Back" action Function(vno_tm_go, pid, p, -1)
+                    textbutton "Next >" action Function(vno_tm_go, pid, p, 1)
+                    textbutton "Press" action Function(vno_tm_press, pid, p) sensitive not pressed text_color "#f0d890"
+                    textbutton "Present" action SetScreenVariable("record", True) text_color "#f0d890"
+                hbox:
+                    spacing 28
+                    if p.get("hints", True):
+                        textbutton "Hint" action Return("hint")
+                    textbutton "Give up" action Return("giveup")
+    if record:
+        add Solid("#000000c8")
+        frame:
+            align (0.5, 0.5)
+            padding (40, 30)
+            vbox:
+                spacing 18
+                text "Court record" size 40
+                text "Pick the evidence that proves the statement on show false." size 24 color "#8888aa"
+                hbox:
+                    spacing 24
+                    for e in [x for x in p["evidence"] if "at" not in x or x["id"] in found]:
+                        button:
+                            action Return(("present", e["id"]))
+                            xsize 320
+                            padding (10, 10)
+                            vbox:
+                                spacing 8
+                                if e["id"] in pics:
+                                    add pics[e["id"]] fit "contain" xysize (280, 200) xalign 0.5
+                                text nm[e["id"]] size 28 color "#f0d890" xalign 0.5
+                                text p["text"][e["id"]] size 22 xsize 290
+                textbutton "Back" action SetScreenVariable("record", False)
+
 ## The accusation: one choice per category of the answer (suspect, weapon, place and, with a motive, why). Returns the picks, or None for Back.
 screen vno_accuse(p):
     modal True
@@ -326,13 +435,32 @@ label vno_puzzle_play(pid, p):
     while vno_result is None:
         if p.get("kind") == "knights":
             call screen vno_knights(pid, p)
+        elif p.get("kind") == "testimony":
+            call screen vno_testimony(pid, p)
         else:
             call screen vno_murdle(pid, p)
         $ vno_action = _return
         if vno_action == "hint":
-            $ vno_hint_text = vno_play.hint(p, vno_ps(pid)["marks"])["text"]
+            $ vno_hint_text = vno_play.hint(p, vno_ps(pid)["marks"], vno_ps(pid)["hints"])["text"]
             $ vno_ps(pid)["hints"] += 1
             narrator "[vno_hint_text]"
+        elif isinstance(vno_action, tuple):
+            $ vno_check = vno_tm.check_present(p, p["statements"][vno_tm_at(pid)]["id"], vno_action[1], [k for k, v in vno_ps(pid)["marks"].items() if v == "pressed"])
+            if vno_check["result"] == "correct":
+                $ vno_result = True
+            elif vno_check["result"] == "press_first":
+                narrator "That is it, but the witness is holding something back. Press the statement first."
+            else:
+                $ vno_ps(pid)["tries"] += 1
+                $ vno_wrong_text = vno_wrong_message(p, vno_check)
+                narrator "[vno_wrong_text]"
+                if vno_ps(pid)["tries"] >= vno_tm_lives(p):
+                    if vno_limit:
+                        narrator "The penalty bar is empty. The case is lost."
+                        $ vno_result = False
+                    else:
+                        narrator "The penalty bar is empty. The judge calls a recess, and the cross-examination starts again."
+                        $ vno_ps_reset(pid)
         elif vno_action == "accuse":
             $ vno_check = None
             if p.get("murder"):
@@ -355,7 +483,7 @@ label vno_puzzle_play(pid, p):
                         menu:
                             "Would you like a hint?"
                             "Yes, a hint please":
-                                $ vno_hint_text = vno_play.hint(p, vno_ps(pid)["marks"])["text"]
+                                $ vno_hint_text = vno_play.hint(p, vno_ps(pid)["marks"], vno_ps(pid)["hints"])["text"]
                                 $ vno_ps(pid)["hints"] += 1
                                 narrator "[vno_hint_text]"
                             "No, I will keep looking":

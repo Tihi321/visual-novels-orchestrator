@@ -6,7 +6,7 @@ import { buildGame, type BuildGameResult } from '../src/engine/renpy/build'
 import { DEFAULT_SDK_PATH, lint, sdkExists } from '../src/engine/renpy/run'
 import { buildEdition, importBook } from '../src/engine/vn/import'
 import { buildBook, storyInputSchema } from '../src/engine/vn/story'
-import { knightsCoreSchema, puzzleCoreSchema, puzzleEntrySchema } from '../src/shared/puzzle'
+import { knightsCoreSchema, puzzleCoreSchema, puzzleEntrySchema, testimonyCoreSchema } from '../src/shared/puzzle'
 import { hasText } from '../src/shared/vn'
 import type { Edition, VnBook } from '../src/shared/vn'
 import { loadBook, loadEdition, loadSettings, type FixtureName } from './fixtures/vn/load'
@@ -293,6 +293,44 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     expect(tl).toContain(`old "${q(kk.text.t1!)}"\n    new "${q(hrText.t1!)}"`)
     expect(tl).toContain(`old "${kk.names.k1}"\n    new "${hrNames.k1}"`)
     expect(tl).toContain(`old "${kk.text.intro}"\n    new "${hrText.intro}"`)
+    const l = await lint(r.gameDir, { sdkPath })
+    expect(l.messages).toEqual([])
+    expect(l.ok).toBe(true)
+  })
+
+  it('a testimony with the witness portrait, an evidence picture and an HR edition: the data, the tl strings, lint clean', { timeout: T }, async () => {
+    const tm = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'testimony-medium-4.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+    const base = buildBook(
+      storyInputSchema.parse({
+        title: 'The Trial',
+        characters: [{ name: 'Hartley', looks: 'a tired lawyer' }, { name: 'Halloran', looks: 'a nervous witness' }],
+        places: [{ name: 'Court', looks: 'a courtroom' }],
+        images: [{ key: 'watch', description: 'a stopped pocket watch', display: 'insert' }],
+        chapters: [{ title: 'Cross-examination', scenes: [{ place: 'court', beats: [{ cast: ['hartley'] }, { text: 'The witness took the stand.' }, { puzzle: 'court' }, { text: 'Court adjourned.' }] }] }]
+      }),
+      { slug: 'trial', lang: 'en' }
+    ).book
+    const book = {
+      ...base,
+      puzzles: [puzzleEntrySchema.parse({ key: 'court', kind: 'testimony', data: testimonyCoreSchema.parse(tm), names: tm.names, text: tm.text, links: { wit: { type: 'character', key: 'halloran' }, e1: { type: 'image', key: 'watch' } }, clueAt: { e2: 'ch01.s01.b002' }, verified: { unique: true, deducible: true, score: 5, textChecked: true, by: 'test' } })]
+    }
+    const en = buildEdition('en', book.title, book.chapters, book.characters)
+    const hrNames = Object.fromEntries(Object.entries(tm.names).map(([k, v]) => [k, `${v} (hr)`]))
+    const hrText = Object.fromEntries(Object.entries(tm.text).map(([k, v]) => [k, `${v} Na hrvatskom.`]))
+    const hr = { ...en, lang: 'hr', title: 'Sudjenje', chapterTitles: { 1: 'Unakrsno' }, beats: { 'ch01.s01.b002': 'Svjedok je stao pred sud.', 'ch01.s01.b004': 'Sud je odgodjen.' }, puzzles: { court: { names: hrNames, text: hrText } } }
+    const r = await buildGame({ projectDir: path.join(root, 'puzzle-testimony'), book, editions: [en, hr], settings: loadSettings(book, { editions: ['en', 'hr'] }), resolveAsset: () => null, sdkPath })
+    const game = path.join(r.gameDir, 'game')
+    const data = fs.readFileSync(path.join(game, 'vno_puzzles_data.rpy'), 'utf8')
+    expect(data).toContain('"kind": "testimony"')
+    expect(data).toContain('"pics": {"wit": "halloran neutral", "e1": "cg watch"}')
+    expect(data).toMatch(/"at": "ch01.s01.b002"/)
+    expect(fs.existsSync(path.join(game, 'images', 'halloran neutral.webp'))).toBe(true)
+    expect(fs.existsSync(path.join(game, 'images', 'cg watch.webp'))).toBe(true)
+    expect(fs.readFileSync(path.join(game, 'vno_puzzle.rpy'), 'utf8')).toContain('screen vno_testimony(pid, p):')
+    const tl = fs.readdirSync(path.join(game, 'tl', 'croatian')).map((f) => fs.readFileSync(path.join(game, 'tl', 'croatian', f), 'utf8')).join('\n')
+    const q = (t: string) => t.replace(/"/g, '\\"')
+    expect(tl).toContain(`old "${q(tm.text.t1!)}"\n    new "${q(hrText.t1!)}"`)
+    expect(tl).toContain(`old "${tm.names.e1}"\n    new "${hrNames.e1}"`)
     const l = await lint(r.gameDir, { sdkPath })
     expect(l.messages).toEqual([])
     expect(l.ok).toBe(true)

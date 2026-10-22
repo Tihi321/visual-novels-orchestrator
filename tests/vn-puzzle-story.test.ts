@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { deriveAssets } from '../src/engine/assets/derive'
-import { knightsCoreSchema, murdleCoreSchema, puzzleCoreSchema, puzzleEntityIds, puzzleEntrySchema, puzzleFindableIds, puzzleTextIds } from '../src/shared/puzzle'
+import { knightsCoreSchema, murdleCoreSchema, testimonyCoreSchema, puzzleCoreSchema, puzzleEntityIds, puzzleEntrySchema, puzzleFindableIds, puzzleTextIds } from '../src/shared/puzzle'
 import type { PuzzleEntry } from '../src/shared/puzzle'
 import { applyStoryOps, buildBook, storyInputSchema, syncEdition, validateBook } from '../src/engine/vn/story'
 import type { StoryOp } from '../src/engine/vn/story'
@@ -215,5 +215,37 @@ describe('Knights and Knaves in a book', () => {
     expect(validateBook(vnBookSchema.parse({ ...b, puzzles: [entryKk({ links: { zz: { type: 'character', key: 'hartley' } } })] })).errors.join(' ')).toMatch(/link of unknown item zz/)
     // statements are all there from the start: nothing to find in the story
     expect(validateBook(vnBookSchema.parse({ ...b, puzzles: [entryKk({ clueAt: { t1: 'ch01.s01.b002' } })] })).errors.join(' ')).toMatch(/unknown clue t1/)
+  })
+})
+
+describe('a testimony in a book', () => {
+  const tm = JSON.parse(readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'testimony-medium-4.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+  const tmCore = testimonyCoreSchema.parse(tm)
+  const entryTm = (over: Partial<PuzzleEntry> = {}): PuzzleEntry =>
+    puzzleEntrySchema.parse({ key: 'court', kind: 'testimony', data: tmCore, names: tm.names, text: tm.text, verified: { unique: true, deducible: true, score: tmCore.difficulty.score, textChecked: true, by: 'test' }, ...over })
+
+  it('the core parses; the witness and the evidence need names, the statements (and what a pressed one adds), evidence and intro need prose, the evidence can be found in the story', () => {
+    expect(tmCore.kind).toBe('testimony')
+    expect(puzzleEntityIds(tmCore)).toEqual(['wit', ...tmCore.evidence.map((e) => e.id)])
+    const ids = puzzleTextIds(tmCore)
+    expect(ids).toContain('intro')
+    for (const s of tmCore.statements) expect(ids.includes(`${s.id}.press`)).toBe(!!s.press)
+    expect(Object.keys(tm.text).sort()).toEqual([...ids].sort())
+    expect(puzzleFindableIds(tmCore)).toEqual(tmCore.evidence.map((e) => e.id))
+    expect(() => testimonyCoreSchema.parse({ ...tm, statements: [tmCore.statements[0]] })).toThrow()
+    expect(() => testimonyCoreSchema.parse({ ...tm, evidence: [] })).toThrow()
+    expect(puzzleCoreSchema.parse(tm).kind).toBe('testimony')
+  })
+
+  it('a book accepts it; evidence can be linked to an insert image and found at an earlier beat; the witness can be a character', () => {
+    const { book } = story()
+    const b = vnBookSchema.parse({ ...book, puzzles: [entryTm({ links: { wit: { type: 'character', key: 'hartley' }, e1: { type: 'image', key: 'rope' } }, clueAt: { e1: 'ch01.s01.b003' } })] })
+    b.chapters[0]!.scenes[1]!.beats[0] = { id: 'ch01.s02.b001', type: 'puzzle', puzzle: 'court' }
+    expect(validateBook(b).errors).toEqual([])
+    const noPress = { ...tm.text }
+    const pressId = Object.keys(noPress).find((k) => k.endsWith('.press'))!
+    delete noPress[pressId]
+    expect(validateBook(vnBookSchema.parse({ ...b, puzzles: [entryTm({ text: noPress })] })).errors.join(' ')).toContain(`clue ${pressId} has no text`)
+    expect(validateBook(vnBookSchema.parse({ ...b, puzzles: [entryTm({ clueAt: { t1: 'ch01.s01.b003' } })] })).errors.join(' ')).toMatch(/unknown clue t1/)
   })
 })
