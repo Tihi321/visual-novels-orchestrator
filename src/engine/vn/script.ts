@@ -157,6 +157,26 @@ export function matchCharacterDetail(label: string, chars: BibleCharacter[], o: 
   return null
 }
 
+/** The most characters a CG or insert gets from its cue text (the art director draws from their sheets). */
+export const MAX_CUE_CHARACTERS = 3
+
+/** The bible characters whose name or alias appears, as whole words, in a cue text, in the order they appear; at most `MAX_CUE_CHARACTERS`. */
+export function charactersInText(text: string, chars: BibleCharacter[]): string[] {
+  const hay = ` ${normText(text)} `
+  const found: { key: string; at: number }[] = []
+  for (const c of chars) {
+    let at = -1
+    for (const form of [c.name, ...(c.aliases ?? [])]) {
+      const n = normText(form)
+      if (!n) continue
+      const i = hay.indexOf(` ${n} `)
+      if (i >= 0 && (at < 0 || i < at)) at = i
+    }
+    if (at >= 0) found.push({ key: c.key, at })
+  }
+  return found.sort((a, b) => a.at - b.at).slice(0, MAX_CUE_CHARACTERS).map((f) => f.key)
+}
+
 export function matchCharacter(label: string, chars: BibleCharacter[], o: { entry?: boolean } = {}): string | null {
   return matchCharacterDetail(label, chars, o)?.key ?? null
 }
@@ -375,7 +395,10 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
         if (/^(?:none|ništa|nista)$/i.test(text)) pending.image = null
         else {
           const key = cueKey(text)
-          if (!images.has(key)) images.set(key, { key, description: text, display: kind === 'INSERT' ? 'insert' : 'full' })
+          if (!images.has(key)) {
+            const characters = charactersInText(text, bible.characters)
+            images.set(key, { key, description: text, display: kind === 'INSERT' ? 'insert' : 'full', ...(characters.length ? { characters } : {}) })
+          }
           pending.image = key
         }
       } else if (kind === 'AMBIENCE' || kind === 'ATMOSFERA') {

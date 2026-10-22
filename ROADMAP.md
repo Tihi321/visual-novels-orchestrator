@@ -17,3 +17,4 @@ None open. New work gets the next free number (VNO-19), a plan in `.claude/ticke
 
 - **VNO-17** (2026-10-22): unit tests for media cues and expression sets: story, import, derive, generate, Ren'Py output (snapshots `media-ch01.rpy`, `media-ch02.rpy`), cue precedence and the MCP tools. No bug found.
 - **VNO-18** (2026-10-22): the hand-mode test imports a sprite through `vno_asset_import` in both art styles; the flat-colour `key` cuts it out and ComfyUI is never called. 741 tests pass.
+- **VNO-16** (2026-10-22): a `CG:` or `INSERT:` image from an imported script gets `characters`: the bible characters whose name or alias is in the cue text (at most 3, in text order), so the art director has their looks and sheets. No match leaves it unset.
