@@ -11,7 +11,12 @@ What VN Studio still lacks on its own. Work that needs the other tools or a prod
 
 ## Tasks, in order
 
-None open. New work gets the next free number (VNO-19), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
+Two findings from the hub run (2026-10-22), not planned yet (no plan file; each gets one in `.claude/tickets/VNO-NN-<name>/plan.md` when it is taken up):
+
+- **VNO-20: a lost ComfyUI prompt must not leave a job running.** A generate job stayed `running` after ComfyUI crashed natively and came back with an empty queue; `vno_stop_now` and `vno_resume_all` restarted it. Detect a lost prompt (the prompt id is no longer in the queue or the history) and fail the job or retry it.
+- **VNO-21: check that VNO-08's hr UI strings reach older projects on rebuild.** The `the-clockless-god-3` Croatian build had 46 of 87 screen strings still in English. Check that the Croatian UI strings VNO-08 added are written into a project made before them when it is rebuilt, and fix what is missing.
+
+New work gets the next free number (VNO-22), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
 
 ## Done
 
