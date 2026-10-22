@@ -38,6 +38,8 @@ import type { ExistingArt } from './agents/script-analyst'
 import { mergeChapterCues, stageChapter } from './agents/stage-director'
 import { planVoices, speakerOf } from './agents/voice-director'
 import { describeVoices, voiceLangsOf } from '../voice/catalog'
+import { generateFlowClips } from '../voice/flow'
+import { flowAsVibeList } from '../voice/flow-catalog'
 import { generateVibeClips, importedClipsNote, planVibeVoices, readVoiceIndexIn } from '../voice/jobs'
 import type { VoiceIndexEntry } from '../voice/jobs'
 import type { AgentCall } from './agents/common'
@@ -618,16 +620,19 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         const book = await store.loadBook(slug)
         await svc.reconcileAssets(slug)
         const vibe = settings.voice.provider === 'vibetts'
+        const flowVoices = settings.voice.provider === 'flow'
         const folders = dataFolders(deps.dataDir)
         // uploaded reference clips only matter for the ComfyUI provider
-        const library = !vibe && existsSync(folders.voices) ? (await fs.readdir(folders.voices)).filter((f) => /\.(wav|mp3|flac|ogg|opus)$/i.test(f)).sort() : []
+        const library = !vibe && !flowVoices && existsSync(folders.voices) ? (await fs.readdir(folders.voices)).filter((f) => /\.(wav|mp3|flac|ogg|opus)$/i.test(f)).sort() : []
         // VibeTTS first: the model is shown the voices that exist, and an unreachable VibeTTS fails before it is asked
         const listed = vibe ? await (await svc.vibetts()).client.listVoices(ctx.signal) : undefined
-        const voiceList = listed ? describeVoices(listed.voices, voiceLangsOf(settings), settings.voice.englishEngine) : ''
+        // Flow: the free Gemini voices (every language) or the Windows voices of a language's culture; an unreachable flow-music-mcp fails here
+        const flowListed = flowVoices ? flowAsVibeList(await (await svc.studios()).flow.voices(ctx.signal), voiceLangsOf(settings)) : undefined
+        const voiceList = listed || flowListed ? describeVoices((listed ?? flowListed)!.voices, voiceLangsOf(settings), settings.voice.englishEngine) : ''
         const r = await tryAgent(ctx, 'voice-director', () => planVoices(call(ctx), book, library, voiceList))
         let msg: string
-        if (vibe) {
-          msg = await planVibeVoices(svc, slug, r.ok ? r.value : null, { overwrite: body.overwrite, listed, log: (m) => ctx.log(m), signal: ctx.signal })
+        if (vibe || flowVoices) {
+          msg = await planVibeVoices(svc, slug, r.ok ? r.value : null, { overwrite: body.overwrite, listed: listed ?? flowListed, source: vibe ? 'VibeTTS' : 'Google Flow', log: (m) => ctx.log(m), signal: ctx.signal })
         } else {
           const manifest = await store.loadAssets(slug)
           let planned = 0
@@ -667,6 +672,19 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         try {
           const { client, config } = await svc.vibetts()
           const r = await generateVibeClips(svc, slug, lang, { beatId: only, limit, client, config, log: (m) => ctx.log(m), signal: ctx.signal })
+          ctx.log(r.message)
+          await svc.setStep(slug, 'voice', r.status, r.message)
+          return r.message
+        } catch (e) {
+          if (!fatal(ctx, e)) await svc.setStep(slug, 'voice', 'failed', (e as Error).message)
+          throw e
+        }
+      }
+      if (settings.voice.provider === 'flow') {
+        try {
+          const { flow, config: studiosConfig } = await svc.studios()
+          const voiceConfig = (await svc.vibetts()).config
+          const r = await generateFlowClips(svc, slug, lang, { beatId: only, limit, flow, format: voiceConfig.format, settings: { pauseMs: studiosConfig.flowVoicePauseMs, retries: studiosConfig.flowVoiceRetries }, log: (m) => ctx.log(m), signal: ctx.signal })
           ctx.log(r.message)
           await svc.setStep(slug, 'voice', r.status, r.message)
           return r.message

@@ -15,6 +15,8 @@ async function picture(aspect: FlowImageArgs['aspect'], quality: FlowImageArgs['
     .toBuffer()
 }
 
+const DOWN = 'flow-music-mcp is not running at http://fake/flow. Start it: hub.ps1 start flow-music-mcp'
+
 export const GEMINI = [
   { name: 'Charon', description: 'informative', gender: 'male' as const },
   { name: 'Puck', description: 'upbeat', gender: 'male' as const },
@@ -38,6 +40,8 @@ export class FakeFlow implements FlowClient {
   rateLimited = 0
   /** Every narrate call fails (a persistent rate limit). */
   alwaysRateLimited = false
+  /** The Google AI Studio key is set up (the Gemini voices work). */
+  geminiReady = true
   songError: FlowError | null = null
   loopError: Error | null = null
   loopScore = 0.9
@@ -56,7 +60,7 @@ export class FakeFlow implements FlowClient {
 
   async generateImage(a: FlowImageArgs): Promise<{ file: string; mediaId: string; project?: string }> {
     this.calls.push({ tool: 'flow_generate', args: { ...a, signal: undefined } })
-    if (!this.up) throw new FlowError('flow-music-mcp is not running at http://fake/flow. Start it: hub.ps1 start flow-music-mcp', 'unreachable')
+    if (!this.up) throw new FlowError(DOWN, 'unreachable')
     if (this.imageError) throw this.imageError
     if (this.staleAssetRefs && a.references?.some((r) => r.startsWith('asset:'))) throw new FlowError('reference asset:... not found in the Flow project', 'tool')
     const file = path.join(a.out, `${a.name}-01.jpeg`)
@@ -67,13 +71,13 @@ export class FakeFlow implements FlowClient {
 
   async voices(): Promise<FlowVoices> {
     this.calls.push({ tool: 'flow_voices', args: {} })
-    if (!this.up) throw new FlowError('flow-music-mcp is not running', 'unreachable')
-    return { gemini: GEMINI, geminiModel: 'gemini-3.8-flash-tts', geminiReady: true, windows: this.windowsVoices }
+    if (!this.up) throw new FlowError(DOWN, 'unreachable')
+    return { gemini: GEMINI, geminiModel: 'gemini-3.8-flash-tts', geminiReady: this.geminiReady, windows: this.windowsVoices }
   }
 
   async narrate(a: NarrateArgs): Promise<{ file: string; durationSec?: number }> {
     this.calls.push({ tool: 'flow_narrate', args: { ...a, signal: undefined } })
-    if (!this.up) throw new FlowError('flow-music-mcp is not running', 'unreachable')
+    if (!this.up) throw new FlowError(DOWN, 'unreachable')
     if (this.alwaysRateLimited || this.rateLimited > 0) {
       this.rateLimited--
       throw new FlowError('Gemini TTS rate limited (HTTP 429): wait about a minute', 'rateLimit')
@@ -87,7 +91,7 @@ export class FakeFlow implements FlowClient {
 
   async song(a: SongArgs): Promise<FlowSong> {
     this.calls.push({ tool: 'music_generate', args: { ...a, signal: undefined } })
-    if (!this.up) throw new FlowError('flow-music-mcp is not running', 'unreachable')
+    if (!this.up) throw new FlowError(DOWN, 'unreachable')
     if (this.songError) throw this.songError
     await mkdir(a.out, { recursive: true })
     const file = path.join(a.out, `${a.name}.${a.format ?? 'mp3'}`)

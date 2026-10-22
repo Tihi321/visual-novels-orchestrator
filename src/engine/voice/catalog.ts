@@ -66,6 +66,9 @@ export function voicesFor(voices: readonly VibeVoice[], lang: Lang | string, eng
 /** True when `id` is listed and reads `lang`. */
 export const readsLang = (voices: readonly VibeVoice[], id: string, lang: Lang | string): boolean => voices.some((v) => v.id === id && v.languages.includes(lang))
 
+/** The gender of a voice: the one the list gives (Google Flow's), else the one in its id (VibeTTS). */
+const genderOf = (v: Pick<VibeVoice, 'id' | 'gender'>): Gender | null => v.gender ?? voiceGender(v.id)
+
 /** One speaker to give a voice. `preferred` is the voice-director's pick: used when it is a candidate of the speaker's gender and not taken. */
 export interface VoiceWish {
   key: string
@@ -87,10 +90,10 @@ export function pickVoices(speakers: readonly VoiceWish[], candidates: readonly 
   const ids = new Set(candidates.map((v) => v.id))
   const ordered = [...speakers.filter((s) => s.key !== NARRATOR), ...speakers.filter((s) => s.key === NARRATOR)]
   for (const s of ordered) {
-    const same = candidates.filter((v) => voiceGender(v.id) === s.gender)
+    const same = candidates.filter((v) => genderOf(v) === s.gender)
     const pool = same.length ? same : candidates
     let id: string | undefined
-    if (s.preferred && ids.has(s.preferred) && uses.get(s.preferred) === 0 && [s.gender, null].includes(voiceGender(s.preferred))) id = s.preferred
+    if (s.preferred && ids.has(s.preferred) && uses.get(s.preferred) === 0 && [s.gender, null].includes(genderOf(candidates.find((v) => v.id === s.preferred)!))) id = s.preferred
     if (!id) {
       const start = parseInt(sha1(s.key).slice(0, 8), 16) % pool.length
       const least = Math.min(...pool.map((v) => uses.get(v.id)!))
@@ -113,7 +116,7 @@ export function describeVoices(voices: readonly VibeVoice[], langs: readonly Lan
   return langs
     .map((lang) => {
       const list = voicesFor(voices, lang, englishEngine)
-      return `${lang}: ${list.length ? list.map((v) => `${v.id} (${voiceGender(v.id) ?? 'any'}, ${v.label})`).join('; ') : '(no voice reads this language)'}`
+      return `${lang}: ${list.length ? list.map((v) => `${v.id} (${genderOf(v) ?? 'any'}, ${v.label})`).join('; ') : '(no voice reads this language)'}`
     })
     .join('\n')
 }

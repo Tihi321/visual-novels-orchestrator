@@ -67,6 +67,7 @@ import { coverId, sheetId, spriteId, voiceRefId } from './ids'
 import { clientFor, loadVoiceConfig } from '../voice/config'
 import type { VoiceConfig } from '../voice/config'
 import { importVoiceClips, previewVoice, setVoice } from '../voice/jobs'
+import { previewFlowVoice, setFlowVoice } from '../voice/flow'
 import type { VoiceImportResult, VoicePreview } from '../voice/jobs'
 import type { VibeTtsClient } from '../voice/vibetts'
 import { chiptuneClientFor, flowClientFor, flowStartHint, loadStudiosConfig, pixelClientFor, startHint, studioRepo, studioUrl, STUDIO_NAMES } from '../studios/config'
@@ -1380,13 +1381,16 @@ export class VnService {
   }
 
   /** Gives a speaker the voice for one language and makes its preview (a few seconds to load the model on the first call). */
-  setVoice(slug: string, speakerKey: string, lang: Lang, voice: string): Promise<VoicePreview> {
+  async setVoice(slug: string, speakerKey: string, lang: Lang, voice: string): Promise<VoicePreview> {
+    const { settings } = await this.store.loadSettings(slug)
+    if (settings.voice.provider === 'flow') return setFlowVoice(this, slug, speakerKey, lang, voice, { flow: (await this.studios()).flow, format: (await this.vibetts()).config.format })
     return setVoice(this, slug, speakerKey, lang, voice)
   }
 
   /** A short sample of a voice in a language (the project's primary one when `lang` is left out). */
   async previewVoice(slug: string, speakerKey: string, voice: string, lang?: Lang): Promise<VoicePreview> {
     const { settings } = await this.store.loadSettings(slug)
+    if (settings.voice.provider === 'flow') return previewFlowVoice(this, slug, speakerKey, voice, lang ?? settings.primaryLang, { flow: (await this.studios()).flow, style: settings.voice.flowStyles?.[speakerKey], format: (await this.vibetts()).config.format })
     return previewVoice(this, slug, speakerKey, voice, lang ?? settings.primaryLang)
   }
 
