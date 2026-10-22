@@ -20,6 +20,7 @@ None open. New work gets the next free number (VNO-19), a plan in `.claude/ticke
 - **VNO-16** (2026-10-22): a `CG:` or `INSERT:` image from an imported script gets `characters`: the bible characters whose name or alias is in the cue text (at most 3, in text order), so the art director has their looks and sheets. No match leaves it unset.
 - **VNO-19** (2026-10-22): `sound.sfxEngine: "chiptune"` makes sound effects with Chiptune Studio `compose_sfx`, and `sound.ambienceEngine: "chiptune"` makes ambiences as its loops; sounds are matched to its sound names by key and description. Explicit settings only (no default, also not for pixel books). `vno_update_settings` takes `sound`.
 - **VNO-11** (2026-10-22): VN Studio starts Pixel Studio, Chiptune Studio and ComfyUI when a job finds them down (`config/autostart.md`, commands from the hub's `services.json`, `VNO_AUTOSTART=0` turns it off). Never Scriptorium, Strata, VibeTTS or LM Studio; ComfyUI not while Strata answers. Live check from the hub still to do.
+- **VNO-10** (2026-10-22): Google Flow as a provider through flow-music-mcp: `art.provider: flow` (free images, sprites from the sheet as a reference), `voice.provider: flow` (free Gemini and Windows voices), `music.provider: flow` (Flow Music songs, spends credits, capped per project, loop from `music_loop`). Tested with a fake client only; the live run is the hub task HUB-07 phase 4.
 
 ## Later (not planned yet)
 
@@ -27,3 +28,4 @@ None open. New work gets the next free number (VNO-19), a plan in `.claude/ticke
 - VibeTTS auto-start, if the user wants it (it is a tray app with its MCP switch in its own settings).
 - "Open in Pixel Studio / Chiptune Studio" while a headless studio holds the studio's `engine.lock`: the window cannot take the data folder, but the launch already reported success (true with `hub.ps1 start` too).
 - A hard kill of VN Studio leaves the services it started running, even with `stopOnExit: true`.
+- Google Flow follow-ups: a per-speaker voice picker for Flow voices in the Voice tab, batching backgrounds with `flow_agent_images`, editing a finished image with `flow_edit` once flow-music-mcp queues edits, a Flow character per cast member as the sprite reference if likeness drifts.

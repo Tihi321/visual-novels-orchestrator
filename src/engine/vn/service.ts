@@ -21,7 +21,7 @@ import type {
   VnCommand
 } from '../../shared/protocol'
 import { assertKnownLang } from '../../shared/languages'
-import { CHIPTUNE_ENGINE, FLOW_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
 import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
 import { importAssetFile } from '../assets/import'
@@ -141,7 +141,7 @@ export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings, r
     case 'sprite':
       return settings.art.provider === 'flow' ? FLOW_ENGINE : settings.art.editor
     case 'music':
-      return resolveMusicProvider(settings) === 'chiptune' ? CHIPTUNE_ENGINE : settings.music.engine
+      return resolveMusicProvider(settings) === 'flow' ? FLOW_MUSIC_ENGINE : resolveMusicProvider(settings) === 'chiptune' ? CHIPTUNE_ENGINE : settings.music.engine
     default:
       return null
   }
@@ -721,7 +721,7 @@ export class VnService {
    * Enqueues one job of the VN pipeline (idempotent by id). Returns the id. `priority`: 1 for a request someone made on purpose (an MCP tool,
    * the app), so it runs before the older jobs of the pipeline's own chain (0, the default); dependencies still decide what may start.
    */
-  async enqueue(slug: string, task: VnTask, unit: string, run: number, o: { depends_on?: string[]; body?: object; label?: string; vision?: boolean; requested_by?: string; priority?: number } = {}): Promise<string> {
+  async enqueue(slug: string, task: VnTask, unit: string, run: number, o: { depends_on?: string[]; body?: object; label?: string; vision?: boolean; requested_by?: string; priority?: number; max_attempts?: number } = {}): Promise<string> {
     const id = jobId(slug, task, unit, run)
     await this.deps.jobs.enqueue(
       {
@@ -735,7 +735,8 @@ export class VnService {
         ...(o.label ? { label: o.label } : {}),
         ...(o.vision ? { vision: true } : {}),
         ...(o.requested_by ? { requested_by: o.requested_by } : {}),
-        ...(o.priority ? { priority: o.priority } : {})
+        ...(o.priority ? { priority: o.priority } : {}),
+        ...(o.max_attempts ? { max_attempts: o.max_attempts } : {})
       },
       o.body ? JSON.stringify(o.body) : ''
     )
@@ -1021,7 +1022,7 @@ export class VnService {
     const dir = this.store.dir(slug)
     const sprites = entry.kind === 'sheet' ? (await this.store.loadAssets(slug)).assets.filter((a) => a.kind === 'sprite' && a.refs?.[0] === id) : []
     const sheetJobs = entry.kind === 'sprite' && entry.refs?.[0] ? (await this.activeGenerateJobs(slug, [entry.refs[0]])).map((j) => j.id) : []
-    const gen = await this.enqueue(slug, this.generateTask(settings, entry), id, run, { body: { force: true, prompt: edits.prompt, engine: edits.engine, seed: edits.seed }, label: `regenerate ${id}`, depends_on: sheetJobs, priority: 1 })
+    const gen = await this.enqueue(slug, this.generateTask(settings, entry), id, run, { body: { force: true, prompt: edits.prompt, engine: edits.engine, seed: edits.seed }, label: `regenerate ${id}`, depends_on: sheetJobs, priority: 1, max_attempts: this.maxAttempts(settings, entry) })
     const ids = [gen]
     const staleSprites: string[] = []
     if (entry.kind === 'sheet') {
@@ -1047,6 +1048,11 @@ export class VnService {
   }
 
   /** The job that makes an asset: sprites of a `pixel-studio-draw` book are drawn by an agent (needs a model), the rest are generated. */
+  /** A song from Flow Music is never retried by itself: a failed take may already have spent credits. Null: the factory's default. */
+  maxAttempts(settings: ProjectSettings, entry: Pick<AssetEntry, 'kind'>): number | undefined {
+    return entry.kind === 'music' && resolveMusicProvider(settings) === 'flow' ? 1 : undefined
+  }
+
   generateTask(settings: ProjectSettings, entry: Pick<AssetEntry, 'kind'>): VnTask {
     return entry.kind === 'sprite' && settings.art.style === 'pixel' && resolveArtProvider(settings.art) === 'pixel-studio-draw' ? TASKS.draw : TASKS.generate
   }

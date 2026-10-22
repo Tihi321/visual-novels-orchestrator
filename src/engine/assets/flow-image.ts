@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { FLOW_ENGINE, IMAGE_KINDS } from '../../shared/vn'
+import { FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, resolveMusicProvider } from '../../shared/vn'
 import type { AssetEntry, AssetVersion, ProjectSettings } from '../../shared/vn'
 import type { FlowClient } from '../studios/flow'
 import { FlowError } from '../studios/flow'
@@ -27,8 +27,9 @@ export const DEFAULT_FLOW_OPTIONS: FlowOptions = {
 
 /** Does this run of the asset go to Flow? `engine` is the engine given for this run: any other engine means ComfyUI (or the studio) for this one. */
 export function runsOnFlow(entry: Pick<AssetEntry, 'kind' | 'locked' | 'source' | 'engine'>, settings: Pick<ProjectSettings, 'art' | 'music'>, engine?: string): boolean {
-  if (engine !== undefined) return engine === FLOW_ENGINE
-  if (entry.locked || entry.source !== 'generated') return entry.engine === FLOW_ENGINE && IMAGE_KINDS.has(entry.kind)
+  if (engine !== undefined) return engine === FLOW_ENGINE || engine === FLOW_MUSIC_ENGINE
+  if (entry.locked || entry.source !== 'generated') return (entry.engine === FLOW_ENGINE && IMAGE_KINDS.has(entry.kind)) || (entry.engine === FLOW_MUSIC_ENGINE && entry.kind === 'music')
+  if (entry.kind === 'music') return resolveMusicProvider(settings) === 'flow'
   return IMAGE_KINDS.has(entry.kind) && settings.art.provider === 'flow'
 }
 

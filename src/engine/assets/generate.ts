@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
-import { CHIPTUNE_ENGINE, FLOW_ENGINE, IMAGE_KINDS, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../shared/vn'
 import type { AssetEntry, AssetManifest, AssetVersion, ProjectSettings, VnBook } from '../../shared/vn'
 import type { ComfyClient, ComfyProgress, ComfyResult } from '../comfy/client'
 import { randomSeed } from '../comfy/graphs'
@@ -17,6 +17,7 @@ import type { ChipTrackPlan } from '../studios/chip-plan'
 import type { ChiptuneClient } from '../studios/chiptune'
 import { pickChipSound } from '../studios/chip-sound'
 import { makeChiptuneSound, makeChiptuneTrack } from '../studios/music'
+import { makeFlowTrack } from '../studios/flow-music'
 import { pixelateWithStudio } from '../studios/pixelate'
 import type { FlowClient } from '../studios/flow'
 import { DEFAULT_FLOW_OPTIONS, flowReferences, makeFlowImage } from './flow-image'
@@ -86,6 +87,8 @@ export interface GenerateContext {
   flow?: FlowClient
   /** Quality, timeouts and the song cap of the Flow calls (`config/studios.md`). Default: `DEFAULT_FLOW_OPTIONS`. */
   flowOptions?: FlowOptions
+  /** How many Flow Music songs the project has made so far (the cap `flowOptions.maxSongs` counts them). */
+  flowSongsMade?: number
   /** The manifest entry of a referenced asset (its selected version tells a Flow media id). */
   resolveRefEntry?: (id: string) => AssetEntry | null
   /** Chiptune Studio, for music assets with the `chiptune` engine. */
@@ -349,7 +352,8 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
   // Music follows the project's provider: an unlocked generated track is made by Chiptune Studio or by the configured ComfyUI engine,
   // whatever made its earlier versions. An engine given for this one run, a locked track and a custom file keep theirs.
   if (edited.kind === 'music' && opts.engine === undefined && !edited.locked && edited.source === 'generated') {
-    edited.engine = resolveMusicProvider(ctx.settings) === 'chiptune' ? CHIPTUNE_ENGINE : edited.engine === CHIPTUNE_ENGINE ? ctx.settings.music.engine : edited.engine
+    const provider = resolveMusicProvider(ctx.settings)
+    edited.engine = provider === 'flow' ? FLOW_MUSIC_ENGINE : provider === 'chiptune' ? CHIPTUNE_ENGINE : edited.engine === CHIPTUNE_ENGINE || edited.engine === FLOW_MUSIC_ENGINE ? ctx.settings.music.engine : edited.engine
   }
   // Images follow the project's art provider the same way: a generated, unlocked image is made by Flow or by the configured ComfyUI engine,
   // whatever made its earlier versions. An engine given for this run, a locked image and a custom file keep theirs.
@@ -513,6 +517,17 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
         break
       }
       case 'music': {
+        if (edited.engine === FLOW_MUSIC_ENGINE) {
+          if (!ctx.flow) throw new Error('Google Flow (flow-music-mcp) is not configured')
+          const options = ctx.flowOptions ?? DEFAULT_FLOW_OPTIONS
+          progress('comfy', 'song from Flow Music (spends credits)')
+          const track = await makeFlowTrack(ctx.flow, { dir: assetDir(ctx.projectDir, edited.id), n: nextVersionN(edited), prompt: /^chiptune:/i.test(prompt) ? fallbackPrompt(edited, ctx.book) : prompt, title: `${ctx.book.title} ${edited.id}`, songsMade: ctx.flowSongsMade ?? 0, maxSongs: options.maxSongs, timeoutMs: options.musicTimeoutMs, signal: ctx.signal })
+          for (const w of track.warnings) warn(w)
+          chiptune = track
+          remote = track.remote
+          out = { bytes: Buffer.alloc(0), ext: path.extname(track.file).slice(1) }
+          break
+        }
         if (edited.engine === CHIPTUNE_ENGINE) {
           if (!ctx.chiptune) throw new Error('Chiptune Studio is not configured')
           progress('comfy', 'compose with Chiptune Studio')
@@ -554,7 +569,7 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
       n,
       file,
       createdAt: (ctx.now?.() ?? new Date()).toISOString(),
-      seed: chiptune ? chiptune.seed : remote ? null : seed,
+      seed: remote ? null : chiptune ? chiptune.seed : seed,
       ...(remote ? { remote } : {}),
       engine: edited.engine,
       prompt,
