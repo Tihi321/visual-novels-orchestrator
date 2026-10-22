@@ -183,9 +183,9 @@ export type Edition = z.infer<typeof editionSchema>
 
 // ---- project settings (project.md frontmatter) ----
 
-export const ART_PROVIDERS = ['comfy', 'pixel-studio-draw', 'hand'] as const
+export const ART_PROVIDERS = ['comfy', 'pixel-studio-draw', 'hand', 'flow'] as const
 export const PIXEL_PROVIDERS = ['vno', 'pixel-studio'] as const
-export const MUSIC_PROVIDERS = ['comfy', 'chiptune'] as const
+export const MUSIC_PROVIDERS = ['comfy', 'chiptune', 'flow'] as const
 /** The chips of Chiptune Studio. */
 export const CHIPS = ['nes', 'gb', 'genesis', 'snes', 'pce'] as const
 export const DITHERS = ['none', 'ordered', 'floyd'] as const
@@ -247,6 +247,10 @@ export const projectSettingsSchema = z.object({
       bgRemoval: z.enum(['birefnet', 'qwen-edit', 'key']).default('birefnet'),
       /** Who makes the sprites: ComfyUI (the default), or `pixel-studio-draw`: an agent draws small pixel sprites in Pixel Studio, or `hand`: every image is made outside VN Studio and set with vno_asset_replace (ComfyUI is never called for an image). Missing: `comfy`. */
       provider: z.enum(ART_PROVIDERS).optional(),
+      /** `flow` only: the image model as Flow's menu shows it (`Nano Banana Pro`). Missing: Flow's newest Nano Banana. */
+      flowModel: z.string().optional(),
+      /** `flow` only: the Flow project the images are made in. Missing: `vno-<slug>`. */
+      flowProject: z.string().optional(),
       /** Who turns an image into pixel art (pixel style only): the built-in sharp quantiser (`vno`) or Pixel Studio. Missing: `vno`. */
       pixelProvider: z.enum(PIXEL_PROVIDERS).optional(),
       /** Pixel art size and look. Missing fields take `PIXEL_DEFAULTS`. */
@@ -268,7 +272,9 @@ export const projectSettingsSchema = z.object({
       enabled: z.boolean().default(false),
       langs: z.array(langSchema).default([]),
       /** Where clips come from: VibeTTS (Kokoro and Supertonic over its local MCP server) or a ComfyUI TTS workflow. */
-      provider: z.enum(['vibetts', 'comfy']).default('vibetts'),
+      provider: z.enum(['vibetts', 'comfy', 'flow']).default('vibetts'),
+      /** `flow` only: a delivery note per speaker (character key or `narrator`) for the Gemini voice, e.g. "gruffly, tired". */
+      flowStyles: z.record(z.string(), z.string()).optional(),
       /** Language -> TTS engine id (ComfyUI custom workflow name), used when `provider` is `comfy`. */
       engines: z.record(z.string(), z.string()).default({}),
       /** Which engine reads English: the Kokoro voices (the default) or the Supertonic ones. Other languages always use Supertonic. Missing: `kokoro`. */
@@ -314,6 +320,10 @@ export function resolveMusicProvider(settings: Pick<ProjectSettings, 'art' | 'mu
 
 /** The pseudo engine id of a music asset made by Chiptune Studio. */
 export const CHIPTUNE_ENGINE = 'chiptune'
+/** The pseudo engine id of an image made by Google Flow (through flow-music-mcp). */
+export const FLOW_ENGINE = 'flow'
+/** The pseudo engine id of a track made by Flow Music (spends Flow Music credits). */
+export const FLOW_MUSIC_ENGINE = 'flow-music'
 
 // ---- assets (assets.json) ----
 
@@ -332,6 +342,8 @@ export const assetVersionSchema = z.object({
   /** Music from Chiptune Studio: where the loop starts and ends, in seconds. Ren'Py plays `<loop start>file` with it. */
   loopStartSec: z.number().nullable().optional(),
   loopEndSec: z.number().nullable().optional(),
+  /** Made by Google Flow / Flow Music: the Flow media id (images) or song id, so a later image can use it as a reference. */
+  remote: z.object({ provider: z.enum(['flow', 'flow-music']), id: z.string(), project: z.string().optional() }).optional(),
   /** Chiptune Studio's native song file of this version (next to the audio), for "Open in Chiptune Studio". */
   songFile: z.string().optional(),
   /** Pixel Studio art: the PNG at the native pixel size (before the nearest-neighbour scale up), for "Open in Pixel Studio". */

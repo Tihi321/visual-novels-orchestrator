@@ -2,6 +2,8 @@ import path from 'node:path'
 import { z } from 'zod'
 import { readMd } from '../store/atomic'
 import type { StoredKeyGetter } from '../models/keys'
+import { createFlowClient } from './flow'
+import type { FlowClient } from './flow'
 import { createChiptuneClient } from './chiptune'
 import type { ChiptuneClient } from './chiptune'
 import { resolveToken } from './mcp-http'
@@ -12,6 +14,7 @@ export type StudioId = 'pixel' | 'chiptune'
 
 export const DEFAULT_PIXEL_STUDIO_URL = 'http://127.0.0.1:7457/mcp'
 export const DEFAULT_CHIPTUNE_STUDIO_URL = 'http://127.0.0.1:7458/mcp'
+export const DEFAULT_FLOW_URL = 'http://127.0.0.1:7462/mcp'
 
 /** `config/studios.md`: where Pixel Studio and Chiptune Studio are, and where their code is (for the start hints and "Open in"). */
 export const studiosConfigSchema = z.object({
@@ -25,6 +28,32 @@ export const studiosConfigSchema = z.object({
   /** Bearer tokens of the apps' MCP servers. `PIXEL_STUDIO_MCP_TOKEN` / `CHIPTUNE_STUDIO_MCP_TOKEN` (environment or credential store) win over these. */
   pixelStudioToken: z.string().default(''),
   chiptuneStudioToken: z.string().default(''),
+  /** flow-music-mcp (Google Flow images and voices, Flow Music songs). `VNO_FLOW_URL` overrides the URL. */
+  flowUrl: z.string().default(DEFAULT_FLOW_URL),
+  flowRepo: z.string().default('C:\\projects\\Personal\\flow-music-mcp'),
+  /** The bearer token of flow-music-mcp. `FLOW_MUSIC_MCP_TOKEN` (environment or credential store) wins over this. */
+  flowToken: z.string().default(''),
+  /** Seconds per `flow_wait` / `music_wait` call (the server allows at most 50). */
+  flowPollS: z.number().min(1).max(50).default(40),
+  /** Give up on one Flow image job / one Flow Music song after this many seconds. */
+  flowJobTimeoutS: z.number().positive().default(900),
+  flowMusicTimeoutS: z.number().positive().default(600),
+  /** Download size per image kind: `upscaled` is the 2K image, `original` 1K (1376x768 at 16:9, below 1920x1080). */
+  flowImageQuality: z
+    .object({
+      background: z.enum(['original', 'upscaled']).default('upscaled'),
+      cover: z.enum(['original', 'upscaled']).default('upscaled'),
+      cg: z.enum(['original', 'upscaled']).default('upscaled'),
+      sheet: z.enum(['original', 'upscaled']).default('original'),
+      sprite: z.enum(['original', 'upscaled']).default('original'),
+      insert: z.enum(['original', 'upscaled']).default('original')
+    })
+    .default({ background: 'upscaled', cover: 'upscaled', cg: 'upscaled', sheet: 'original', sprite: 'original', insert: 'original' }),
+  /** Pause between two `flow_narrate` calls (ms), and how often a clip is retried on a rate limit (backoff 10 s, 30 s, 90 s). */
+  flowVoicePauseMs: z.number().int().min(0).default(1500),
+  flowVoiceRetries: z.number().int().min(0).max(6).default(3),
+  /** The most songs one project may make through Flow Music (counted from its asset versions): Flow Music spends credits. */
+  flowMusicMaxSongs: z.number().int().min(0).default(4),
   /** Timeouts in seconds: short calls, an image import and export, a track render. */
   timeoutS: z.number().positive().default(15),
   importTimeoutS: z.number().positive().default(120),
@@ -53,7 +82,8 @@ export async function loadStudiosConfig(dataDir: string, env: NodeJS.ProcessEnv 
   return {
     ...c,
     ...(env.VNO_PIXEL_STUDIO_URL ? { pixelStudioUrl: env.VNO_PIXEL_STUDIO_URL } : {}),
-    ...(env.VNO_CHIPTUNE_STUDIO_URL ? { chiptuneStudioUrl: env.VNO_CHIPTUNE_STUDIO_URL } : {})
+    ...(env.VNO_CHIPTUNE_STUDIO_URL ? { chiptuneStudioUrl: env.VNO_CHIPTUNE_STUDIO_URL } : {}),
+    ...(env.VNO_FLOW_URL ? { flowUrl: env.VNO_FLOW_URL } : {})
   }
 }
 
@@ -96,4 +126,23 @@ export function pixelClientFor(c: StudiosConfig, o: ClientHooks = {}): PixelClie
 
 export function chiptuneClientFor(c: StudiosConfig, o: ClientHooks = {}): ChiptuneClient {
   return createChiptuneClient({ url: c.chiptuneStudioUrl, token: studioToken(c, 'chiptune'), notRunningHint: startHint(c, 'chiptune'), ensureUp: o.ensureUp, timeoutMs: c.timeoutS * 1000, renderTimeoutMs: c.renderTimeoutS * 1000 })
+}
+
+/** How to start flow-music-mcp (the text of the "not running" and "not signed in" errors). */
+export function flowStartHint(c: StudiosConfig): string {
+  return `flow-music-mcp is not running at ${c.flowUrl}. Start it: hub.ps1 start flow-music-mcp (or cd ${c.flowRepo} && yarn build && yarn mcp). Google Flow must be signed in: yarn login in ${c.flowRepo}.`
+}
+
+export const flowToken = (c: StudiosConfig, env: NodeJS.ProcessEnv = process.env, getKey?: StoredKeyGetter): string | null => resolveToken('FLOW_MUSIC_MCP_TOKEN', c.flowToken, env, getKey)
+
+export function flowClientFor(c: StudiosConfig, o: ClientHooks = {}): FlowClient {
+  return createFlowClient({
+    url: c.flowUrl,
+    token: flowToken(c),
+    notRunningHint: flowStartHint(c),
+    ensureUp: o.ensureUp,
+    timeoutMs: c.timeoutS * 1000,
+    pollS: c.flowPollS,
+    repo: c.flowRepo
+  })
 }

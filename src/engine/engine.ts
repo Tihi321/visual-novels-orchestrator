@@ -25,6 +25,7 @@ import type { ComfyClient } from './comfy/client'
 import type { VibeTtsClient } from './voice/vibetts'
 import type { PixelClient } from './studios/pixel'
 import type { ChiptuneClient } from './studios/chiptune'
+import type { FlowClient } from './studios/flow'
 import { ServiceStarter } from './studios/autostart'
 import { readSeedNotes } from './store/seedRefresh'
 import { loadLanguageConfig } from './vn/languages-config'
@@ -49,6 +50,8 @@ export interface EngineOptions {
   /** Pixel Studio and Chiptune Studio clients for the asset jobs (tests pass fakes). Default: made from `config/studios.md`. */
   pixel?: PixelClient
   chiptune?: ChiptuneClient
+  /** flow-music-mcp client for Google Flow images, voices and songs (tests pass a fake). Default: made from `config/studios.md`. */
+  flow?: FlowClient
   /** Starts Pixel Studio, Chiptune Studio and ComfyUI when a job needs them (`config/autostart.md`). Default: one made here (tests pass a fake). */
   starter?: ServiceStarter
   /** The folders that ship with the app (themes, the Ren'Py template, the seed). Default: found relative to the engine code. */
@@ -155,6 +158,7 @@ export class Engine {
       vibetts: opts.vibetts,
       pixel: opts.pixel,
       chiptune: opts.chiptune,
+      flow: opts.flow,
       starter: this.starter,
       dirs: opts.dirs
     })

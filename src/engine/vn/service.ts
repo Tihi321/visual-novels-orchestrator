@@ -69,9 +69,10 @@ import type { VoiceConfig } from '../voice/config'
 import { importVoiceClips, previewVoice, setVoice } from '../voice/jobs'
 import type { VoiceImportResult, VoicePreview } from '../voice/jobs'
 import type { VibeTtsClient } from '../voice/vibetts'
-import { chiptuneClientFor, loadStudiosConfig, pixelClientFor, startHint, studioRepo, studioUrl, STUDIO_NAMES } from '../studios/config'
+import { chiptuneClientFor, flowClientFor, flowStartHint, loadStudiosConfig, pixelClientFor, startHint, studioRepo, studioUrl, STUDIO_NAMES } from '../studios/config'
 import type { StudioId, StudiosConfig } from '../studios/config'
 import type { ChiptuneClient } from '../studios/chiptune'
+import type { FlowClient } from '../studios/flow'
 import type { ServiceStarter } from '../studios/autostart'
 import type { PixelClient } from '../studios/pixel'
 import type { Watch } from '../studios/launch'
@@ -109,6 +110,8 @@ export interface VnDeps {
   pixel?: PixelClient
   /** A Chiptune Studio client (tests pass a fake). Default: one made from `config/studios.md`. */
   chiptune?: ChiptuneClient
+  /** A flow-music-mcp client (tests pass a fake). Default: one made from `config/studios.md`. */
+  flow?: FlowClient
   /** Starts Pixel Studio, Chiptune Studio and ComfyUI when a job finds them down (tests pass a fake, or none). */
   starter?: ServiceStarter
   /** The folders that ship with the app. Default: found relative to this code. */
@@ -1298,20 +1301,21 @@ export class VnService {
   // ---- Pixel Studio and Chiptune Studio ----
 
   /** The studio clients and `config/studios.md` (the clients are the ones the engine was given, else made from the config). */
-  async studios(o: { autoStart?: boolean; log?: (m: string) => void } = {}): Promise<{ pixel: PixelClient; chiptune: ChiptuneClient; config: StudiosConfig }> {
+  async studios(o: { autoStart?: boolean; log?: (m: string) => void } = {}): Promise<{ pixel: PixelClient; chiptune: ChiptuneClient; flow: FlowClient; config: StudiosConfig }> {
     const config = await loadStudiosConfig(this.dataDir)
     const starter = o.autoStart ? this.deps.starter : undefined
     const hook = (id: string, url: string) => (starter ? { ensureUp: (signal?: AbortSignal) => starter.ensure(id, url, { signal, log: o.log }) } : {})
     return {
       pixel: this.deps.pixel ?? pixelClientFor(config, hook('pixel-studio', config.pixelStudioUrl)),
       chiptune: this.deps.chiptune ?? chiptuneClientFor(config, hook('chiptune-studio', config.chiptuneStudioUrl)),
+      flow: this.deps.flow ?? flowClientFor(config),
       config
     }
   }
 
   /** Asks both studios for their tools. Never throws: an unreachable studio is `ok: false` with the message (and how to start it). */
   async studiosStatus(): Promise<StudioStatusView[]> {
-    const { pixel, chiptune, config } = await this.studios()
+    const { pixel, chiptune, flow, config } = await this.studios()
     const probe = async (id: StudioId, client: PixelClient | ChiptuneClient): Promise<StudioStatusView> => {
       const base = { id, name: STUDIO_NAMES[id], url: client.url || studioUrl(config, id), repo: studioRepo(config, id), hint: startHint(config, id) }
       try {
@@ -1321,7 +1325,18 @@ export class VnService {
         return { ...base, ok: false, error: (e as Error).message, tools: 0 }
       }
     }
-    return Promise.all([probe('pixel', pixel), probe('chiptune', chiptune)])
+    const probeFlow = async (): Promise<StudioStatusView> => {
+      const base = { id: 'flow' as const, name: 'flow-music-mcp (Google Flow)', url: flow.url || config.flowUrl, repo: config.flowRepo, hint: flowStartHint(config) }
+      try {
+        const s = await flow.status()
+        if (!s.up) return { ...base, ok: false, error: s.hint ?? base.hint, tools: 0 }
+        if (s.signedIn === false) return { ...base, ok: false, error: s.hint ?? 'Google Flow is not signed in', tools: 0 }
+        return { ...base, ok: true, error: '', tools: 0 }
+      } catch (e) {
+        return { ...base, ok: false, error: (e as Error).message, tools: 0 }
+      }
+    }
+    return Promise.all([probe('pixel', pixel), probe('chiptune', chiptune), probeFlow()])
   }
 
   /** Opens an asset in its studio; each save there makes a new custom, locked version (see `vn/roundtrip.ts`). */
