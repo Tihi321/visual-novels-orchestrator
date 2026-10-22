@@ -31,6 +31,10 @@ def safe_text(s):
 
 def default_names(p):
     """item id -> name for the PoC: the first names of `POC_NAMES` per category, in item order (a puzzle's own `names` come first)."""
+    if p.get("kind") == "knights":
+        from .knights import default_names as knights_names
+
+        return knights_names(p)
     have = p.get("names") or {}
     names = {}
     for c in p["categories"]:
@@ -204,6 +208,14 @@ def _the_name(p, item, nm, cap=False):
 
 def fill(p, names=None):
     """Adds `names` and `text` (clue id -> sentence, and `murder`) from the canonical sentences."""
+    if p.get("kind") == "knights":
+        from .knights import fill_knights
+
+        return fill_knights(p, names)
+    if p.get("kind") == "testimony":
+        from .testimony import fill_testimony
+
+        return fill_testimony(p, names)
     nm = dict(names) if names else default_names(p)
     p["names"] = nm
     p["text"] = {c["id"]: clue_text(p, c, nm) for c in p["clues"]}

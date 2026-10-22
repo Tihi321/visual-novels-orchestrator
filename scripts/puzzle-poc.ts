@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     if (!l.ok) process.exitCode = 1
   }
   if (selftest) {
-    for (const name of ['puzzle_smoke', 'puzzle_smoke_big']) {
+    for (const name of ['puzzle_smoke', 'puzzle_smoke_big', 'puzzle_smoke_knights']) {
       const r = await runRenpy(sdkPath, [built.gameDir, 'test', name], { timeoutMs: 180_000 })
       const out = `${r.stdout}\n${r.stderr}`
       const passed = /Status:\s+PASSED/.test(out)

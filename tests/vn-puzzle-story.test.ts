@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { deriveAssets } from '../src/engine/assets/derive'
-import { puzzleCoreSchema, puzzleEntityIds, puzzleEntrySchema, puzzleTextIds } from '../src/shared/puzzle'
+import { knightsCoreSchema, murdleCoreSchema, puzzleCoreSchema, puzzleEntityIds, puzzleEntrySchema, puzzleFindableIds, puzzleTextIds } from '../src/shared/puzzle'
 import type { PuzzleEntry } from '../src/shared/puzzle'
 import { applyStoryOps, buildBook, storyInputSchema, syncEdition, validateBook } from '../src/engine/vn/story'
 import type { StoryOp } from '../src/engine/vn/story'
@@ -11,7 +11,7 @@ import type { VnBook } from '../src/shared/vn'
 import { settings } from './assets-fixtures'
 
 const fixture = JSON.parse(readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'murdle-medium-1.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
-const core = puzzleCoreSchema.parse(fixture)
+const core = murdleCoreSchema.parse(fixture)
 const entry = (over: Partial<PuzzleEntry> = {}): PuzzleEntry =>
   puzzleEntrySchema.parse({ key: 'dinner', kind: 'murdle', data: core, names: fixture.names, text: fixture.text, verified: { unique: true, deducible: true, score: core.difficulty.score, textChecked: true, by: 'test' }, ...over })
 
@@ -47,7 +47,7 @@ describe('the puzzle schemas', () => {
     expect(core.categories.map((c) => c.key)).toEqual(['suspect', 'weapon', 'place'])
     expect(core.murder.answer).toMatchObject({ suspect: expect.stringMatching(/^s\d$/) })
     expect(() => puzzleCoreSchema.parse({ ...core, format: 2 })).toThrow()
-    expect(() => puzzleCoreSchema.parse({ ...core, clues: [{ id: 'x', type: 'is', a: 's1', b: 's2' }] })).toThrow()
+    expect(() => murdleCoreSchema.parse({ ...core, clues: [{ id: 'x', type: 'is', a: 's1', b: 's2' }] })).toThrow()
     expect(puzzleEntrySchema.parse({ ...entry(), onFail: { mode: 'chapter', to: 2, maxTries: 3 }, hints: false, clueAt: { c1: 'ch01.s01.b003' }, links: { w1: { type: 'image', key: 'rope' } } }).onFail?.mode).toBe('chapter')
     const b = story().book
     expect(b.chapters[0]!.scenes[1]!.beats[0]).toEqual({ id: 'ch01.s02.b001', type: 'puzzle', puzzle: 'dinner' })
@@ -162,7 +162,7 @@ describe('editions and assets', () => {
 
 describe('a bigger Murdle (4x4, a motive, attribute clues)', () => {
   const big = JSON.parse(readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'murdle-4x4-motive-attrs-2.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
-  const bigCore = puzzleCoreSchema.parse(big)
+  const bigCore = murdleCoreSchema.parse(big)
 
   it('the core parses with four categories, the descr phrases, clues that point at items by a trait and a motive in the answer', () => {
     expect(bigCore.size).toBe(4)
@@ -172,7 +172,7 @@ describe('a bigger Murdle (4x4, a motive, attribute clues)', () => {
     expect(bigCore.murder.answer.motive).toMatch(/^m\d$/)
     expect(puzzleEntityIds(bigCore)).toHaveLength(16)
     expect(puzzleTextIds(bigCore)).toEqual([...bigCore.clues.map((c) => c.id), 'murder'])
-    expect(() => puzzleCoreSchema.parse({ ...big, size: 6 })).toThrow()
+    expect(() => murdleCoreSchema.parse({ ...big, size: 6 })).toThrow()
   })
 
   it('a book accepts it and validates every name and clue text', () => {
@@ -183,5 +183,37 @@ describe('a bigger Murdle (4x4, a motive, attribute clues)', () => {
     const missing = { ...big.names }
     delete missing.m3
     expect(validateBook(vnBookSchema.parse({ ...book, puzzles: [{ ...entryBig, names: missing }] })).errors.join(' ')).toMatch(/item m3 has no name/)
+  })
+})
+
+describe('Knights and Knaves in a book', () => {
+  const kk = JSON.parse(readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'knights-4-medium-3.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+  const kkCore = knightsCoreSchema.parse(kk)
+  const entryKk = (over: Partial<PuzzleEntry> = {}): PuzzleEntry =>
+    puzzleEntrySchema.parse({ key: 'island', kind: 'knights', data: kkCore, names: kk.names, text: kk.text, verified: { unique: true, deducible: true, score: kkCore.difficulty.score, textChecked: true, by: 'test' }, ...over })
+
+  it('the core parses: speakers, statements with claims, a solution; the ids that need a name and prose are the speakers and the statements', () => {
+    expect(kkCore.kind).toBe('knights')
+    expect(kkCore.speakers).toEqual(['k1', 'k2', 'k3', 'k4'])
+    expect(kkCore.statements.length).toBeGreaterThan(2)
+    expect(puzzleEntityIds(kkCore)).toEqual(['k1', 'k2', 'k3', 'k4'])
+    expect(puzzleTextIds(kkCore)).toEqual([...kkCore.statements.map((s) => s.id), 'intro'])
+    expect(puzzleFindableIds(kkCore)).toEqual([])
+    expect(() => knightsCoreSchema.parse({ ...kk, speakers: ['k1'] })).toThrow()
+    expect(() => knightsCoreSchema.parse({ ...kk, statements: [{ id: 't1', speaker: 'k1', claim: { type: 'wizard' } }] })).toThrow()
+    expect(puzzleCoreSchema.parse(kk).kind).toBe('knights')
+  })
+
+  it('a book accepts it, validates its names and prose, and a link gives a speaker a portrait', () => {
+    const { book } = story()
+    const b = vnBookSchema.parse({ ...book, puzzles: [entryKk({ links: { k1: { type: 'character', key: 'hartley' } } })] })
+    b.chapters[0]!.scenes[1]!.beats[0] = { id: 'ch01.s02.b001', type: 'puzzle', puzzle: 'island' }
+    expect(validateBook(b).errors).toEqual([])
+    const noIntro = { ...kk.text }
+    delete noIntro.intro
+    expect(validateBook(vnBookSchema.parse({ ...b, puzzles: [entryKk({ text: noIntro })] })).errors.join(' ')).toMatch(/clue intro has no text/)
+    expect(validateBook(vnBookSchema.parse({ ...b, puzzles: [entryKk({ links: { zz: { type: 'character', key: 'hartley' } } })] })).errors.join(' ')).toMatch(/link of unknown item zz/)
+    // statements are all there from the start: nothing to find in the story
+    expect(validateBook(vnBookSchema.parse({ ...b, puzzles: [entryKk({ clueAt: { t1: 'ch01.s01.b002' } })] })).errors.join(' ')).toMatch(/unknown clue t1/)
   })
 })

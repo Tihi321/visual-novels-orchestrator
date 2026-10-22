@@ -11,7 +11,6 @@ import { DEFAULT_SDK_PATH, runSdkPython, sdkExists, sdkPython } from '../src/eng
 const sdkPath = process.env.VNO_RENPY_SDK ?? DEFAULT_SDK_PATH
 const root = path.resolve(__dirname, '..')
 const pkg = path.join(root, 'templates', 'puzzles', 'game', 'python-packages', 'vno_puzzles', 'cli.py')
-const T = 240_000
 
 describe('sdkPython', () => {
   it('is null for a folder with no SDK', () => {
@@ -24,10 +23,15 @@ describe('sdkPython', () => {
 })
 
 describe.skipIf(!sdkPython(sdkPath))('the puzzle library under the SDK Python', () => {
-  it('passes its Python tests (600 puzzles: unique, deducible, minimal, in their band)', { timeout: T }, async () => {
-    const r = await runSdkPython(sdkPath, [path.join(root, 'tests', 'puzzles', 'test_vno_puzzles.py')], { cwd: root, timeoutMs: T })
-    expect(r.code, `${r.stdout}\n${r.stderr}`).toBe(0)
-    expect(r.stdout).toMatch(/\d+ test\(s\), 0 failed/)
+  it('passes its Python tests (every puzzle of every kind: unique, deducible, minimal, in its band)', { timeout: 600_000 }, async () => {
+    const dir = path.join(root, 'tests', 'puzzles')
+    const files = fs.readdirSync(dir).filter((f) => /^test_.*\.py$/.test(f)).sort()
+    expect(files).toContain('test_vno_puzzles.py')
+    for (const f of files) {
+      const r = await runSdkPython(sdkPath, [path.join(dir, f)], { cwd: root, timeoutMs: 600_000 })
+      expect(r.code, `${f}\n${r.stdout}\n${r.stderr}`).toBe(0)
+      expect(r.stdout).toMatch(/\d+ test\(s\), 0 failed/)
+    }
   })
 
   it('the CLI makes a puzzle as JSON, solves it and checks an accusation (the shape the engine will read)', { timeout: 60_000 }, async () => {

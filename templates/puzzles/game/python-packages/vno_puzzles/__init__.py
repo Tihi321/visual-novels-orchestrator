@@ -16,6 +16,15 @@ __version__ = "1.0"
 
 def solve(p):
     """{unique, solutions, deducible, band, steps, score, rules}: the proof the engine asks for."""
+    kind = p.get("kind", "murdle")
+    if kind == "knights":
+        from .knights import solve_knights
+
+        return solve_knights(p)
+    if kind == "testimony":
+        from .testimony import solve_testimony
+
+        return solve_testimony(p)
     validate(p)
     n = count_solutions(p, 2)
     res = deduce(p)

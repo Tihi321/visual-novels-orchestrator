@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { emitScripts, translatableStrings } from '../src/engine/renpy/emit'
 import { emitPuzzleData, playedPuzzles, puzzlePics } from '../src/engine/renpy/puzzles'
 import { defaultCues } from '../src/engine/renpy/stage'
-import { puzzleCoreSchema, puzzleEntrySchema } from '../src/shared/puzzle'
+import { knightsCoreSchema, puzzleCoreSchema, puzzleEntrySchema } from '../src/shared/puzzle'
 import type { PuzzleEntry } from '../src/shared/puzzle'
 import { buildBook, storyInputSchema } from '../src/engine/vn/story'
 import { editionSchema, vnBookSchema } from '../src/shared/vn'
@@ -118,5 +118,30 @@ describe('pictures in the headers of a puzzle', () => {
     none.characters = []
     expect(puzzlePics(none, none.puzzles![0]!)).toEqual({})
     expect(emit(book()).files['vno_puzzles_data.rpy']).not.toContain('"pics"')
+  })
+})
+
+describe('a Knights and Knaves puzzle in the script', () => {
+  const kk = JSON.parse(readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'knights-4-medium-3.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+  const withKk = (links?: PuzzleEntry['links']): VnBook => {
+    const b = book()
+    b.puzzles = [puzzleEntrySchema.parse({ key: 'dinner', kind: 'knights', data: knightsCoreSchema.parse(kk), names: kk.names, text: kk.text, ...(links ? { links } : {}), verified: { unique: true, deducible: true, score: 5, textChecked: true, by: 'test' } })]
+    return b
+  }
+
+  it('is written as plain data with the statements and names as translatable strings, and the call is the same', () => {
+    const r = emit(withKk({ k1: { type: 'character', key: 'hartley' } }))
+    expect(r.files['ch01.rpy']).toContain('call vno_puzzle_play("dinner", vno_puzzle_data["dinner"])')
+    const data = r.files['vno_puzzles_data.rpy']!
+    expect(data).toContain('"kind": "knights"')
+    expect(data).toContain('"speakers": ["k1", "k2", "k3", "k4"]')
+    expect(data).toContain('"statements": [{"id": "t1"')
+    expect(data).toContain('"solution": {"k1": "')
+    expect(data).toContain(`"intro": _("${kk.text.intro}")`)
+    expect(data).toContain('"pics": {"k1": "hartley neutral"}')
+    expect(data).not.toContain('"seed"')
+    const strings = translatableStrings(withKk()).filter((s) => s.what.startsWith('puzzle dinner'))
+    expect(strings.length).toBe(Object.keys(kk.names).length + Object.keys(kk.text).length)
+    expect(strings.some((s) => s.what === 'puzzle dinner clue intro')).toBe(true)
   })
 })

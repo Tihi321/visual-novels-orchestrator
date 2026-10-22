@@ -32,3 +32,20 @@ testcase puzzle_smoke_big:
     click "Back"
     pause 0.5
     assert screen "vno_murdle"
+
+testcase puzzle_smoke_knights:
+    pause 1.0
+    click "Start"
+    advance until screen "vno_murdle"
+    run Jump("puzzle_poc_knights")
+    pause 1.0
+    advance until screen "vno_knights"
+    assert eval vno_poc["kind"] == "knights"
+    click "Knight"
+    assert eval len(vno_puzzle_state["poc"]["marks"]) == 1
+    click "Hint"
+    advance until screen "vno_knights"
+    assert eval vno_puzzle_state["poc"]["hints"] == 1
+    click "Submit"
+    advance until screen "vno_knights"
+    assert eval vno_puzzle_state["poc"]["tries"] == 1

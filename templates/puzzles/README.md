@@ -20,6 +20,8 @@ poc/puzzle_poc_test.rpy             a Ren'Py test case (scripts/puzzle-poc.ts --
 
 - `murdle`: 3x3 or 4x4 (`motive`: a fourth category; `attrs`: clues that point at an item by a trait). The grid is one generic staircase of cells for any number of categories; it scrolls when it is big.
 
+- `knights`: Knights and Knaves, 2 to 5 speakers. `{speakers, statements: [{id, speaker, claim}], solution}`; claims: `knight`, `knave`, `same`, `diff`, `some_knave`, `all_knight`, `exactly`, `not`, `and`, `or`. Proofs: one of the 2**n assignments fits, and `direct` inference plus `split` (a case that ends in a contradiction) finds it; the band is the number of splits. The screen has the statements on the left and a Knight / Knave choice per speaker on the right.
+
 ## What a puzzle is
 
 Plain JSON-shaped data (no classes), so it goes to and from the engine as JSON and Ren'Py saves and rolls it back in `default` variables. Items are abstract ids (`s1`, `w2`, `p3`); `names` and `text` are a separate layer a model can rewrite without touching the logic.

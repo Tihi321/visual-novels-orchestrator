@@ -43,17 +43,12 @@ export function puzzlePics(book: VnBook, p: PuzzleEntry): Record<string, string>
 /** The dict of one puzzle, the way the screens read it. A clue found earlier in the story has its beat in `at`. */
 function entryLiteral(p: PuzzleEntry, pics: Record<string, string>): string {
   const tr = (rec: Record<string, string>) => `{${Object.entries(rec).map(([k, t]) => `${JSON.stringify(k)}: _(${renpyString(t)})`).join(', ')}}`
-  const d = p.data
+  // the whole core as plain data, without the seed and the band (the player is not told them); a grid clue found earlier has its beat in `at`
+  const { seed: _seed, band: _band, ...core } = p.data
+  const data: Record<string, unknown> = Object.assign({ format: core.format, kind: core.kind, size: core.size }, core)
+  if (core.kind === 'murdle') data.clues = core.clues.map((c) => ({ ...c, ...(p.clueAt?.[c.id] ? { at: p.clueAt[c.id] } : {}) }))
   const parts = [
-    `"format": ${d.format}`,
-    `"kind": ${py(d.kind)}`,
-    `"size": ${d.size}`,
-    `"categories": ${py(d.categories)}`,
-    `"solution": ${py(d.solution)}`,
-    `"clues": ${py(d.clues.map((c) => ({ ...c, ...(p.clueAt?.[c.id] ? { at: p.clueAt[c.id] } : {}) })))}`,
-    `"murder": ${py(d.murder)}`,
-    `"difficulty": ${py(d.difficulty)}`,
-    `"steps": ${py(d.steps)}`,
+    ...Object.entries(data).map(([k, v]) => `${JSON.stringify(k)}: ${py(v)}`),
     `"names": ${tr(p.names)}`,
     `"text": ${tr(p.text)}`,
     `"hints": ${py(p.hints !== false)}`,

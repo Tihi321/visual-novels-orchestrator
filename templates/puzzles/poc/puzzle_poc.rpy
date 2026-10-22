@@ -1,9 +1,30 @@
-## The proof of concept: a short intro, a 3x3 Murdle puzzle, an accusation and a reply. Not part of any normal build.
+## The proof of concept: a short intro, a puzzle, an answer and a reply, for every kind of puzzle. Not part of any normal build.
 
 default vno_poc_seed = 1
 default vno_poc_band = "medium"
 default vno_poc = None
+default vno_poc_kind = "murdle"
 default vno_poc_big = False
+
+init python:
+    def vno_poc_make():
+        """A new puzzle of the chosen kind, band and seed."""
+        if vno_poc_kind == "murdle" and vno_poc_big:
+            return vno_puzzles.generate("murdle", 4, vno_poc_seed, vno_poc_band, motive=True, attrs=True)
+        if vno_poc_kind == "knights":
+            return vno_puzzles.generate("knights", 4, vno_poc_seed, vno_poc_band)
+        return vno_puzzles.generate(vno_poc_kind, None, vno_poc_seed, vno_poc_band)
+
+    def vno_poc_reveal(p, won):
+        """What the story says when the puzzle is over."""
+        names = p["names"]
+        if p["kind"] == "knights":
+            lines = ["%s is a %s" % (names[k], v) for k, v in p["solution"].items()]
+            return ("That is right. " if won else "You give up. ") + "; ".join(lines) + "."
+        a = p["murder"]["answer"]
+        why = (", out of " + names[a["motive"]]) if "motive" in a else ""
+        fact = "%s did it, with the %s, in the %s%s." % (names[a["suspect"]], names[a["weapon"]], names[a["place"]], why)
+        return ("That is it. " if won else "You put the notes away. It was ") + fact
 
 label puzzle_poc:
     scene black
@@ -13,40 +34,39 @@ label puzzle_poc:
     jump puzzle_poc_make
 
 label puzzle_poc_make:
-    if vno_poc_big:
-        $ vno_poc = vno_puzzles.generate("murdle", 4, vno_poc_seed, vno_poc_band, motive=True, attrs=True)
-    else:
-        $ vno_poc = vno_puzzles.generate("murdle", 3, vno_poc_seed, vno_poc_band)
+    $ vno_poc = vno_poc_make()
     $ vno_ps_reset("poc")
     jump puzzle_poc_play
 
 label puzzle_poc_play:
     call vno_puzzle_play("poc", vno_poc)
-    $ vno_poc_answer = vno_poc["murder"]["answer"]
-    $ vno_poc_who = vno_poc["names"][vno_poc_answer["suspect"]]
-    $ vno_poc_with = vno_poc["names"][vno_poc_answer["weapon"]]
-    $ vno_poc_where = vno_poc["names"][vno_poc_answer["place"]]
-    if _return:
-        "That is it. [vno_poc_who] did it, with the [vno_poc_with], in the [vno_poc_where]."
-    else:
-        "You put the notes away. It was [vno_poc_who], with the [vno_poc_with], in the [vno_poc_where]."
+    $ vno_poc_reply = vno_poc_reveal(vno_poc, bool(_return))
+    "[vno_poc_reply]"
     menu:
         "What now?"
-        "A bigger puzzle (4x4, with a motive and clues about traits)":
+        "A bigger Murdle (4x4, with a motive and clues about traits)":
+            $ vno_poc_kind = "murdle"
             $ vno_poc_big = True
             $ vno_poc_seed = renpy.random.randint(1, 10**9)
             jump puzzle_poc_make
-        "Another puzzle (easy)":
+        "Knights and Knaves":
+            $ vno_poc_kind = "knights"
+            $ vno_poc_seed = renpy.random.randint(1, 10**9)
+            jump puzzle_poc_make
+        "Another Murdle (easy)":
+            $ vno_poc_kind = "murdle"
             $ vno_poc_big = False
             $ vno_poc_band = "easy"
             $ vno_poc_seed = renpy.random.randint(1, 10**9)
             jump puzzle_poc_make
-        "Another puzzle (medium)":
+        "Another Murdle (medium)":
+            $ vno_poc_kind = "murdle"
             $ vno_poc_big = False
             $ vno_poc_band = "medium"
             $ vno_poc_seed = renpy.random.randint(1, 10**9)
             jump puzzle_poc_make
-        "Another puzzle (hard)":
+        "Another Murdle (hard)":
+            $ vno_poc_kind = "murdle"
             $ vno_poc_big = False
             $ vno_poc_band = "hard"
             $ vno_poc_seed = renpy.random.randint(1, 10**9)
@@ -59,7 +79,16 @@ label puzzle_poc_play:
 
 ## For the self-test: a 4x4 puzzle with a motive and clues about traits, from the start.
 label puzzle_poc_big:
+    $ vno_poc_kind = "murdle"
     $ vno_poc_big = True
     $ vno_poc_band = "medium"
     $ vno_poc_seed = 2
+    jump puzzle_poc_make
+
+## For the self-test: Knights and Knaves.
+label puzzle_poc_knights:
+    $ vno_poc_kind = "knights"
+    $ vno_poc_big = False
+    $ vno_poc_band = "medium"
+    $ vno_poc_seed = 3
     jump puzzle_poc_make

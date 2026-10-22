@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { PUZZLE_BANDS, PUZZLE_KINDS, readBackClueSchema } from '../../shared/puzzle'
 import type { PuzzleCore, PuzzleEntry } from '../../shared/puzzle'
 import { langSchema } from '../../shared/vn'
+import { readBackTask as readBackTaskOf } from '../puzzles/readback'
 import { PUZZLES_VERSION, checkPuzzleText, generatePuzzle, renderPuzzleText, solvePuzzle } from '../puzzles/python'
 import type { StoryOp } from '../vn/story'
 import type { VnService } from '../vn/service'
@@ -151,15 +152,7 @@ export function puzzleTools(svc: VnService, def: ToolDef): Tool[] {
         if (!words) throw new Error(`the ${a.lang} edition of ${a.slug} has no words for puzzle ${a.key} (vno_edition_set {puzzles})`)
         const py = await svc.puzzlePython()
         const canonical = await renderPuzzleText(py, p.data, p.names)
-        const clueIds = p.data.clues.map((c) => c.id)
-        const traits = Object.entries(p.data.descr ?? {}).filter(([it]) => p.data.clues.some((c) => (c.descr ?? []).includes(it)))
-        const readBackTask = [
-          'Read these clues of a logic puzzle and write each one back as structured data. Use only the names in the list; do not guess what is not said.',
-          `Names: ${Object.values(words.names).join('; ')}`,
-          ...(traits.length ? [`Some clues point at an item by a trait. Who or what each trait is: ${traits.map(([it, d]) => `${d} = ${words.names[it]}`).join('; ')}. Answer with the name, not the trait.`] : []),
-          ...clueIds.map((id) => `${id}: ${words.text[id] ?? '(missing)'}`),
-          'Answer with JSON: [{"id": "c1", "type": "is" | "not" | "either", "a": "<a name>", "b": "<a name>" or ["<a name>", "<a name>"] for either}]. is: a and b go together. not: they do not. either: a goes with one of the two names in b.'
-        ].join('\n')
+        const readBackTask = readBackTaskOf(p, words)
         return { key: p.key, kind: p.kind, core: p.data, names: words.names, text: words.text, canonicalText: canonical.text, verified: p.verified, links: p.links, clueAt: p.clueAt, onFail: p.onFail, hints: p.hints, readBackTask }
       }
     ),

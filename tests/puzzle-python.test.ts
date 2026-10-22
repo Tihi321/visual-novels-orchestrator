@@ -5,8 +5,8 @@ import type { ToolResult } from '../src/engine/mcp/tools'
 import { checkPuzzleText, generatePuzzle, packagesDirOf, renderPuzzleText, solvePuzzle } from '../src/engine/puzzles/python'
 import type { PuzzlePython } from '../src/engine/puzzles/python'
 import { DEFAULT_SDK_PATH, sdkPython } from '../src/engine/renpy/run'
-import { puzzleCoreSchema, puzzleGeneratedSchema } from '../src/shared/puzzle'
-import type { PuzzleGenerated, ReadBackClue } from '../src/shared/puzzle'
+import { knightsCoreSchema, murdleCoreSchema, puzzleCoreSchema, puzzleGeneratedSchema } from '../src/shared/puzzle'
+import type { KnightsClaim, MurdleCore, PuzzleEntry, PuzzleGenerated } from '../src/shared/puzzle'
 import { makeVnEnv } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
 
@@ -17,29 +17,38 @@ import type { VnEnv } from './vn-helpers'
 const sdkPath = process.env.VNO_RENPY_SDK ?? DEFAULT_SDK_PATH
 const py: PuzzlePython = { sdkPath, packagesDir: packagesDirOf(path.resolve(__dirname, '..', 'templates', 'renpy')) }
 
-const faithful = (p: PuzzleGenerated): ReadBackClue[] =>
-  p.clues.map((c) => ({ id: c.id, type: c.type, a: p.names[c.a]!, b: Array.isArray(c.b) ? c.b.map((x) => p.names[x]!) : p.names[c.b]! }))
+const grid = (e: PuzzleEntry): MurdleCore => murdleCoreSchema.parse(e.data)
+type GridRead = { id: string; type: 'is' | 'not' | 'either'; a: string; b: string | string[] }
+type Murdle = MurdleCore & { names: Record<string, string>; text: Record<string, string> }
+const asMurdle = (p: PuzzleGenerated): Murdle => {
+  if (p.kind !== 'murdle') throw new Error(`expected a murdle puzzle, got ${p.kind}`)
+  return p
+}
+/** A Murdle from the bridge (these tests read its items and clues). */
+const genMurdle = async (o: { size?: number; band: string; seed: number; motive?: boolean; attrs?: boolean }): Promise<Murdle> => asMurdle(await generatePuzzle(py, { kind: 'murdle', ...o }))
+
+const faithful = (p: Murdle): GridRead[] => p.clues.map((c) => ({ id: c.id, type: c.type, a: p.names[c.a]!, b: Array.isArray(c.b) ? c.b.map((x) => p.names[x]!) : p.names[c.b]! }))
 
 describe.skipIf(!sdkPython(sdkPath))('the Python bridge (contract)', () => {
   it('generate answers with a shape the zod schema reads, and one call takes under 2 s', async () => {
     const t0 = Date.now()
-    const p = await generatePuzzle(py, { kind: 'murdle', size: 3, band: 'hard', seed: 11 })
+    const p = await genMurdle({ size: 3, band: 'hard', seed: 11 })
     expect(Date.now() - t0).toBeLessThan(2000)
     expect(() => puzzleGeneratedSchema.parse(p)).not.toThrow()
     expect(p).toMatchObject({ seed: 11, band: 'hard', format: 1 })
     expect(Object.keys(p.text)).toEqual(expect.arrayContaining(['murder', ...p.clues.map((c) => c.id)]))
-    const again = await generatePuzzle(py, { kind: 'murdle', size: 3, band: 'hard', seed: 11 })
+    const again = await genMurdle({ size: 3, band: 'hard', seed: 11 })
     expect(again).toEqual(p)
   })
 
   it('solve proves a puzzle and refuses a broken one with the reason', async () => {
-    const { names: _n, text: _t, ...core } = await generatePuzzle(py, { kind: 'murdle', size: 3, band: 'medium', seed: 5 })
+    const { names: _n, text: _t, ...core } = await genMurdle({ size: 3, band: 'medium', seed: 5 })
     const proof = await solvePuzzle(py, puzzleCoreSchema.parse(core))
     expect(proof).toMatchObject({ unique: true, solutions: 1, deducible: true, band: 'medium' })
     expect(proof.steps).toHaveLength(27)
-    const loose = { ...puzzleCoreSchema.parse(core), clues: core.clues.slice(0, 1) }
+    const loose = { ...murdleCoreSchema.parse(core), clues: core.clues.slice(0, 1) }
     expect(await solvePuzzle(py, loose)).toMatchObject({ unique: false, deducible: false, band: null })
-    await expect(solvePuzzle(py, { ...puzzleCoreSchema.parse(core), clues: [{ id: 'c1', type: 'is', a: 's1', b: 'zz' }] })).rejects.toThrow(/unknown item zz/)
+    await expect(solvePuzzle(py, { ...murdleCoreSchema.parse(core), clues: [{ id: 'c1', type: 'is', a: 's1', b: 'zz' }] })).rejects.toThrow(/unknown item zz/)
   })
 
   it('render-text writes the canonical sentences for new names', async () => {
@@ -53,7 +62,7 @@ describe.skipIf(!sdkPython(sdkPath))('the Python bridge (contract)', () => {
   it('check-text passes a faithful read-back and catches a changed clue, a swapped name and a lost either option', async () => {
     const p = await (async () => {
       for (let seed = 1; seed < 60; seed++) {
-        const q = await generatePuzzle(py, { kind: 'murdle', size: 3, band: 'medium', seed })
+        const q = await genMurdle({ size: 3, band: 'medium', seed })
         if (q.clues.some((c) => c.type === 'either')) return q
       }
       throw new Error('no puzzle with an either clue')
@@ -146,15 +155,15 @@ describe.skipIf(!sdkPython(sdkPath))('the vno_puzzle_* tools', () => {
     expect(got.readBackTask).not.toMatch(/"type": "is"\s*,\s*"a": "s1"/) // the reader never sees the structured clues
     expect(JSON.stringify(got.readBackTask)).not.toContain('"solution"')
     const book = (await env.engine.vn.store.loadBook(slug)).puzzles![0]!
-    const rb = book.data.clues.map((c) => ({ id: c.id, type: c.type, a: book.names[c.a], b: Array.isArray(c.b) ? c.b.map((x) => book.names[x]) : book.names[c.b] }))
+    const rb = grid(book).clues.map((c) => ({ id: c.id, type: c.type, a: book.names[c.a], b: Array.isArray(c.b) ? c.b.map((x) => book.names[x]) : book.names[c.b] }))
     // prose written by hand is not trusted until it is read back
-    const rewritten = Object.fromEntries(book.data.clues.map((c) => [c.id, `Note ${c.id}: ${book.text[c.id]}`]))
+    const rewritten = Object.fromEntries(grid(book).clues.map((c) => [c.id, `Note ${c.id}: ${book.text[c.id]}`]))
     const set2 = await call('vno_puzzle_set', { slug, key: 'dinner', text: rewritten })
     expect(set2.verified.textChecked).toBe(false)
     const bad = rb.map((c, i) => (i === 0 ? { ...c, type: c.type === 'not' ? 'is' : 'not', b: Array.isArray(c.b) ? c.b[0] : c.b } : c))
     const failed = await call('vno_puzzle_check_text', { slug, key: 'dinner', readBack: bad })
     expect(failed.ok).toBe(false)
-    expect(failed.differing).toEqual([book.data.clues[0]!.id])
+    expect(failed.differing).toEqual([grid(book).clues[0]!.id])
     const passed = await call('vno_puzzle_check_text', { slug, key: 'dinner', readBack: rb })
     expect(passed).toMatchObject({ ok: true, textChecked: true })
     expect((await env.engine.vn.store.loadBook(slug)).puzzles![0]!.verified.textChecked).toBe(true)
@@ -178,7 +187,7 @@ describe.skipIf(!sdkPython(sdkPath))('the vno_puzzle_* tools', () => {
     const hrNames = Object.fromEntries(Object.entries(after.names).map(([k, v]) => [k, `${v} HR`]))
     const hrText = Object.fromEntries(Object.entries(after.text).map(([k, v]) => [k, Object.entries(after.names).reduce((t, [item, name]) => t.split(name).join(hrNames[item]!), v) + ' (hr)']))
     await call('vno_edition_set', { slug, lang: 'hr', puzzles: { dinner: { names: hrNames, text: hrText } } })
-    const rb = after.data.clues.map((c) => ({ id: c.id, type: c.type, a: hrNames[c.a], b: Array.isArray(c.b) ? c.b.map((x) => hrNames[x]) : hrNames[c.b] }))
+    const rb = grid(after).clues.map((c) => ({ id: c.id, type: c.type, a: hrNames[c.a], b: Array.isArray(c.b) ? c.b.map((x) => hrNames[x]) : hrNames[c.b] }))
     const ok = await call('vno_puzzle_check_text', { slug, key: 'dinner', lang: 'hr', readBack: rb })
     expect(ok).toMatchObject({ ok: true, lang: 'hr' })
     const hr = await call('vno_puzzle_get', { slug, key: 'dinner', lang: 'hr' })
@@ -221,7 +230,7 @@ describe.skipIf(!sdkPython(sdkPath))('bigger Murdle through the bridge and the t
     expect(g.core.categories.map((c: { key: string }) => c.key)).toEqual(['suspect', 'weapon', 'place', 'motive'])
     expect(Object.keys(g.names)).toHaveLength(16)
     expect(g.core.descr).toBeDefined()
-    expect(puzzleCoreSchema.parse(g.core).murder.answer.motive).toBeDefined()
+    expect(murdleCoreSchema.parse(g.core).murder.answer.motive).toBeDefined()
   })
 
   it('vno_puzzle_set with generate, the read-back task carries the trait legend, and a reader that answers with names passes', async () => {
@@ -234,7 +243,84 @@ describe.skipIf(!sdkPython(sdkPath))('bigger Murdle through the bridge and the t
     expect(got.readBackTask).toMatch(/Some clues point at an item by a trait/)
     const p = (await env.engine.vn.store.loadBook(slug)).puzzles![0]!
     const nm = (id: string) => p.names[id]!
-    const rb = p.data.clues.map((c) => ({ id: c.id, type: c.type, a: nm(c.a), b: Array.isArray(c.b) ? c.b.map(nm) : nm(c.b) }))
+    const rb = grid(p).clues.map((c) => ({ id: c.id, type: c.type, a: nm(c.a), b: Array.isArray(c.b) ? c.b.map(nm) : nm(c.b) }))
     expect(await call('vno_puzzle_check_text', { slug, key: 'big', readBack: rb })).toMatchObject({ ok: true })
+  })
+})
+
+describe.skipIf(!sdkPython(sdkPath))('Knights and Knaves through the bridge and the tools', () => {
+  let env: VnEnv
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type Data = Record<string, any>
+  const call = async (name: string, args: object): Promise<Data> => {
+    const r: ToolResult = await callTool(buildTools(env.engine.vn), name, args)
+    if (r.isError) throw new Error(r.content[0]?.text)
+    return r.structuredContent as Data
+  }
+  beforeEach(async () => {
+    env = await makeVnEnv({ sdk: undefined })
+  })
+  afterEach(async () => {
+    await env.cleanup()
+  })
+
+  it('generate in under 2 s: speakers, statements, solution, canonical text with an intro; solve proves it', async () => {
+    const t0 = Date.now()
+    const g = await call('vno_puzzle_generate', { kind: 'knights', size: 4, band: 'hard', seed: 8 })
+    expect(Date.now() - t0).toBeLessThan(2000)
+    const core = knightsCoreSchema.parse(g.core)
+    expect(core.speakers).toHaveLength(4)
+    expect(Object.keys(g.names).sort()).toEqual([...core.speakers].sort())
+    expect(Object.keys(g.text).sort()).toEqual([...core.statements.map((s) => s.id), 'intro'].sort())
+    const proof = await solvePuzzle(py, core)
+    expect(proof).toMatchObject({ unique: true, deducible: true, band: 'hard' })
+    expect(proof.rules.split).toBeGreaterThanOrEqual(2)
+  })
+
+  it('vno_puzzle_set with generate, the knights read-back task, a faithful read-back, a flipped one and an edition', async () => {
+    const r = await call('vno_create_project', { book: { title: 'Island', characters: [{ name: 'Hartley', looks: 'a detective' }], places: [{ name: 'Beach', looks: 'a beach' }], chapters: [{ title: 'c', scenes: [{ place: 'beach', beats: [{ text: 'Hi.' }] }] }] } })
+    const slug = r.slug as string
+    await call('vno_beat_add', { slug, sceneId: 'ch01.s01', beats: [{ puzzle: 'island' }] })
+    const set = await call('vno_puzzle_set', { slug, key: 'island', generate: { kind: 'knights', size: 4, band: 'medium', seed: 3 }, links: { k1: { type: 'character', key: 'hartley' } } })
+    expect(set.verified).toMatchObject({ unique: true, deducible: true, textChecked: true })
+    const got = await call('vno_puzzle_get', { slug, key: 'island' })
+    expect(got.readBackTask).toMatch(/Knights and Knaves puzzle/)
+    expect(got.readBackTask).toContain('t1: ')
+    expect(got.readBackTask).not.toContain('"claim": {"type"') // the reader is not shown a claim of this puzzle
+    const p = (await env.engine.vn.store.loadBook(slug)).puzzles![0]!
+    const core = knightsCoreSchema.parse(p.data)
+    const nm = p.names
+    type Claim = Record<string, unknown>
+    const conv = (c: KnightsClaim): Claim => {
+      switch (c.type) {
+        case 'knight':
+        case 'knave':
+          return { type: c.type, who: nm[c.who] }
+        case 'same':
+        case 'diff':
+          return { type: c.type, a: nm[c.a], b: nm[c.b] }
+        case 'some_knave':
+        case 'all_knight':
+          return { type: c.type, of: c.of.map((x) => nm[x]) }
+        case 'exactly':
+          return { type: c.type, k: c.k, of: c.of.map((x) => nm[x]) }
+        case 'not':
+          return { type: c.type, c: conv(c.c) }
+        default:
+          return { type: c.type, a: conv(c.a), b: conv(c.b) }
+      }
+    }
+    const rb = core.statements.map((s) => ({ id: s.id, speaker: nm[s.speaker]!, claim: conv(s.claim) }))
+    expect(await call('vno_puzzle_check_text', { slug, key: 'island', readBack: rb })).toMatchObject({ ok: true, textChecked: true })
+    const bad = rb.map((s, i) => (i === 0 ? { ...s, speaker: nm[core.speakers.find((k) => k !== core.statements[0]!.speaker)!]! } : s))
+    const failed = await call('vno_puzzle_check_text', { slug, key: 'island', readBack: bad })
+    expect(failed.ok).toBe(false)
+    expect(failed.differing).toEqual(['t1'])
+    // an edition: words for names, statements and the intro, checked with lang
+    const hrNames = Object.fromEntries(Object.entries(nm).map(([k, v]) => [k, `${v}ko`]))
+    const hrText = Object.fromEntries(Object.entries(p.text).map(([k, v]) => [k, Object.entries(nm).reduce((t, [id, name]) => t.split(name).join(hrNames[id]!), v)]))
+    await call('vno_edition_set', { slug, lang: 'hr', puzzles: { island: { names: hrNames, text: hrText } } })
+    const hrRb = rb.map((s) => JSON.parse(JSON.stringify(s).replace(new RegExp(Object.values(nm).join('|'), 'g'), (m) => `${m}ko`)))
+    expect(await call('vno_puzzle_check_text', { slug, key: 'island', lang: 'hr', readBack: hrRb })).toMatchObject({ ok: true, lang: 'hr' })
   })
 })

@@ -15,7 +15,7 @@ import sys
 if __package__ in (None, ""):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from vno_puzzles import check_accusation, check_marks, check_text, generate, render_text, solve  # noqa: E402
+from vno_puzzles import check_accusation, check_marks, check_solution, check_text, generate, render_text, solve  # noqa: E402
 
 
 def main(argv=None):
@@ -46,7 +46,10 @@ def main(argv=None):
             out = render_text(data["puzzle"], data.get("names"))
         else:
             data = json.load(sys.stdin)
-            out = {"accusation": check_accusation(data["puzzle"], data.get("accusation", {})), "wrong_marks": check_marks(data["puzzle"], data.get("marks", {}))}
+            if data["puzzle"].get("murder"):
+                out = {"accusation": check_accusation(data["puzzle"], data.get("accusation", {})), "wrong_marks": check_marks(data["puzzle"], data.get("marks", {}))}
+            else:
+                out = {"solution": check_solution(data["puzzle"], data.get("marks", {})), "wrong_marks": check_marks(data["puzzle"], data.get("marks", {}))}
     except (ValueError, KeyError, TypeError) as e:
         print(json.dumps({"error": str(e)}))
         return 1

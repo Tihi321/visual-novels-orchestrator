@@ -48,6 +48,13 @@ init python:
             st["marks"] = {}
         renpy.restart_interaction()
 
+    def vno_kk_set(pid, who, value):
+        """Knights and Knaves: mark a speaker as a knight or a knave (the same mark again clears it)."""
+        st = vno_ps(pid)
+        st["history"] = st["history"] + [st["marks"]]
+        st["marks"] = vno_play.set_mark(st["marks"], who, "" if st["marks"].get(who) == value else value)
+        renpy.restart_interaction()
+
     def vno_strike(pid, clue_id):
         st = vno_ps(pid)
         if clue_id in st["struck"]:
@@ -82,6 +89,8 @@ init python:
         n = len(check["wrong"])
         if p.get("murder"):
             return "Not quite. %d of the %d parts of that accusation are wrong." % (n, len(p["murder"]["answer"]))
+        if p.get("kind") == "knights":
+            return "Not quite. %d of the %d speakers are marked wrong, or not at all." % (n, len(p["speakers"]))
         return "Not quite. %d of the answers in your grid are not right yet." % n
 
     def vno_dev_line(p):
@@ -215,6 +224,69 @@ screen vno_murdle(pid, p):
                     text_size 22
                     text_font "DejaVuSans.ttf"
 
+## Knights and Knaves: the statements on the left, a Knight / Knave choice per speaker on the right. Returns "hint", "accuse" or "giveup".
+screen vno_knights(pid, p):
+    modal True
+    zorder 100
+    $ st = vno_ps(pid)
+    $ nm = p["names"]
+    $ pics = p.get("pics", {})
+    add Solid("#0d0d16ee")
+    if "seed" in p:
+        text ("seed %s, %s" % (p["seed"], p["band"])) size 18 color "#8888aa" xalign 1.0 xoffset -12 yoffset 6
+    if config.developer:
+        text vno_dev_line(p) size 18 color "#8888aa" xalign 1.0 xoffset -12 yoffset 28
+    hbox:
+        xpos 40
+        ypos 30
+        spacing 50
+        vbox:
+            xsize 900
+            spacing 14
+            text vno_title(p) size 32
+            text "Knights always tell the truth. Knaves always lie." size 22 color "#f0d890"
+            viewport:
+                xsize 900
+                ysize 760
+                scrollbars "vertical"
+                mousewheel True
+                draggable True
+                vbox:
+                    spacing 14
+                    for s in p["statements"]:
+                        hbox:
+                            spacing 14
+                            if s["speaker"] in pics:
+                                add pics[s["speaker"]] fit "contain" xysize (96, 96) yalign 0.5
+                            text p["text"][s["id"]] size 28 xsize 760 yalign 0.5
+        vbox:
+            xsize 760
+            spacing 16
+            text "Who is who?" size 32
+            for k in p["speakers"]:
+                hbox:
+                    spacing 16
+                    if k in pics:
+                        add pics[k] fit "contain" xysize (72, 72) yalign 0.5
+                    text nm[k] size 28 xsize 200 yalign 0.5
+                    textbutton "Knight":
+                        action Function(vno_kk_set, pid, k, "knight")
+                        selected st["marks"].get(k) == "knight"
+                        text_size 28
+                    textbutton "Knave":
+                        action Function(vno_kk_set, pid, k, "knave")
+                        selected st["marks"].get(k) == "knave"
+                        text_size 28
+            null height 20
+            hbox:
+                spacing 24
+                if p.get("hints", True):
+                    textbutton "Hint" action Return("hint")
+                textbutton "Undo" action Function(vno_undo, pid) sensitive bool(st["history"])
+                textbutton "Clear" action Function(vno_clear, pid) sensitive bool(st["marks"])
+                textbutton "Submit" action Return("accuse") text_color "#f0d890"
+                textbutton "Give up" action Return("giveup")
+
 ## The accusation: one choice per category of the answer (suspect, weapon, place and, with a motive, why). Returns the picks, or None for Back.
 screen vno_accuse(p):
     modal True
@@ -252,7 +324,10 @@ label vno_puzzle_play(pid, p):
     $ vno_result = None
     $ vno_limit = vno_max_tries(p)
     while vno_result is None:
-        call screen vno_murdle(pid, p)
+        if p.get("kind") == "knights":
+            call screen vno_knights(pid, p)
+        else:
+            call screen vno_murdle(pid, p)
         $ vno_action = _return
         if vno_action == "hint":
             $ vno_hint_text = vno_play.hint(p, vno_ps(pid)["marks"])["text"]

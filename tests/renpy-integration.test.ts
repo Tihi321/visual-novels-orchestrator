@@ -6,7 +6,7 @@ import { buildGame, type BuildGameResult } from '../src/engine/renpy/build'
 import { DEFAULT_SDK_PATH, lint, sdkExists } from '../src/engine/renpy/run'
 import { buildEdition, importBook } from '../src/engine/vn/import'
 import { buildBook, storyInputSchema } from '../src/engine/vn/story'
-import { puzzleCoreSchema, puzzleEntrySchema } from '../src/shared/puzzle'
+import { knightsCoreSchema, puzzleCoreSchema, puzzleEntrySchema } from '../src/shared/puzzle'
 import { hasText } from '../src/shared/vn'
 import type { Edition, VnBook } from '../src/shared/vn'
 import { loadBook, loadEdition, loadSettings, type FixtureName } from './fixtures/vn/load'
@@ -258,6 +258,41 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     expect(fs.existsSync(path.join(game, 'images', 'hartley neutral.webp'))).toBe(true)
     expect(fs.existsSync(path.join(game, 'images', 'varga neutral.webp'))).toBe(true)
     expect(fs.existsSync(path.join(game, 'images', 'cg rope.webp'))).toBe(true)
+    const l = await lint(r.gameDir, { sdkPath })
+    expect(l.messages).toEqual([])
+    expect(l.ok).toBe(true)
+  })
+
+  it('a Knights and Knaves puzzle with portraits and an HR edition with translated statements: the data, the tl strings, lint clean', { timeout: T }, async () => {
+    const kk = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'knights-4-medium-3.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+    const base = buildBook(
+      storyInputSchema.parse({
+        title: 'The Island',
+        characters: [{ name: 'Hartley', looks: 'a tired detective' }, { name: 'Varga', looks: 'a quiet inspector' }],
+        places: [{ name: 'Beach', looks: 'a white beach' }],
+        chapters: [{ title: 'Landing', scenes: [{ place: 'beach', beats: [{ cast: ['hartley'] }, { text: 'Four islanders waited on the sand.' }, { puzzle: 'island' }, { text: 'The boat left.' }] }] }]
+      }),
+      { slug: 'island', lang: 'en' }
+    ).book
+    const book = {
+      ...base,
+      puzzles: [puzzleEntrySchema.parse({ key: 'island', kind: 'knights', data: knightsCoreSchema.parse(kk), names: kk.names, text: kk.text, links: { k1: { type: 'character', key: 'hartley' }, k2: { type: 'character', key: 'varga' } }, verified: { unique: true, deducible: true, score: 5, textChecked: true, by: 'test' } })]
+    }
+    const en = buildEdition('en', book.title, book.chapters, book.characters)
+    const hrNames = Object.fromEntries(Object.entries(kk.names).map(([k, v]) => [k, `${v} (hr)`]))
+    const hrText = Object.fromEntries(Object.entries(kk.text).map(([k, v]) => [k, `${v} Na hrvatskom.`]))
+    const hr = { ...en, lang: 'hr', title: 'Otok', chapterTitles: { 1: 'Slijetanje' }, beats: { 'ch01.s01.b002': 'Cetiri otocanina cekala su na pijesku.', 'ch01.s01.b004': 'Brod je otplovio.' }, puzzles: { island: { names: hrNames, text: hrText } } }
+    const r = await buildGame({ projectDir: path.join(root, 'puzzle-knights'), book, editions: [en, hr], settings: loadSettings(book, { editions: ['en', 'hr'] }), resolveAsset: () => null, sdkPath })
+    const game = path.join(r.gameDir, 'game')
+    const data = fs.readFileSync(path.join(game, 'vno_puzzles_data.rpy'), 'utf8')
+    expect(data).toContain('"kind": "knights"')
+    expect(data).toContain('"pics": {"k1": "hartley neutral", "k2": "varga neutral"}')
+    expect(fs.existsSync(path.join(game, 'images', 'varga neutral.webp'))).toBe(true)
+    const tl = fs.readdirSync(path.join(game, 'tl', 'croatian')).map((f) => fs.readFileSync(path.join(game, 'tl', 'croatian', f), 'utf8')).join('\n')
+    const q = (t: string) => t.replace(/"/g, '\\"')
+    expect(tl).toContain(`old "${q(kk.text.t1!)}"\n    new "${q(hrText.t1!)}"`)
+    expect(tl).toContain(`old "${kk.names.k1}"\n    new "${hrNames.k1}"`)
+    expect(tl).toContain(`old "${kk.text.intro}"\n    new "${hrText.intro}"`)
     const l = await lint(r.gameDir, { sdkPath })
     expect(l.messages).toEqual([])
     expect(l.ok).toBe(true)

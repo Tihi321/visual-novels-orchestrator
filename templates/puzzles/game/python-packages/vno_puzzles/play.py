@@ -56,8 +56,12 @@ def check_accusation(p, accusation):
 
 
 def check_solution(p, marks):
-    """For puzzles without a question (logic grids): the player's grid is right when every pair that goes together is marked yes and no
-    pair is marked yes that does not. `wrong` lists the cells at fault."""
+    """For puzzles without a question (logic grids, Knights and Knaves): the player's grid is right when every pair that goes together is
+    marked yes and no pair is marked yes that does not (Knights and Knaves: everyone is marked right). `wrong` lists the cells at fault."""
+    if p.get("kind") == "knights":
+        from .knights import check_solution as check_knights
+
+        return check_knights(p, marks)
     t = truth(p)
     wrong = [c for c, v in t.items() if (marks.get(c) == "yes") != (v == "yes")]
     return {"correct": not wrong, "wrong": wrong}
@@ -65,18 +69,28 @@ def check_solution(p, marks):
 
 def check_marks(p, marks):
     """The marked cells that contradict the solution."""
+    if p.get("kind") == "knights":
+        return [k for k, v in marks.items() if p["solution"].get(k) != v]
     t = truth(p)
     return [c for c, v in marks.items() if t.get(c) != v]
 
 
 def is_complete(p, marks):
     """Every cell is marked, and every mark is right."""
+    if p.get("kind") == "knights":
+        from .knights import is_complete as done
+
+        return done(p, marks)
     t = truth(p)
     return all(marks.get(c) == v for c, v in t.items())
 
 
 def hint(p, marks):
     """{kind, text, cell}. A wrong mark first; else the first deduction step the grid does not show yet; else: accuse."""
+    if p.get("kind") == "knights":
+        from .knights import hint as hint_knights
+
+        return hint_knights(p, marks)
     nm = p["names"]
     bad = check_marks(p, marks)
     if bad:
