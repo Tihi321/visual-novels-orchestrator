@@ -1,6 +1,7 @@
 import { basename } from 'node:path'
 import { hasText, vnBookSchema } from '../../shared/vn'
 import type { Edition, ImageEntry, Lang, SoundEntry, VnBook, VnChapter } from '../../shared/vn'
+import type { PuzzleEntry, PuzzleProof } from '../../shared/puzzle'
 import { mergeBibleAliases } from './aliases'
 import type { AliasMerge } from './aliases'
 import { parseBible } from './bible'
@@ -11,8 +12,9 @@ import { buildChapterMap, parseOutlineChapters } from './outline'
 import type { ChapterMap } from './outline'
 import { readBookFolder } from './reader'
 import type { RawBook } from './reader'
+import { assemblePuzzles, parseBiblePuzzles, proveEntries } from './puzzle-import'
 import { parseChapterScript } from './script'
-import type { Uncertain } from './script'
+import type { PuzzleLines, Uncertain } from './script'
 
 /** A book folder parsed with the deterministic parser, before a language is chosen. */
 export interface ParsedFolder {
@@ -28,6 +30,9 @@ export interface ParsedFolder {
   sounds: SoundEntry[]
   /** Bible entries that were the same person under another name and were merged into one character. */
   aliases: AliasMerge[]
+  /** The puzzles of `bible/puzzles.md` with the puzzle lines of the scripts put in (not proved yet: see `importBook`). */
+  puzzles: PuzzleEntry[]
+  puzzleLines: PuzzleLines
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
@@ -51,6 +56,7 @@ export function parseRawBook(raw: RawBook): ParsedFolder {
   const chapters: VnChapter[] = []
   const images = new Map<string, ImageEntry>()
   const sounds = new Map<string, SoundEntry>()
+  const puzzleLines: PuzzleLines = { clues: [], evidence: [], puzzles: [], testimonies: [] }
   for (const m of map.chapters) {
     const file = raw.chapters.find((c) => c.n === m.n)!
     const parsed = parseChapterScript(file.body, { chapter: m.n, bible })
@@ -58,14 +64,24 @@ export function parseRawBook(raw: RawBook): ParsedFolder {
     uncertain.push(...parsed.uncertain)
     for (const i of parsed.images) if (!images.has(i.key)) images.set(i.key, i)
     for (const x of parsed.sounds) if (!sounds.has(`${x.kind}:${x.key}`)) sounds.set(`${x.kind}:${x.key}`, x)
+    puzzleLines.clues.push(...parsed.puzzleLines.clues)
+    puzzleLines.evidence.push(...parsed.puzzleLines.evidence)
+    puzzleLines.puzzles.push(...parsed.puzzleLines.puzzles)
+    puzzleLines.testimonies.push(...parsed.puzzleLines.testimonies)
     chapters.push({ n: m.n, title: m.title, ...(m.summary ? { summary: m.summary } : {}), choices: m.choices, ending: m.ending, scenes: parsed.scenes })
   }
+
+  const bibleEntries = parseBiblePuzzles(raw.puzzles, warnings)
+  if (!bibleEntries.length && (puzzleLines.puzzles.length || puzzleLines.clues.length)) warnings.push('the script has puzzle lines but bible/puzzles.md lists no puzzle: the puzzle beats are kept and the build skips them until vno_puzzle_set makes the puzzles')
+  const assembled = assemblePuzzles({ bible, chapters, lines: puzzleLines, entries: bibleEntries, existingImages: [...images.values()] })
+  warnings.push(...assembled.warnings)
+  for (const i of assembled.images) if (!images.has(i.key)) images.set(i.key, i)
 
   const unknown = [...new Set(uncertain.filter((u) => u.kind === 'speaker').map((u) => u.text))]
   if (unknown.length) warnings.push(`speakers not in the bible (no sprite): ${unknown.join(', ')}`)
   const noPlace = uncertain.filter((u) => u.kind === 'place').length
   if (noPlace) warnings.push(`${noPlace} scene(s) have a place that matches no bible place`)
-  return { raw, bible, map, chapters, uncertain, warnings, images: [...images.values()], sounds: [...sounds.values()], aliases: merged.merged }
+  return { raw, bible, map, chapters, uncertain, warnings, images: [...images.values()], sounds: [...sounds.values()], aliases: merged.merged, puzzles: assembled.puzzles, puzzleLines }
 }
 
 /** The text used to detect the language: chapter titles and every spoken or narrated line. */
@@ -107,9 +123,11 @@ export interface ImportResult {
 }
 
 /** Imports a book folder from anywhere (Scriptorium layout). `lang` overrides the detected language. */
-export async function importBook(folderPath: string, opts: { lang?: Lang } = {}): Promise<ImportResult> {
+export async function importBook(folderPath: string, opts: { lang?: Lang; prove?: ((p: PuzzleEntry) => Promise<PuzzleProof>) | null } = {}): Promise<ImportResult> {
   const raw = await readBookFolder(folderPath)
   const parsed = parseRawBook(raw)
+  const proved = await proveEntries(parsed.puzzles, opts.prove ?? null)
+  parsed.warnings.push(...proved.warnings)
   const detected = detectLanguage(textSample(parsed.chapters))
   const lang = opts.lang ?? detected.lang
   const slug = str(raw.book.slug) ?? (basename(folderPath) || 'book')
@@ -129,6 +147,7 @@ export async function importBook(folderPath: string, opts: { lang?: Lang } = {})
     ...(parsed.sounds.length ? { sounds: parsed.sounds } : {}),
     ...(raw.coverBrief ? { coverBrief: raw.coverBrief } : {}),
     chapters: parsed.chapters,
+    ...(proved.puzzles.length ? { puzzles: proved.puzzles } : {}),
     warnings: parsed.warnings
   })
   const edition = buildEdition(lang, title, book.chapters, book.characters)

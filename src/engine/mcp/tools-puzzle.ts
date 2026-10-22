@@ -25,7 +25,7 @@ const onFail = z.object({
 })
 const generateSpec = z.object({
   kind: z.enum(PUZZLE_KINDS).default('murdle'),
-  size: z.number().int().min(3).max(4).optional().describe('Items per category: 3 (default) or 4'),
+  size: z.number().int().min(2).max(5).optional().describe('Murdle: items per category, 3 (default) or 4. Logic grids: 3 to 5 (default 4). Knights and Knaves: speakers, 2 to 5 (default 3)'),
   motive: z.boolean().optional().describe('Murdle: a fourth category, the motive (jealousy, greed ...)'),
   attrs: z.boolean().optional().describe('Murdle: some clues point at an item by a trait ("the heavy weapon") instead of its name'),
   band: z.enum(PUZZLE_BANDS).default('medium').describe('easy: needs no either or transitive step. medium: needs one. hard: at least 3 transitive steps and no direct clue'),

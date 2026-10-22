@@ -1,0 +1,13 @@
+# VNO-15 changelog (2026-10-22): puzzle script lines
+
+HUB-10 phase 4, VN Studio side.
+
+- **Script** (`src/engine/vn/script.ts`): `CLUE: <puzzle>/<clue>: <prose>` (narration beat; the clue is found there), `EVIDENCE: <key>: <prose>` (narration beat and an `insert` picture, key `<key>`), `PUZZLE: <key> (<kind>)` (a `puzzle` beat), `TESTIMONY: <witness>` ... `END TESTIMONY` (the statements are speaker lines, in order; the block also ends at a line that is not a speaker line). Croatian keywords. A line that does not fit falls through to the speaker rule, as the docs say. The regular expressions are the ones of Scriptorium's `docs/visual-novel.md`.
+- **Book** (`reader.ts`, `puzzle-import.ts`, `import.ts`): `bible/puzzles.md` gives the cores, names and canonical sentences; the import builds `book.puzzles` with the story's words for the clues and the testimony statements, `clueAt` from the lines, `links` (a character, a place, an evidence picture), and the evidence pictures in `images`. Warnings name the chapter: a clue never found, found twice, found after the `PUZZLE:` line or not in the core; an unknown puzzle, two `PUZZLE:` lines, a bad core, evidence never planted, a bible that disagrees with its core, prose that is not the canonical sentence.
+- **Proof**: `importBook {prove}`; `VnService` proves each core with the puzzle library (`vno_puzzles` through the SDK's Python) and sets `verified` with `by: "import"`; without the SDK the puzzles are left unproved with a warning. The read-back check (`textChecked`) needs a reader: it stays false until `vno_puzzle_check_text` passes (the hub does it and sends a rewrite note for a failing clue).
+- **Editions** (`align.ts`): the edition's `puzzles` words come from the translated `CLUE:` and statement lines (by id), its bible's names and sentences; the primary words stay where there is no translation, with a warning.
+- **Tests**: `tests/vn-puzzle-import.test.ts` (17: the lines, Croatian keywords, testimony blocks, the fixture book, warnings, the stub prover, alignment, the service with the real library), a `renpy-integration` case that builds the imported fixture and lints it clean. Fixture: `tests/fixtures/books/mystery-puzzle/` (a 3x3 murdle and a testimony).
+
+Differences from the plan's text: none in the line formats. The plan said "a `CLUE:` beat gets `at`"; it is the puzzle's `clueAt` (clue id to beat id) that holds it, as in VNO-13. The bible's `clueAt` (chapter numbers) is the engine's placement in Scriptorium and is not read here.
+
+Not verified: a book made by Scriptorium itself (SCP-18 was not there to import); the user has not played a puzzle book.

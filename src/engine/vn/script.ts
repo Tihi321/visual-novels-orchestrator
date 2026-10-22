@@ -12,6 +12,15 @@ const HEADING_SCENE_RE = /^#{2,6}\s+(.+?)\s*#*\s*$/
 /** A cue line: `CG: ...`, `INSERT: ...`, `SFX: ...`, `AMBIENCE: ...` (Croatian `SLIKA`, `ZVUK`, `ATMOSFERA`); `CG: none` and `END CG` hide the picture. */
 export const CUE_RE = /^\**\s*(CG|SLIKA|INSERT|SFX|SOUND|ZVUK|AMBIENCE|ATMOSFERA)\s*:\s*\**\s*(.*?)\s*\**$/iu
 export const END_CG_RE = /^\**\s*(?:END\s+CG|KRAJ\s+SLIKE)\s*\**$/iu
+/**
+ * The puzzle lines of a mystery-puzzle book (docs/visual-novel.md, Puzzles): `CLUE: <puzzle>/<clue>: <prose>`, `EVIDENCE: <key>: <prose>`,
+ * `PUZZLE: <key> (<kind>)`, `TESTIMONY: <witness>` ... `END TESTIMONY`. Croatian keywords: TRAG, DOKAZ, ZAGONETKA, SVJEDOČENJE, KRAJ SVJEDOČENJA.
+ */
+export const CLUE_RE = /^\**\s*(CLUE|TRAG)\s*:\s*\**\s*([A-Za-z0-9_-]+)\s*\/\s*([A-Za-z0-9_-]+)\s*:\s*\**\s*(.*?)\s*\**$/iu
+export const EVIDENCE_RE = /^\**\s*(EVIDENCE|DOKAZ)\s*:\s*\**\s*([A-Za-z0-9_-]+)\s*:\s*\**\s*(.*?)\s*\**$/iu
+export const PUZZLE_RE = /^\**\s*(PUZZLE|ZAGONETKA)\s*:\s*\**\s*([A-Za-z0-9_-]+)\s*(?:\(\s*([A-Za-z0-9_-]+)\s*\))?\s*\**$/iu
+export const TESTIMONY_RE = /^\**\s*(TESTIMONY|SVJEDOČENJE)\s*:\s*\**\s*(.+?)\s*\**$/iu
+export const END_TESTIMONY_RE = /^\**\s*(?:END\s+TESTIMONY|KRAJ\s+SVJEDOČENJA)\s*\**$/iu
 const NARRATION_RE = /^\**\s*(?:narration|narrator|naracija|pripovjeda[čc])\s*\**(?:\s*\([^)]*\))?\s*:\**\s*(.*)$/iu
 
 /**
@@ -234,6 +243,18 @@ export interface Uncertain {
   charKey?: string
 }
 
+/** What the puzzle lines of one chapter said, with the beats they became. */
+export interface PuzzleLines {
+  /** `CLUE: dinner/c2: prose`: a narration beat that shows the clue. */
+  clues: { chapter: number; puzzle: string; clue: string; text: string; beatId: string }[]
+  /** `EVIDENCE: key: prose`: a narration beat; the item is also a picture (an `insert`) of the book's catalogue, with the key `key` as a slug. */
+  evidence: { chapter: number; key: string; imageKey: string; text: string; beatId: string }[]
+  /** `PUZZLE: key (kind)`: a `puzzle` beat. */
+  puzzles: { chapter: number; key: string; kind: string | null; beatId: string }[]
+  /** `TESTIMONY: witness` ... `END TESTIMONY`: the statements are ordinary speaker lines (beats), in order. */
+  testimonies: { chapter: number; witness: string; statements: { n: number; speaker: string; text: string; beatId: string }[] }[]
+}
+
 export interface ParsedChapterScript {
   scenes: VnScene[]
   uncertain: Uncertain[]
@@ -241,6 +262,8 @@ export interface ParsedChapterScript {
   /** The pictures and sounds the cue lines of this chapter named (the book's catalogue gets them). */
   images: ImageEntry[]
   sounds: SoundEntry[]
+  /** The puzzle lines (empty for a book without them). */
+  puzzleLines: PuzzleLines
 }
 
 const CUE_STOP = new Set(['the', 'a', 'an', 'of', 'in', 'at', 'on', 'to', 'and', 'with', 'by', 'for', 'from', 'u', 'na', 'i', 's', 'sa', 'iz', 'za', 'od'])
@@ -318,6 +341,13 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
   let lastExpr = new Map<string, Expression>()
   const images = new Map<string, ImageEntry>()
   const sounds = new Map<string, SoundEntry>()
+  // the puzzle lines, with the drafts of the beats they became (the beat ids are known only when the scenes are numbered)
+  const clueDrafts: { puzzle: string; clue: string; text: string; beat: BeatDraft }[] = []
+  const evidenceDrafts: { key: string; imageKey: string; text: string; beat: BeatDraft }[] = []
+  const puzzleDrafts: { key: string; kind: string | null; beat: BeatDraft }[] = []
+  const testimonyDrafts: { witness: string; line: number; statements: { speaker: string; text: string; beat: BeatDraft }[] }[] = []
+  let testimony: (typeof testimonyDrafts)[number] | null = null
+  let lineNo = 0
   /** Cues read since the last beat: they go on the next beat of the scene. */
   let pending: { image?: string | null; sfx?: string; ambience?: string | null } = {}
 
@@ -376,6 +406,15 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
     const line = rawLine.trim()
     if (!line) continue
     if (/^#\s/.test(line)) continue
+    lineNo++
+    if (testimony) {
+      // a testimony lasts while speaker lines follow it, or until END TESTIMONY
+      if (END_TESTIMONY_RE.test(line)) {
+        testimony = null
+        continue
+      }
+      if (testimony.line !== lineNo - 1) testimony = null
+    }
     if (BREAK_RE.test(line)) {
       if (cur) pendingBreak = true
       continue
@@ -418,6 +457,44 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
     if (END_CG_RE.test(line)) {
       scene()
       pending.image = null
+      continue
+    }
+    const clue = CLUE_RE.exec(line)
+    if (clue) {
+      const text = clue[4]!.trim()
+      if (text) {
+        const beat: BeatDraft = { body: { type: 'narration', text } }
+        add(scene(), beat)
+        clueDrafts.push({ puzzle: clue[2]!, clue: clue[3]!, text, beat })
+      }
+      continue
+    }
+    const evidence = EVIDENCE_RE.exec(line)
+    if (evidence) {
+      const text = evidence[3]!.trim()
+      if (text) {
+        const key = evidence[2]!
+        const imageKey = slugKey(key)
+        if (!images.has(imageKey)) images.set(imageKey, { key: imageKey, description: text, display: 'insert' })
+        const beat: BeatDraft = { body: { type: 'narration', text } }
+        add(scene(), beat)
+        evidenceDrafts.push({ key, imageKey, text, beat })
+      }
+      continue
+    }
+    const pz = PUZZLE_RE.exec(line)
+    if (pz) {
+      const s = scene()
+      const beat: BeatDraft = { body: { type: 'puzzle', puzzle: pz[2]! } }
+      s.beats.push(beat)
+      puzzleDrafts.push({ key: pz[2]!, kind: pz[3] ? pz[3].toLowerCase() : null, beat })
+      continue
+    }
+    const tm = TESTIMONY_RE.exec(line)
+    if (tm) {
+      scene()
+      testimony = { witness: tm[2]!.replace(/\*+/g, '').trim(), line: lineNo, statements: [] }
+      testimonyDrafts.push(testimony)
       continue
     }
     const cm = CAST_RE.exec(line)
@@ -493,6 +570,10 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
         }
       }
       add(s, beat)
+      if (testimony) {
+        testimony.line = lineNo
+        testimony.statements.push({ speaker: label, text: lm[3]!.trim(), beat })
+      }
       if (!speakerKey) flag({ kind: 'speaker', scene: s, beat, text: label, reason: 'not a bible character' }, `speaker:${label}`)
       if (unknownExpr && rawExpression) flag({ kind: 'expression', scene: s, beat, text: rawExpression, reason: `unknown expression for ${label}: neutral used` }, `expr:${label}|${rawExpression}`)
       continue
@@ -528,6 +609,28 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
       breakBefore: d.breakBefore
     })
   }
+  const at = (b: BeatDraft): string | undefined => beatIds.get(b)
+  const puzzleLines: PuzzleLines = { clues: [], evidence: [], puzzles: [], testimonies: [] }
+  for (const c of clueDrafts) {
+    const beatId = at(c.beat)
+    if (beatId) puzzleLines.clues.push({ chapter, puzzle: c.puzzle, clue: c.clue, text: c.text, beatId })
+  }
+  for (const e of evidenceDrafts) {
+    const beatId = at(e.beat)
+    if (beatId) puzzleLines.evidence.push({ chapter, key: e.key, imageKey: e.imageKey, text: e.text, beatId })
+  }
+  for (const z of puzzleDrafts) {
+    const beatId = at(z.beat)
+    if (beatId) puzzleLines.puzzles.push({ chapter, key: z.key, kind: z.kind, beatId })
+  }
+  for (const t of testimonyDrafts) {
+    const statements = t.statements.flatMap((x, i) => {
+      const beatId = at(x.beat)
+      return beatId ? [{ n: i + 1, speaker: x.speaker, text: x.text, beatId }] : []
+    })
+    if (!statements.length) warnings.push(`chapter ${chapter}: TESTIMONY: ${t.witness} has no speaker line after it`)
+    else puzzleLines.testimonies.push({ chapter, witness: t.witness, statements })
+  }
   const uncertain: Uncertain[] = []
   for (const u of unc) {
     const sid = ids.get(u.scene)
@@ -538,5 +641,5 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
   const loose = new Map<string, Map<string, string>>()
   for (const [draft, id] of beatIds) if (draft.loose) loose.set(id, draft.loose)
   uncertain.push(...checkCasts(scenes, bible, loose, chapter))
-  return { scenes, uncertain, warnings, images: [...images.values()], sounds: [...sounds.values()] }
+  return { scenes, uncertain, warnings, images: [...images.values()], sounds: [...sounds.values()], puzzleLines }
 }

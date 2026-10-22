@@ -38,7 +38,7 @@ import type { ModelRouter } from '../models/router'
 import type { JobFile, JobState, JobStore } from '../queue/jobs'
 import { JOB_STATES } from '../queue/jobs'
 import { androidPreflight as runAndroidPreflight } from '../renpy/android'
-import { run as runRenpyGame, sdkExists } from '../renpy/run'
+import { run as runRenpyGame, sdkExists, sdkPython } from '../renpy/run'
 import { findTheme, listThemes } from '../themes/load'
 import { pickTheme } from '../themes/pick'
 import { themeFontFaces, themePreviewCss } from '../themes/emit'
@@ -74,7 +74,8 @@ import { chiptuneClientFor, flowClientFor, flowStartHint, loadStudiosConfig, pix
 import type { StudioId, StudiosConfig } from '../studios/config'
 import type { ChiptuneClient } from '../studios/chiptune'
 import type { FlowClient } from '../studios/flow'
-import { packagesDirOf } from '../puzzles/python'
+import { packagesDirOf, solvePuzzle } from '../puzzles/python'
+import type { PuzzleEntry, PuzzleProof } from '../../shared/puzzle'
 import type { PuzzlePython } from '../puzzles/python'
 import type { ServiceStarter } from '../studios/autostart'
 import type { PixelClient } from '../studios/pixel'
@@ -250,7 +251,7 @@ export class VnService {
 
   async previewImport(source: string): Promise<ImportPreview> {
     const folder = await this.resolveSource(source)
-    const r = await importBook(folder)
+    const r = await importBook(folder, { prove: await this.importProver() })
     return {
       source,
       path: folder,
@@ -275,7 +276,7 @@ export class VnService {
     if (opts.lang !== undefined) await this.knownLang(opts.lang)
     else await loadLanguageConfig(this.dataDir, (m) => this.log(m))
     const folder = await this.resolveSource(source)
-    const r = await importBook(folder, { lang: opts.lang })
+    const r = await importBook(folder, { lang: opts.lang, prove: await this.importProver() })
     let slug = projectSlug(r.book.slug)
     let existing: ProjectSettings | undefined
     // the same slug from another folder is another book: it gets a number
@@ -1341,6 +1342,16 @@ export class VnService {
   /** The Ren'Py SDK's Python and the puzzle library, for the `vno_puzzle_*` tools. */
   async puzzlePython(): Promise<PuzzlePython> {
     return { sdkPath: (await loadRenpyConfig(this.dataDir)).sdkPath, packagesDir: packagesDirOf(this.dirs.templates) }
+  }
+
+  /** What an import proves its puzzles with (the puzzle library), or null when the Ren'Py SDK is not there: the puzzles are then left unproved. */
+  private async importProver(): Promise<((p: PuzzleEntry) => Promise<PuzzleProof>) | null> {
+    try {
+      const py = await this.puzzlePython()
+      return sdkPython(py.sdkPath) ? (p) => solvePuzzle(py, p.data) : null
+    } catch {
+      return null
+    }
   }
 
   /** Asks both studios for their tools. Never throws: an unreachable studio is `ok: false` with the message (and how to start it). */

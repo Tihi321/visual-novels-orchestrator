@@ -173,7 +173,8 @@ def _keyinfo(p, key):
 
 def claim_sentence(p, c):
     k = _keyinfo(p, c["key"])
-    return _sentence(k.get("claim") or "The %s is {v}" % k["key"], c["value"])
+    s = _sentence(k.get("claim") or "The %s is {v}" % k["key"], c["value"])
+    return s[:1].upper() + s[1:]
 
 
 def fact_sentence(p, f):
@@ -199,10 +200,10 @@ def fill_testimony(p, names=None):
     w = nm["wit"]
     text = {"intro": "%s is giving testimony. Press a statement to hear more, and present the evidence that proves one of them false." % w}
     for s in p["statements"]:
-        text[s["id"]] = '%s: "%s."' % (w, ". ".join(claim_sentence(p, c) for c in s["claims"]))
+        text[s["id"]] = "%s." % ". ".join(claim_sentence(p, c) for c in s["claims"])
         extra = (s.get("press") or {}).get("claims", [])
         if extra:
-            text[s["id"] + ".press"] = '%s: "Now that you ask. %s."' % (w, ". ".join(claim_sentence(p, c) for c in extra))
+            text[s["id"] + ".press"] = "Now that you ask. %s." % ". ".join(claim_sentence(p, c) for c in extra)
     for e in p["evidence"]:
         text[e["id"]] = "%s: %s." % (nm[e["id"]], ". ".join(fact_sentence(p, f) for f in e["facts"]))
     p["text"] = text

@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { parseMd } from '../../shared/md'
 
 /** Formats Scriptorium writes as scripts. */
-export const VN_FORMATS = ['visual-novel', 'choice-visual-novel', 'kids-visual-story', 'kids-choice-visual-story'] as const
+export const VN_FORMATS = ['visual-novel', 'choice-visual-novel', 'kids-visual-story', 'kids-choice-visual-story', 'mystery-puzzle-visual-novel'] as const
 /** Prose books with choices that can also become visual novels (the prose becomes narration). */
 export const PROSE_CHOICE_FORMATS = ['gamebook', 'kids-choice-book'] as const
 
@@ -34,6 +34,8 @@ export interface RawBook {
   outline: Record<string, unknown>
   chapters: RawChapter[]
   coverBrief?: string
+  /** The frontmatter of `bible/puzzles.md` (Scriptorium's `puzzles` of a puzzle book), when the file is there. */
+  puzzles?: Record<string, unknown>
 }
 
 async function readText(path: string): Promise<string | null> {
@@ -94,6 +96,7 @@ export async function readBookFolder(path: string): Promise<RawBook> {
   const bibleDoc = (await readMd(join(path, 'bible', 'bible.md'))) ?? (await readMd(join(path, 'bible.md')))
   const outline = await readMd(join(path, 'outline.md'))
   const cover = await readMd(join(path, 'cover-brief.md'))
+  const puzzles = await readMd(join(path, 'bible', 'puzzles.md'))
 
   const chapters: RawChapter[] = []
   let files: string[] = []
@@ -130,6 +133,7 @@ export async function readBookFolder(path: string): Promise<RawBook> {
     bible: bibleDoc?.body ?? '',
     outline: outline?.data ?? {},
     chapters,
-    ...(coverBrief ? { coverBrief } : {})
+    ...(coverBrief ? { coverBrief } : {}),
+    ...(puzzles ? { puzzles: puzzles.data } : {})
   }
 }

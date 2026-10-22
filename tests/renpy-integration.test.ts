@@ -366,6 +366,27 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     expect(l.ok).toBe(true)
   })
 
+  it('a book imported from the mystery-puzzle fixture (CLUE, EVIDENCE, PUZZLE and TESTIMONY lines, bible/puzzles.md): the puzzles, the found clues, the evidence pictures, lint clean', { timeout: T }, async () => {
+    const imported = await importBook(path.resolve(__dirname, 'fixtures', 'books', 'mystery-puzzle'))
+    const book = imported.book
+    const r = await buildGame({ projectDir: path.join(root, 'puzzle-imported'), book, editions: [imported.edition], settings: loadSettings(book, { editions: ['en'] }), resolveAsset: () => null, sdkPath })
+    const game = path.join(r.gameDir, 'game')
+    const data = fs.readFileSync(path.join(game, 'vno_puzzles_data.rpy'), 'utf8')
+    expect(data).toContain('"kind": "murdle"')
+    expect(data).toContain('"kind": "testimony"')
+    expect(data).toContain('"at": "ch02.s01.b006"')
+    expect(data).toContain('"at": "ch03.s01.b003"')
+    expect(data).toContain('"wit": "mr_halloran neutral"')
+    expect(data).toContain('"e1": "cg guest_list"')
+    const ch2 = fs.readFileSync(path.join(game, 'ch02.rpy'), 'utf8')
+    expect(ch2).toContain('$ vno_clue_found("dinner", "c3")')
+    expect(ch2).toContain('call vno_puzzle_play("dinner", vno_puzzle_data["dinner"])')
+    expect(fs.existsSync(path.join(game, 'images', 'cg guest_list.webp'))).toBe(true)
+    const l = await lint(r.gameDir, { sdkPath })
+    expect(l.messages).toEqual([])
+    expect(l.ok).toBe(true)
+  })
+
   it('the puzzle proof of concept: the library in python-packages, the screens and the PoC story, lint clean', { timeout: T }, async () => {
     const r = await buildPuzzlePoc(path.join(root, 'puzzle-poc'), sdkPath)
     const game = path.join(r.gameDir, 'game')

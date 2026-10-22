@@ -211,6 +211,19 @@ export function alignParsed(primary: VnBook, translated: ParsedFolder, lang: Lan
   })
 
   const title = translated.raw.book.title
+  // the puzzles: the clues and statements line up by id (`CLUE: dinner/c2:`), the names and the other sentences come from the translated bible/puzzles.md
+  const puzzles: NonNullable<Edition['puzzles']> = {}
+  for (const pp of primary.puzzles ?? []) {
+    const tp = translated.puzzles.find((x) => x.key === pp.key)
+    if (!tp) {
+      warnings.push(`puzzle "${pp.key}": the translation has no such puzzle: the primary words are kept`)
+      continue
+    }
+    const text = { ...pp.text, ...Object.fromEntries(Object.entries(tp.text).filter(([id, t]) => id in pp.text && t.trim())) }
+    const names = { ...pp.names, ...Object.fromEntries(Object.entries(tp.names).filter(([id, n]) => id in pp.names && n.trim())) }
+    for (const id of Object.keys(pp.text)) if (text[id] === pp.text[id]) warnings.push(`puzzle "${pp.key}": ${id} has no translated text: the primary words are kept`)
+    puzzles[pp.key] = { names, text }
+  }
   const edition: Edition = {
     lang,
     title: typeof title === 'string' && title.trim() ? title.trim() : primary.title,
@@ -218,7 +231,8 @@ export function alignParsed(primary: VnBook, translated: ParsedFolder, lang: Lan
     choiceTexts,
     endings,
     characterNames,
-    beats
+    beats,
+    ...(Object.keys(puzzles).length ? { puzzles } : {})
   }
   return { edition, report: { matched, missing, extra, nameMap, placeMap, warnings } }
 }
