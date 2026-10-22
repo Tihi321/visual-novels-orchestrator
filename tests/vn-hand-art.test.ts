@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { resolveFile } from '../src/engine/assets/manifest'
 import { parseCliArgs, settingsPatchFromFlags } from '../src/engine/vncli'
 import { buildTools, callTool } from '../src/engine/mcp/tools'
 import type { ToolResult } from '../src/engine/mcp/tools'
@@ -96,6 +97,35 @@ describe('hand-made art (art.provider: hand)', () => {
     expect((await svc().store.loadAssets(slug)).assets.find((a) => a.id === id)!.versions.length).toBe(1)
     expect(env.comfy.requests).toHaveLength(0)
   }, 60_000)
+
+  for (const style of ['illustrated', 'pixel'] as const) {
+    it(`vno_asset_import cuts a sprite out with the flat-colour key, never with ComfyUI (${style})`, async () => {
+      await svc().updateSettings(slug, { art: { style } })
+      let removals = 0
+      env.comfy.removeBackground = async () => {
+        removals++
+        return null
+      }
+      const id = (await svc().listAssets(slug)).find((a) => a.kind === 'sprite')!.id
+      // a figure (a blue ellipse) on a plain white background, no alpha
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600"><rect width="400" height="600" fill="#ffffff"/><ellipse cx="200" cy="300" rx="50" ry="150" fill="#2a5db0"/></svg>'
+      const src = path.join(env.dir, 'mara.png')
+      await writeFile(src, await sharp(Buffer.from(svg)).flatten({ background: '#ffffff' }).png().toBuffer())
+
+      const r = await ok('vno_asset_import', { slug, id, file: src, rebuild: false })
+      expect(r).toMatchObject({ asset: { id, locked: true }, version: { n: 1, engine: 'custom:import' } })
+      const entry = (await svc().store.loadAssets(slug)).assets.find((a) => a.id === id)!
+      const { data, info } = await sharp(resolveFile(svc().store.dir(slug), entry)!).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+      expect(data[3]).toBe(0) // the corner is transparent
+      expect(data[((info.height >> 1) * info.width + (info.width >> 1)) * 4 + 3]).toBeGreaterThan(200) // the figure is not
+      expect(removals).toBe(0)
+      expect(env.comfy.requests).toHaveLength(0)
+
+      // BiRefNet only when asked for
+      await ok('vno_asset_import', { slug, id, file: src, removeBackground: 'birefnet', rebuild: false })
+      expect(removals).toBe(1)
+    }, 60_000)
+  }
 
   it('the art step asks no model, vno_plan still plans the prompts and the music', async () => {
     await svc().enqueue(slug, TASKS.artPlan, 'all', await svc().nextRun(slug))

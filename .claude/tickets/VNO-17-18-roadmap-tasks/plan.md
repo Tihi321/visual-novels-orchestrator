@@ -18,3 +18,10 @@ Branch `VNO-17-18_roadmap-tasks` from `master` (6e25fa0). One commit per ticket,
 ## Verification (whole branch)
 
 `yarn test`, `yarn typecheck` and `yarn lint` exit 0 after each commit. Test-only tickets: if a new test finds a bug, the fix goes in the same ticket's commit and its changelog says so.
+
+## Status (2026-10-22)
+
+- [x] Commit 1: roadmap as tasks, plans.
+- [x] VNO-17: 22 new tests, no bug found (`VNO-17-media-cue-tests/changelog.md`).
+- [x] VNO-18: 2 new tests, no bug found (`VNO-18-hand-mode-key-test/changelog.md`).
+- `yarn test` 56 files, 741 passed (717 on master); `yarn typecheck`, `yarn lint` exit 0. Not pushed, no PR.
