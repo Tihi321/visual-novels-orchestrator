@@ -10,8 +10,8 @@ import itertools
 FORMAT = 1
 
 #: The rules of the deduction solver, cheapest first, with their weight in the difficulty score.
-RULES = ("clue", "elim", "last", "either", "trans")
-WEIGHTS = {"clue": 1, "elim": 1, "last": 2, "either": 2, "trans": 3}
+RULES = ("clue", "elim", "last", "either", "order", "trans")
+WEIGHTS = {"clue": 1, "elim": 1, "last": 2, "either": 2, "order": 2, "trans": 3}
 BANDS = ("easy", "medium", "hard")
 #: The rules each band's puzzles are meant to be solved with (easy uses no either or trans step).
 EASY_RULES = ("clue", "elim", "last")
@@ -81,8 +81,27 @@ def owners_of(p):
     return out
 
 
-def clue_true(clue, owner):
-    """Is the clue true when `owner` maps every item to its person?"""
+def ordinal_items(p):
+    """The items of the ordinal category (ages, months ...) in order, or None when the puzzle has none."""
+    ordinal = p.get("ordinal")
+    if not ordinal:
+        return None
+    for c in p["categories"]:
+        if c["key"] == ordinal["category"]:
+            return list(c["items"])
+    raise PuzzleError("no ordinal category %r" % (ordinal["category"],))
+
+
+def _pos(owner, ordinal, item):
+    person = owner[item]
+    for i, o in enumerate(ordinal):
+        if owner[o] == person:
+            return i
+    raise PuzzleError("%s has no place in the ordinal category" % item)
+
+
+def clue_true(clue, owner, ordinal=None):
+    """Is the clue true when `owner` maps every item to its person? `ordinal`: the items of the ordinal category, for order clues."""
     t = clue["type"]
     if t == "is":
         return owner[clue["a"]] == owner[clue["b"]]
@@ -90,12 +109,31 @@ def clue_true(clue, owner):
         return owner[clue["a"]] != owner[clue["b"]]
     if t == "either":
         return any(owner[clue["a"]] == owner[b] for b in clue["b"])
+    if t == "neither":
+        return all(owner[clue["a"]] != owner[b] for b in clue["b"])
+    if t == "oneof":
+        a1, a2 = clue["a"]
+        b1, b2 = clue["b"]
+        return (owner[a1] == owner[b1] and owner[a2] == owner[b2]) or (owner[a1] == owner[b2] and owner[a2] == owner[b1])
+    if t in ("before", "after", "apart"):
+        if not ordinal:
+            raise PuzzleError("an order clue needs an ordinal category")
+        pa, pb = _pos(owner, ordinal, clue["a"]), _pos(owner, ordinal, clue["b"])
+        if t == "before":
+            return pa < pb
+        if t == "after":
+            return pa > pb
+        return abs(pa - pb) == clue["n"]
     raise PuzzleError("unknown clue type %r" % (t,))
 
 
 def clue_items(clue):
-    b = clue["b"]
-    return [clue["a"]] + (list(b) if isinstance(b, (list, tuple)) else [b])
+    """Every item a clue names (a and b may each be one item or a list)."""
+    out = []
+    for key in ("a", "b"):
+        v = clue[key]
+        out.extend(v if isinstance(v, (list, tuple)) else [v])
+    return out
 
 
 def answer_of(p):
@@ -103,7 +141,10 @@ def answer_of(p):
     place = p["murder"]["place"]
     for s in p["categories"][0]["items"]:
         if p["solution"][s]["place"] == place:
-            return {"suspect": s, "weapon": p["solution"][s]["weapon"], "place": place}
+            row = {"suspect": s, "weapon": p["solution"][s]["weapon"], "place": place}
+            if "motive" in p["solution"][s]:
+                row["motive"] = p["solution"][s]["motive"]
+            return row
     raise PuzzleError("nobody was at the murder place")
 
 

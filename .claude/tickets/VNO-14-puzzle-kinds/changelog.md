@@ -1,0 +1,17 @@
+# VNO-14 changelog (2026-10-22): more puzzle kinds
+
+HUB-10 phase 3. One section per kind, in the order of Q5.
+
+## 1. Bigger Murdle
+
+- **Python** (`templates/puzzles/game/python-packages/vno_puzzles/`):
+  - `generate("murdle", size=3|4, seed, band, motive=False, attrs=False)`. `motive` adds a fourth category (jealousy, greed ...) and `why` to the accusation; `attrs` makes some clues point at an item by a trait (`descr`: "the heavy weapon", "the tall guest") instead of its name, so the prose is about who or what, not which name. The default (3x3, no options) gives exactly the same puzzles as before (a fingerprint test).
+  - `solver.py` rewritten for scale: `count_solutions` is a search that places the items of one category after another and checks a clue as soon as all the items it names are placed (the old enumeration stays as `count_solutions_brute`, the oracle of a test that compares the two on random clue sets); `deduce_fast` reaches the same fixed point as the recorded `deduce` with every cell a pass finds applied at once (the generator uses it while it grows and trims a clue set; only the final puzzle gets the recorded steps). 4x4 with a motive makes a puzzle in about 0.03 s.
+  - `flavour.py` (was `verify.py`; renamed because `vno_puzzles.verify` is also a function): the read-back check compares a clue with its read-back by the assignments of the items they name only (so it scales), and understands the trait phrases of `descr`.
+  - The solver and text already know the clue types of the logic-grid kind (`neither`, `oneof`, `before`, `after`, `apart`, the `order` rule, the ordinal category); they are used by commit 4.
+- **TypeScript**: the puzzle core allows 3 or 4 categories, `descr`, a motive in the answer; `puzzleEntityIds`, `puzzleTextIds`, `puzzleFindableIds` (what needs a name, prose, a place in the story) replace the Murdle-only reads in `validateBook`; `vno_puzzle_generate` and `generate` of `vno_puzzle_set` take `size`, `motive`, `attrs`; `readBackTask` carries a legend ("the heavy weapon = rope") when clues use traits.
+- **Pictures in the headers** (Q8): `links` of a puzzle entry (character, image, place) give the header a picture, the neutral sprite of a character or the insert picture of an object; the build marks those images as used, so they are made even when no beat shows them.
+- **Ren'Py**: `vno_murdle` is now one generic staircase grid for any number of categories (4 items per category: 72 px cells; scrolls both ways inside the screen), with the clue list scrolling on the left, the accusation asks `Why?` for a motive, and the label also handles puzzles without a question (a logic grid is submitted as a grid; used by commit 4).
+- **Tests**: Python (26 tests): 4x4 in every band (40 seeds), with a motive (30 seeds per band), with traits (30 seeds per band, the phrase is in the sentence and the name is not), search against brute force, trait read-back (a reader that mixes two traits is caught). TypeScript: the 4x4 fixture parses and validates in a book, the pictures and used images in the data file, the generate tool in under 2 s, `vno_puzzle_set` with `generate` of a 4x4 with a motive and traits, the legend in `readBackTask`. A `renpy-integration` case: a 4x4 with a motive, traits, two portraits and an object picture builds (the images are made) and lints clean. The self-test (`scripts/puzzle-poc.ts --selftest`) has a second case that opens a 4x4 puzzle.
+
+Not verified: how the 4x4 grid looks (no screenshot is possible here); the user has not played it.

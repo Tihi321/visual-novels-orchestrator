@@ -52,8 +52,8 @@ async function call<T>(py: PuzzlePython, args: string[], schema: z.ZodType<T>, i
 }
 
 /** A new puzzle: the core and the canonical English names and sentences. Nothing is saved. */
-export const generatePuzzle = (py: PuzzlePython, o: { kind: string; size: number; band: string; seed: number }): Promise<PuzzleGenerated> =>
-  call(py, ['generate', '--kind', o.kind, '--size', String(o.size), '--band', o.band, '--seed', String(o.seed)], puzzleGeneratedSchema)
+export const generatePuzzle = (py: PuzzlePython, o: { kind: string; size?: number; band: string; seed: number; motive?: boolean; attrs?: boolean }): Promise<PuzzleGenerated> =>
+  call(py, ['generate', '--kind', o.kind, ...(o.size ? ['--size', String(o.size)] : []), '--band', o.band, '--seed', String(o.seed), ...(o.motive ? ['--motive'] : []), ...(o.attrs ? ['--attrs'] : [])], puzzleGeneratedSchema)
 
 /** The proof of a core: exactly one solution, solvable by deduction alone, its band, its steps. */
 export const solvePuzzle = (py: PuzzlePython, core: PuzzleCore): Promise<PuzzleProof> => call(py, ['solve'], puzzleProofSchema, core)

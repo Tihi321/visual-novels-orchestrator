@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { CANONICAL_EXPRESSIONS, EXPRESSION_RE, hasText, langSchema, vnBookSchema } from '../../shared/vn'
-import { puzzleCoreSchema, puzzleEntrySchema } from '../../shared/puzzle'
+import { puzzleCoreSchema, puzzleEntityIds, puzzleEntrySchema, puzzleFindableIds, puzzleTextIds } from '../../shared/puzzle'
 import type { Edition, Lang, VnBeat, VnBook, VnChapter, VnScene } from '../../shared/vn'
 import { aliasIndex } from './aliases'
 import { expressionsOf, mapExpression } from './expressions'
@@ -359,16 +359,16 @@ export function validateBook(book: VnBook): { errors: string[]; warnings: string
   }
   for (const p of book.puzzles ?? []) {
     if (!KEY_RE.test(p.key)) errors.push(`puzzle key "${p.key}" must be lowercase letters, digits and underscores, starting with a letter`)
-    const items = p.data.categories.flatMap((c) => c.items)
+    const items = puzzleEntityIds(p.data)
     for (const it of items) if (!p.names[it]?.trim()) errors.push(`puzzle "${p.key}": item ${it} has no name`)
-    for (const c of [...p.data.clues.map((x) => x.id), 'murder']) if (!p.text[c]?.trim()) errors.push(`puzzle "${p.key}": ${c === 'murder' ? 'the murder note' : `clue ${c}`} has no text`)
+    for (const c of puzzleTextIds(p.data)) if (!p.text[c]?.trim()) errors.push(`puzzle "${p.key}": ${c === 'murder' ? 'the murder note' : `clue ${c}`} has no text`)
     for (const [it, l] of Object.entries(p.links ?? {})) {
       if (!items.includes(it)) errors.push(`puzzle "${p.key}": link of unknown item ${it}`)
       else if (l.type === 'character' ? !chars.has(l.key) : l.type === 'place' ? !places.has(l.key) : !images.has(l.key)) errors.push(`puzzle "${p.key}": ${it} links to ${l.type} "${l.key}", which the book does not have`)
     }
     const mine = players.get(p.key)
     for (const [clue, at] of Object.entries(p.clueAt ?? {})) {
-      if (!p.data.clues.some((c) => c.id === clue)) errors.push(`puzzle "${p.key}": clueAt names unknown clue ${clue}`)
+      if (!puzzleFindableIds(p.data).includes(clue)) errors.push(`puzzle "${p.key}": clueAt names unknown clue ${clue}`)
       else if (!order.has(at)) errors.push(`puzzle "${p.key}": clue ${clue} is found at beat ${at}, which does not exist`)
       else if (mine && order.get(at)! >= order.get(mine)!) errors.push(`puzzle "${p.key}": clue ${clue} is found at ${at}, which is not before the puzzle beat ${mine}`)
     }

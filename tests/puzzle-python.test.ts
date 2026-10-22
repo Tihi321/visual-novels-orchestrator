@@ -196,3 +196,45 @@ describe.skipIf(!sdkPython(sdkPath))('the vno_puzzle_* tools', () => {
     expect((await env.engine.vn.store.loadBook(slug)).puzzles).toBeUndefined()
   })
 })
+
+describe.skipIf(!sdkPython(sdkPath))('bigger Murdle through the bridge and the tools', () => {
+  let env: VnEnv
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type Data = Record<string, any>
+  const call = async (name: string, args: object): Promise<Data> => {
+    const r: ToolResult = await callTool(buildTools(env.engine.vn), name, args)
+    if (r.isError) throw new Error(r.content[0]?.text)
+    return r.structuredContent as Data
+  }
+  beforeEach(async () => {
+    env = await makeVnEnv({ sdk: undefined })
+  })
+  afterEach(async () => {
+    await env.cleanup()
+  })
+
+  it('vno_puzzle_generate makes a 4x4 with a motive and trait clues in under 2 s', async () => {
+    const t0 = Date.now()
+    const g = await call('vno_puzzle_generate', { band: 'medium', seed: 2, size: 4, motive: true, attrs: true })
+    expect(Date.now() - t0).toBeLessThan(2000)
+    expect(g.core.size).toBe(4)
+    expect(g.core.categories.map((c: { key: string }) => c.key)).toEqual(['suspect', 'weapon', 'place', 'motive'])
+    expect(Object.keys(g.names)).toHaveLength(16)
+    expect(g.core.descr).toBeDefined()
+    expect(puzzleCoreSchema.parse(g.core).murder.answer.motive).toBeDefined()
+  })
+
+  it('vno_puzzle_set with generate, the read-back task carries the trait legend, and a reader that answers with names passes', async () => {
+    const r = await call('vno_create_project', { book: { title: 'Big', characters: [{ name: 'Hartley', looks: 'a detective' }], places: [{ name: 'Manor', looks: 'a room' }], chapters: [{ title: 'c', scenes: [{ place: 'manor', beats: [{ text: 'Hi.' }] }] }] } })
+    const slug = r.slug as string
+    await call('vno_beat_add', { slug, sceneId: 'ch01.s01', beats: [{ puzzle: 'big' }] })
+    const set = await call('vno_puzzle_set', { slug, key: 'big', generate: { band: 'hard', seed: 5, size: 4, motive: true, attrs: true } })
+    expect(set.verified).toMatchObject({ unique: true, deducible: true, textChecked: true })
+    const got = await call('vno_puzzle_get', { slug, key: 'big' })
+    expect(got.readBackTask).toMatch(/Some clues point at an item by a trait/)
+    const p = (await env.engine.vn.store.loadBook(slug)).puzzles![0]!
+    const nm = (id: string) => p.names[id]!
+    const rb = p.data.clues.map((c) => ({ id: c.id, type: c.type, a: nm(c.a), b: Array.isArray(c.b) ? c.b.map(nm) : nm(c.b) }))
+    expect(await call('vno_puzzle_check_text', { slug, key: 'big', readBack: rb })).toMatchObject({ ok: true })
+  })
+})

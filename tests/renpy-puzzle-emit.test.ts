@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { emitScripts, translatableStrings } from '../src/engine/renpy/emit'
-import { emitPuzzleData, playedPuzzles } from '../src/engine/renpy/puzzles'
+import { emitPuzzleData, playedPuzzles, puzzlePics } from '../src/engine/renpy/puzzles'
 import { defaultCues } from '../src/engine/renpy/stage'
 import { puzzleCoreSchema, puzzleEntrySchema } from '../src/shared/puzzle'
 import type { PuzzleEntry } from '../src/shared/puzzle'
@@ -101,5 +101,22 @@ describe('the puzzle data file', () => {
     expect(names.find((s) => s.what.endsWith('of s2'))!.pick(hr)).toBeUndefined()
     expect(clues.find((s) => s.what.endsWith('clue c1'))!.pick(hr)).toBe('Ana nije bila u knjižnici.')
     expect(translatableStrings(buildBook(storyInputSchema.parse({ title: 'T', characters: [{ name: 'A' }], places: [{ name: 'P' }], chapters: [{ title: 'c', scenes: [{ place: 'p', beats: [{ text: 'Hi.' }] }] }] }), { slug: 't', lang: 'en' }).book).some((s) => s.what.startsWith('puzzle'))).toBe(false)
+  })
+})
+
+describe('pictures in the headers of a puzzle', () => {
+  it('a character link is its neutral sprite, an image link its picture; a place has none; the images are marked as used', () => {
+    const b = book({ links: { s1: { type: 'character', key: 'hartley' }, w1: { type: 'image', key: 'rope' }, p1: { type: 'place', key: 'manor' } } })
+    b.images = [{ key: 'rope', description: 'a coil of rope', display: 'insert' }]
+    expect(puzzlePics(b, b.puzzles![0]!)).toEqual({ s1: 'hartley neutral', w1: 'cg rope' })
+    const r = emit(b)
+    expect(r.files['vno_puzzles_data.rpy']).toContain('"pics": {"s1": "hartley neutral", "w1": "cg rope"}')
+    expect(r.used.sprites).toContainEqual({ charKey: 'hartley', expression: 'neutral' })
+    expect(r.used.cgs).toContainEqual({ key: 'rope', display: 'insert' })
+    // a link to something the book does not have gives no picture
+    const none = book({ links: { s1: { type: 'character', key: 'hartley' } } })
+    none.characters = []
+    expect(puzzlePics(none, none.puzzles![0]!)).toEqual({})
+    expect(emit(book()).files['vno_puzzles_data.rpy']).not.toContain('"pics"')
   })
 })

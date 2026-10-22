@@ -223,6 +223,46 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     expect(fs.existsSync(path.join(plain.gameDir, 'game', 'vno_puzzles_data.rpy'))).toBe(false)
   })
 
+  it('a 4x4 Murdle with a motive and attribute clues, portraits and an object picture in the headers: the images are made, the grid scrolls, lint clean', { timeout: T }, async () => {
+    const big = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'murdle-4x4-motive-attrs-2.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+    const base = buildBook(
+      storyInputSchema.parse({
+        title: 'The Big Dinner',
+        characters: [{ name: 'Hartley', looks: 'a tired detective' }, { name: 'Varga', looks: 'a quiet inspector' }],
+        places: [{ name: 'Manor', looks: 'a dark dining room' }],
+        images: [{ key: 'rope', description: 'a coil of rope', display: 'insert' }],
+        chapters: [{ title: 'The Body', scenes: [{ place: 'manor', beats: [{ cast: ['hartley'] }, { text: 'The dinner went cold.' }, { puzzle: 'big' }, { text: 'It was over.' }] }] }]
+      }),
+      { slug: 'big', lang: 'en' }
+    ).book
+    const book = {
+      ...base,
+      puzzles: [
+        puzzleEntrySchema.parse({
+          key: 'big',
+          kind: 'murdle',
+          data: puzzleCoreSchema.parse(big),
+          names: big.names,
+          text: big.text,
+          links: { s1: { type: 'character', key: 'hartley' }, s2: { type: 'character', key: 'varga' }, w1: { type: 'image', key: 'rope' }, p1: { type: 'place', key: 'manor' } },
+          verified: { unique: true, deducible: true, score: 150, textChecked: true, by: 'test' }
+        })
+      ]
+    }
+    const en = buildEdition('en', book.title, book.chapters, book.characters)
+    const r = await buildGame({ projectDir: path.join(root, 'puzzle-big'), book, editions: [en], settings: loadSettings(book, { editions: ['en'] }), resolveAsset: () => null, sdkPath })
+    const game = path.join(r.gameDir, 'game')
+    const data = fs.readFileSync(path.join(game, 'vno_puzzles_data.rpy'), 'utf8')
+    expect(data).toContain('"pics": {"s1": "hartley neutral", "s2": "varga neutral", "w1": "cg rope"}')
+    expect(data).toContain('"descr": ')
+    expect(fs.existsSync(path.join(game, 'images', 'hartley neutral.webp'))).toBe(true)
+    expect(fs.existsSync(path.join(game, 'images', 'varga neutral.webp'))).toBe(true)
+    expect(fs.existsSync(path.join(game, 'images', 'cg rope.webp'))).toBe(true)
+    const l = await lint(r.gameDir, { sdkPath })
+    expect(l.messages).toEqual([])
+    expect(l.ok).toBe(true)
+  })
+
   it('the puzzle proof of concept: the library in python-packages, the screens and the PoC story, lint clean', { timeout: T }, async () => {
     const r = await buildPuzzlePoc(path.join(root, 'puzzle-poc'), sdkPath)
     const game = path.join(r.gameDir, 'game')

@@ -24,7 +24,9 @@ const onFail = z.object({
 })
 const generateSpec = z.object({
   kind: z.enum(PUZZLE_KINDS).default('murdle'),
-  size: z.literal(3).default(3).describe('Items per category (3 so far)'),
+  size: z.number().int().min(3).max(4).optional().describe('Items per category: 3 (default) or 4'),
+  motive: z.boolean().optional().describe('Murdle: a fourth category, the motive (jealousy, greed ...)'),
+  attrs: z.boolean().optional().describe('Murdle: some clues point at an item by a trait ("the heavy weapon") instead of its name'),
   band: z.enum(PUZZLE_BANDS).default('medium').describe('easy: needs no either or transitive step. medium: needs one. hard: at least 3 transitive steps and no direct clue'),
   seed: z.number().int().min(0).optional().describe('The same seed gives the same puzzle. Left out: a random one')
 })
@@ -52,7 +54,7 @@ export function puzzleTools(svc: VnService, def: ToolDef): Tool[] {
         const py = await svc.puzzlePython()
         const seed = a.seed ?? Math.floor(Math.random() * 1_000_000_000)
         const t0 = Date.now()
-        const p = await generatePuzzle(py, { kind: a.kind, size: a.size, band: a.band, seed })
+        const p = await generatePuzzle(py, { kind: a.kind, size: a.size, band: a.band, seed, motive: a.motive, attrs: a.attrs })
         const { names, text, ...core } = p
         return { seed, band: a.band, core, names, text, difficulty: p.difficulty, ms: Date.now() - t0, next: 'vno_puzzle_set {slug, key, data: core, names, text} puts it in a project, or vno_puzzle_set {slug, key, generate: {...}} makes and sets it in one call.' }
       }
@@ -79,7 +81,7 @@ export function puzzleTools(svc: VnService, def: ToolDef): Tool[] {
         let core: PuzzleCore | undefined
         let canon: { names: Record<string, string>; text: Record<string, string> } | undefined
         if (a.generate) {
-          const g = await generatePuzzle(py, { kind: a.generate.kind, size: a.generate.size, band: a.generate.band, seed: a.generate.seed ?? Math.floor(Math.random() * 1_000_000_000) })
+          const g = await generatePuzzle(py, { ...a.generate, seed: a.generate.seed ?? Math.floor(Math.random() * 1_000_000_000) })
           const { names, text, ...rest } = g
           core = rest
           canon = { names, text }
@@ -150,9 +152,11 @@ export function puzzleTools(svc: VnService, def: ToolDef): Tool[] {
         const py = await svc.puzzlePython()
         const canonical = await renderPuzzleText(py, p.data, p.names)
         const clueIds = p.data.clues.map((c) => c.id)
+        const traits = Object.entries(p.data.descr ?? {}).filter(([it]) => p.data.clues.some((c) => (c.descr ?? []).includes(it)))
         const readBackTask = [
           'Read these clues of a logic puzzle and write each one back as structured data. Use only the names in the list; do not guess what is not said.',
           `Names: ${Object.values(words.names).join('; ')}`,
+          ...(traits.length ? [`Some clues point at an item by a trait. Who or what each trait is: ${traits.map(([it, d]) => `${d} = ${words.names[it]}`).join('; ')}. Answer with the name, not the trait.`] : []),
           ...clueIds.map((id) => `${id}: ${words.text[id] ?? '(missing)'}`),
           'Answer with JSON: [{"id": "c1", "type": "is" | "not" | "either", "a": "<a name>", "b": "<a name>" or ["<a name>", "<a name>"] for either}]. is: a and b go together. not: they do not. either: a goes with one of the two names in b.'
         ].join('\n')

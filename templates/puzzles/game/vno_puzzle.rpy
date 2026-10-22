@@ -69,6 +69,21 @@ init python:
             return 0
         return fail.get("maxTries", 3)
 
+    def vno_title(p):
+        """What the puzzle asks."""
+        if p.get("murder"):
+            return "Who did it, with what, where and why?" if "motive" in p["murder"]["answer"] else "Who did it, with what, and where?"
+        return p.get("text", {}).get("intro") or "Work out who goes with what."
+
+    def vno_ask(key):
+        return {"suspect": "Who did it?", "weapon": "With what?", "place": "Where?", "motive": "Why?"}.get(key, key)
+
+    def vno_wrong_message(p, check):
+        n = len(check["wrong"])
+        if p.get("murder"):
+            return "Not quite. %d of the %d parts of that accusation are wrong." % (n, len(p["murder"]["answer"]))
+        return "Not quite. %d of the answers in your grid are not right yet." % n
+
     def vno_dev_line(p):
         d = p["difficulty"]
         return "steps %d, score %d, rules %s" % (d["steps"], d["score"], ", ".join("%s %d" % (k, v) for k, v in sorted(d["rules"].items())))
@@ -79,98 +94,134 @@ default vno_puzzle_failed = {}
 default persistent.vno_auto_cross = True
 
 ## One cell of the grid: a button that shows nothing, a check mark or a cross.
-screen vno_cell(pid, p, key):
+screen vno_cell(pid, p, key, cs):
     $ v = vno_ps(pid)["marks"].get(key, "")
     button:
-        xysize (96, 96)
+        xysize (cs, cs)
         margin (2, 2)
         background Solid("#ffffff26")
         hover_background Solid("#ffffff48")
         action Function(vno_mark_cycle, pid, key, p)
         alternate Function(vno_mark_no, pid, key)
         if v == "yes":
-            text "✓" font "DejaVuSans.ttf" size 64 color "#7fe39a" align (0.5, 0.5)
+            text "✓" font "DejaVuSans.ttf" size int(cs * 0.66) color "#7fe39a" align (0.5, 0.5)
         elif v == "no":
-            text "✗" font "DejaVuSans.ttf" size 56 color "#e47c7c" align (0.5, 0.5)
+            text "✗" font "DejaVuSans.ttf" size int(cs * 0.58) color "#e47c7c" align (0.5, 0.5)
 
-## The puzzle: the clues on the left, the grid on the right. Returns "hint", "accuse" or "giveup".
+## The head of a row (name, and a small picture when the item is a character or an object of the story).
+screen vno_row_head(p, item, hw, cs):
+    hbox:
+        xsize hw
+        ysize cs + 4
+        spacing 8
+        if item in p.get("pics", {}):
+            add p["pics"][item] fit "contain" xysize (cs - 8, cs - 8) yalign 0.5
+        text p["names"][item] size 22 yalign 0.5 xmaximum hw - (cs if item in p.get("pics", {}) else 0)
+
+## The head of a column.
+screen vno_col_head(p, item, cs):
+    vbox:
+        xsize cs + 4
+        yalign 1.0
+        spacing 2
+        if item in p.get("pics", {}):
+            add p["pics"][item] fit "contain" xysize (cs - 12, cs - 12) xalign 0.5
+        text p["names"][item] size 16 xsize cs + 4 text_align 0.5
+
+## The puzzle (Murdle, logic grids): the clues on the left, the grid on the right (it scrolls when it is big).
+## Returns "hint", "accuse" or "giveup".
 screen vno_murdle(pid, p):
     modal True
     zorder 100
     $ st = vno_ps(pid)
-    $ nm = p["names"]
-    $ people = p["categories"][0]["items"]
-    $ weapons = p["categories"][1]["items"]
-    $ places = p["categories"][2]["items"]
+    $ cats = p["categories"]
+    $ k = len(cats)
+    $ n = len(cats[0]["items"])
+    $ cs = 96 if n <= 3 else (72 if n == 4 else 60)
+    $ gap = 14
+    $ hw = 230
+    $ found = vno_clues_found.get(pid, [])
     add Solid("#0d0d16ee")
     if "seed" in p:
         text ("seed %s, %s" % (p["seed"], p["band"])) size 18 color "#8888aa" xalign 1.0 xoffset -12 yoffset 6
     if config.developer:
         text vno_dev_line(p) size 18 color "#8888aa" xalign 1.0 xoffset -12 yoffset 28
     hbox:
-        xpos 40
-        ypos 30
-        spacing 40
+        xpos 30
+        ypos 24
+        spacing 30
         vbox:
-            xsize 660
-            spacing 12
-            text "Who did it, with what, and where?" size 40
-            text p["text"]["murder"] size 30 color "#f0d890"
-            text "Click a clue to strike it out." size 20 color "#8888aa"
-            $ found = vno_clues_found.get(pid, [])
-            for c in [x for x in p["clues"] if "at" not in x or x["id"] in found]:
-                $ struck = c["id"] in st["struck"]
-                textbutton p["text"][c["id"]]:
-                    action Function(vno_strike, pid, c["id"])
-                    text_size 28
-                    text_strikethrough struck
-                    text_color ("#777788" if struck else "#ffffff")
-                    text_hover_color "#f0d890"
-                    xsize 660
+            xsize 600
+            spacing 10
+            text vno_title(p) size 36
+            if "murder" in p["text"]:
+                text p["text"]["murder"] size 28 color "#f0d890"
+            text "Click a clue to strike it out." size 18 color "#8888aa"
+            viewport:
+                xsize 600
+                ysize 700
+                scrollbars "vertical"
+                mousewheel True
+                draggable True
+                vbox:
+                    spacing 6
+                    for c in [x for x in p["clues"] if "at" not in x or x["id"] in found]:
+                        $ struck = c["id"] in st["struck"]
+                        textbutton p["text"][c["id"]]:
+                            action Function(vno_strike, pid, c["id"])
+                            text_size 26
+                            text_strikethrough struck
+                            text_color ("#777788" if struck else "#ffffff")
+                            text_hover_color "#f0d890"
+                            xsize 570
         vbox:
-            spacing 2
-            hbox:
-                null width 200 height 74
-                for s in people:
-                    text nm[s] size 20 xsize 100 text_align 0.5 yalign 1.0
-                null width 14
-                for pl in places:
-                    text nm[pl] size 20 xsize 100 text_align 0.5 yalign 1.0
-            for w in weapons:
-                hbox:
-                    text nm[w] size 24 xsize 200 yalign 0.5
-                    for s in people:
-                        use vno_cell(pid, p, s + "|" + w)
-                    null width 14
-                    for pl in places:
-                        use vno_cell(pid, p, w + "|" + pl)
-            null height 14
-            for pl in places:
-                hbox:
-                    text nm[pl] size 24 xsize 200 yalign 0.5
-                    for s in people:
-                        use vno_cell(pid, p, s + "|" + pl)
-            null height 18
+            spacing 10
+            viewport:
+                xsize 1220
+                ysize 800
+                scrollbars "both"
+                mousewheel True
+                draggable True
+                vbox:
+                    spacing 2
+                    hbox:
+                        null width hw
+                        for c in range(k - 1):
+                            for it in cats[c]["items"]:
+                                use vno_col_head(p, it, cs)
+                            null width gap
+                    for r in range(1, k):
+                        for it in cats[r]["items"]:
+                            hbox:
+                                use vno_row_head(p, it, hw, cs)
+                                for c in range(k - 1):
+                                    if c < r:
+                                        for citem in cats[c]["items"]:
+                                            use vno_cell(pid, p, citem + "|" + it, cs)
+                                    else:
+                                        null width (cs + 4) * n
+                                    null width gap
+                        null height gap
             hbox:
                 spacing 24
                 if p.get("hints", True):
                     textbutton "Hint" action Return("hint")
                 textbutton "Undo" action Function(vno_undo, pid) sensitive bool(st["history"])
                 textbutton "Clear" action Function(vno_clear, pid) sensitive bool(st["marks"])
-                textbutton "Accuse" action Return("accuse") text_color "#f0d890"
+                textbutton ("Accuse" if p.get("murder") else "Submit") action Return("accuse") text_color "#f0d890"
                 textbutton "Give up" action Return("giveup")
-            textbutton ("Auto-✗ after a ✓: " + ("on" if persistent.vno_auto_cross else "off")):
-                action ToggleField(persistent, "vno_auto_cross")
-                text_size 22
-                text_font "DejaVuSans.ttf"
+                textbutton ("Auto-✗ after a ✓: " + ("on" if persistent.vno_auto_cross else "off")):
+                    action ToggleField(persistent, "vno_auto_cross")
+                    text_size 22
+                    text_font "DejaVuSans.ttf"
 
-## The accusation: one choice of suspect, weapon and place. Returns {"suspect": .., "weapon": .., "place": ..}, or None for Back.
+## The accusation: one choice per category of the answer (suspect, weapon, place and, with a motive, why). Returns the picks, or None for Back.
 screen vno_accuse(p):
     modal True
     zorder 110
     default pick = {}
     $ nm = p["names"]
-    $ groups = [("suspect", "Who did it?", p["categories"][0]["items"]), ("weapon", "With what?", p["categories"][1]["items"]), ("place", "Where?", p["categories"][2]["items"])]
+    $ groups = [(c["key"], vno_ask(c["key"]), c["items"]) for c in p["categories"] if c["key"] in p["murder"]["answer"]]
     add Solid("#000000c8")
     frame:
         align (0.5, 0.5)
@@ -191,7 +242,7 @@ screen vno_accuse(p):
                                 text_size 30
             hbox:
                 spacing 40
-                textbutton "Accuse" action Return(dict(pick)) sensitive len(pick) == 3
+                textbutton "Accuse" action Return(dict(pick)) sensitive len(pick) == len(groups)
                 textbutton "Back" action Return(None)
 
 ## Plays one puzzle. Returns True for the right accusation, False when the player gives up.
@@ -208,15 +259,20 @@ label vno_puzzle_play(pid, p):
             $ vno_ps(pid)["hints"] += 1
             narrator "[vno_hint_text]"
         elif vno_action == "accuse":
-            call screen vno_accuse(p)
-            if isinstance(_return, dict) and _return:
-                $ vno_check = vno_play.check_accusation(p, _return)
+            $ vno_check = None
+            if p.get("murder"):
+                call screen vno_accuse(p)
+                if isinstance(_return, dict) and _return:
+                    $ vno_check = vno_play.check_accusation(p, _return)
+            else:
+                $ vno_check = vno_play.check_solution(p, vno_ps(pid)["marks"])
+            if vno_check is not None:
                 if vno_check["correct"]:
                     $ vno_result = True
                 else:
                     $ vno_ps(pid)["tries"] += 1
-                    $ vno_n_wrong = len(vno_check["wrong"])
-                    narrator "Not quite. [vno_n_wrong] of the three parts of that accusation are wrong."
+                    $ vno_wrong_text = vno_wrong_message(p, vno_check)
+                    narrator "[vno_wrong_text]"
                     if vno_limit and vno_ps(pid)["tries"] >= vno_limit:
                         narrator "That was the last chance."
                         $ vno_result = False

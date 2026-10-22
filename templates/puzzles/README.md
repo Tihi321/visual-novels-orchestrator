@@ -16,6 +16,10 @@ poc/puzzle_poc.rpy                  the proof of concept story: intro, a puzzle,
 poc/puzzle_poc_test.rpy             a Ren'Py test case (scripts/puzzle-poc.ts --selftest)
 ```
 
+## Kinds
+
+- `murdle`: 3x3 or 4x4 (`motive`: a fourth category; `attrs`: clues that point at an item by a trait). The grid is one generic staircase of cells for any number of categories; it scrolls when it is big.
+
 ## What a puzzle is
 
 Plain JSON-shaped data (no classes), so it goes to and from the engine as JSON and Ren'Py saves and rolls it back in `default` variables. Items are abstract ids (`s1`, `w2`, `p3`); `names` and `text` are a separate layer a model can rewrite without touching the logic.

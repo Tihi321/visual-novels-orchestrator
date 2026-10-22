@@ -1,6 +1,6 @@
-"""JSON in, JSON out, for the tests now and for the engine in phase 2.
+"""JSON in, JSON out, for the tests and for the engine (it runs this with the Ren'Py SDK's own Python).
 
-    python cli.py generate [--kind murdle] [--size 3] [--seed N] [--band easy|medium|hard]
+    python cli.py generate [--kind murdle|logic|knights|testimony] [--size N] [--seed N] [--band easy|medium|hard] [--motive] [--attrs]
     python cli.py solve < puzzle.json        unique, deducible, band, steps, score
     python cli.py check < {"puzzle": ..., "accusation": {...}, "marks": {...}}
     python cli.py check-text < {"puzzle": ..., "readBack": [...], "text": {...}}   does the prose mean the same clues?
@@ -23,9 +23,11 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     g = sub.add_parser("generate")
     g.add_argument("--kind", default="murdle")
-    g.add_argument("--size", type=int, default=3)
+    g.add_argument("--size", type=int, default=0)
     g.add_argument("--seed", type=int, default=1)
     g.add_argument("--band", default="medium")
+    g.add_argument("--motive", action="store_true")
+    g.add_argument("--attrs", action="store_true")
     sub.add_parser("solve")
     sub.add_parser("check")
     sub.add_parser("check-text")
@@ -33,7 +35,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     try:
         if args.cmd == "generate":
-            out = generate(args.kind, args.size, args.seed, args.band)
+            out = generate(args.kind, args.size or None, args.seed, args.band, motive=args.motive, attrs=args.attrs)
         elif args.cmd == "solve":
             out = solve(json.load(sys.stdin))
         elif args.cmd == "check-text":

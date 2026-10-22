@@ -4,7 +4,7 @@ import { aliasIndex } from '../vn/aliases'
 import { ambId, sfxId } from '../vn/ids'
 import { renpyPlainString, renpyString, renpyText, slugify } from './escape'
 import { bgImageName, cgImageName, pickColor, spriteImageName, type UsedImages } from './images'
-import { emitPuzzleData, puzzleStrings } from './puzzles'
+import { emitPuzzleData, playedPuzzles, puzzlePics, puzzleStrings } from './puzzles'
 import { assignSlots, type Slot, type StageCues } from './stage'
 
 /**
@@ -425,6 +425,13 @@ export function emitScripts(inp: EmitInput): EmitResult {
   for (const [label, v] of table.extra) warnings.push(`speaker "${label}" is not in the bible; uses the ad hoc character ${v}`)
 
   const puzzleData = emitPuzzleData(book)
+  // the pictures in the headers of a puzzle: the sprites and inserts must be made even when no beat shows them
+  for (const pz of playedPuzzles(book))
+    for (const [item, l] of Object.entries(pz.links ?? {})) {
+      if (!puzzlePics(book, pz)[item]) continue
+      if (l.type === 'character') used.sprites.set(`${l.key}/neutral`, { charKey: l.key, expression: 'neutral' })
+      else if (l.type === 'image') used.cgs.set(l.key, book.images?.find((i) => i.key === l.key)?.display ?? 'insert')
+    }
   if (puzzleData) files['vno_puzzles_data.rpy'] = puzzleData
   files['characters.rpy'] = emitCharacters(book, inp.editions ?? [], voiceOn, !!inp.lightTheme, !!inp.uniformNames)
 

@@ -8,6 +8,7 @@ import { z } from 'zod'
 
 export const PUZZLE_FORMAT = 1
 export const PUZZLE_KINDS = ['murdle'] as const
+export type PuzzleKind = (typeof PUZZLE_KINDS)[number]
 export const PUZZLE_BANDS = ['easy', 'medium', 'hard'] as const
 
 const itemId = z.string().regex(/^[a-z][a-z0-9]*$/, 'an item id such as s1, w2, p3')
@@ -17,7 +18,9 @@ export const puzzleClueSchema = z.object({
   /** `is`: a and b go together. `not`: they do not. `either`: a goes with b[0] or b[1] (two items of one category). */
   type: z.enum(['is', 'not', 'either']),
   a: itemId,
-  b: z.union([itemId, z.tuple([itemId, itemId])])
+  b: z.union([itemId, z.tuple([itemId, itemId])]),
+  /** Items the prose points at by a trait (`descr`) instead of by name: "the heavy weapon". */
+  descr: z.array(itemId).optional()
 })
 export type PuzzleClue = z.infer<typeof puzzleClueSchema>
 
@@ -39,15 +42,26 @@ export const puzzleCoreSchema = z.object({
   size: z.number().int().min(3).max(5),
   seed: z.number().int().optional(),
   band: z.enum(PUZZLE_BANDS).optional(),
-  categories: z.array(z.object({ key: z.string(), items: z.array(itemId).min(3) })).min(3),
+  categories: z.array(z.object({ key: z.string(), items: z.array(itemId).min(3) })).min(3).max(4),
+  /** Item id -> how to point at it by a trait (suspects, weapons and places): the attribute clues use these. */
+  descr: z.record(z.string(), z.string()).optional(),
   /** Person -> { weapon, place } (one item of every other category, each used once). */
   solution: z.record(z.string(), z.record(z.string(), itemId)),
   clues: z.array(puzzleClueSchema).min(1),
-  murder: z.object({ place: itemId, answer: z.object({ suspect: itemId, weapon: itemId, place: itemId }) }),
+  murder: z.object({ place: itemId, answer: z.object({ suspect: itemId, weapon: itemId, place: itemId, motive: itemId.optional() }) }),
   difficulty: z.object({ steps: z.number().int(), score: z.number(), rules: z.record(z.string(), z.number()) }),
   steps: z.array(puzzleStepSchema)
 })
 export type PuzzleCore = z.infer<typeof puzzleCoreSchema>
+
+/** Every id of a core that needs a name: the items of its categories. */
+export const puzzleEntityIds = (core: PuzzleCore): string[] => core.categories.flatMap((c) => c.items)
+
+/** Every id of a core that needs prose: its clues, and `murder` (the murder note). */
+export const puzzleTextIds = (core: PuzzleCore): string[] => [...core.clues.map((c) => c.id), 'murder']
+
+/** The ids of the things the player finds in the story (`clueAt`): a puzzle's clues. */
+export const puzzleFindableIds = (core: PuzzleCore): string[] => core.clues.map((c) => c.id)
 
 /** What the python CLI returns: the core plus the canonical English flavour. */
 export const puzzleGeneratedSchema = puzzleCoreSchema.extend({

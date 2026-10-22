@@ -51,7 +51,15 @@ def truth(p):
 def check_accusation(p, accusation):
     """{correct, wrong}: `wrong` lists the parts (suspect, weapon, place) that are not the answer."""
     answer = answer_of(p)
-    wrong = [k for k in ("suspect", "weapon", "place") if accusation.get(k) != answer[k]]
+    wrong = [k for k in answer if accusation.get(k) != answer[k]]
+    return {"correct": not wrong, "wrong": wrong}
+
+
+def check_solution(p, marks):
+    """For puzzles without a question (logic grids): the player's grid is right when every pair that goes together is marked yes and no
+    pair is marked yes that does not. `wrong` lists the cells at fault."""
+    t = truth(p)
+    wrong = [c for c, v in t.items() if (marks.get(c) == "yes") != (v == "yes")]
     return {"correct": not wrong, "wrong": wrong}
 
 

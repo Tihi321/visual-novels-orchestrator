@@ -57,11 +57,13 @@ async function main(): Promise<void> {
     if (!l.ok) process.exitCode = 1
   }
   if (selftest) {
-    const r = await runRenpy(sdkPath, [built.gameDir, 'test', 'puzzle_smoke'], { timeoutMs: 180_000 })
-    const out = `${r.stdout}\n${r.stderr}`
-    const passed = /Status:\s+PASSED/.test(out)
-    console.log(passed ? 'selftest: passed' : `selftest: FAILED\n${out.slice(-3000)}`)
-    if (!passed) process.exitCode = 1
+    for (const name of ['puzzle_smoke', 'puzzle_smoke_big']) {
+      const r = await runRenpy(sdkPath, [built.gameDir, 'test', name], { timeoutMs: 180_000 })
+      const out = `${r.stdout}\n${r.stderr}`
+      const passed = /Status:\s+PASSED/.test(out)
+      console.log(passed ? `selftest ${name}: passed` : `selftest ${name}: FAILED\n${out.slice(-3000)}`)
+      if (!passed) process.exitCode = 1
+    }
   }
   if (args.includes('--play')) {
     const r = run(built.gameDir, { sdkPath })

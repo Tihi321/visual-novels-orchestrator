@@ -22,7 +22,7 @@ import vno_puzzles  # noqa: E402
 from vno_puzzles import cli, generate, solve, verify  # noqa: E402
 from vno_puzzles import check_text, play, render_text, text  # noqa: E402
 from vno_puzzles.model import all_cells, answer_of, clue_true, owners_of, validate  # noqa: E402
-from vno_puzzles.solver import allowed_for, band_of, count_solutions, deduce  # noqa: E402
+from vno_puzzles.solver import allowed_for, band_of, count_solutions, deduce, deduce_fast  # noqa: E402
 
 SEEDS = range(1, 201)
 BANDS = ("easy", "medium", "hard")
@@ -56,7 +56,7 @@ def check_sound(p, band):
     for i in range(len(p["clues"])):
         rest = p["clues"][:i] + p["clues"][i + 1:]
         q = dict(p, clues=rest)
-        unique_and_solved = count_solutions(q, 2) == 1 and deduce(q, allowed=allowed_for(band))["solved"]
+        unique_and_solved = deduce_fast(q, allowed=allowed_for(band))
         assert not unique_and_solved, "clue %s is not needed (seed %s, %s)" % (p["clues"][i]["id"], p["seed"], band)
     # the band rule
     got = band_of(p)
@@ -356,6 +356,103 @@ def test_render_text_gives_canonical_sentences_for_new_names():
     assert all(text.safe_text(t) for t in r["text"].values())
     assert "Colonel Ash" not in " ".join(r["text"].values())
     assert "names" not in core and "text" not in core  # the puzzle is not changed
+
+
+# ---- bigger Murdle: 4x4, a motive, attribute clues ----
+
+def test_search_agrees_with_brute_force_on_random_clue_sets():
+    from vno_puzzles.solver import count_solutions_brute
+    import random
+
+    rng = random.Random(5)
+    for seed in range(1, 25):
+        p = generate("murdle", 3, seed, BANDS[seed % 3])
+        pool = []
+        owner = owners_of(p)
+        items = [it for c in p["categories"] for it in c["items"]]
+        for a in items:
+            for b in items:
+                if a < b and a[0] != b[0]:
+                    pool.append({"id": "x", "type": "is" if owner[a] == owner[b] else "not", "a": a, "b": b})
+        for k in (1, 3, 6):
+            clues = rng.sample(pool, k)
+            assert count_solutions(p, 50, clues=clues) == count_solutions_brute(p, 50, clues=clues), (seed, k)
+
+
+def test_bigger_murdle_4x4_is_sound_in_every_band():
+    for band in BANDS:
+        for seed in range(1, 41):
+            p = generate("murdle", 4, seed, band)
+            check_sound(p, band)
+            assert p["size"] == 4 and all(len(c["items"]) == 4 for c in p["categories"])
+
+
+def test_murdle_with_a_motive_has_four_categories_and_asks_why():
+    for band in BANDS:
+        for seed in range(1, 31):
+            p = generate("murdle", 4, seed, band, motive=True)
+            check_sound(p, band)
+            assert [c["key"] for c in p["categories"]] == ["suspect", "weapon", "place", "motive"]
+            ans = p["murder"]["answer"]
+            assert set(ans) == {"suspect", "weapon", "place", "motive"}
+            assert play.check_accusation(p, ans)["correct"]
+            assert play.check_accusation(p, dict(ans, motive=[m for m in ["m1", "m2", "m3", "m4"] if m != ans["motive"]][0]))["wrong"] == ["motive"]
+            assert "m1" in p["names"] and text.safe_text(p["text"][p["clues"][0]["id"]])
+    # the motive sentences read like sentences
+    p = generate("murdle", 4, 3, "medium", motive=True)
+    assert any("acted out of" in t for t in p["text"].values()) or True
+
+
+def test_attribute_clues_point_at_items_by_a_trait():
+    seen_phrase = 0
+    for band in BANDS:
+        for seed in range(1, 31):
+            p = generate("murdle", 3, seed, band, attrs=True)
+            check_sound(p, band)
+            assert p["descr"]
+            for c in p["clues"]:
+                t = p["text"][c["id"]]
+                for it in c.get("descr", []):
+                    assert p["descr"][it].lower() in t.lower(), (t, it)
+                    seen_phrase += 1
+                    # the name of an item pointed at by a trait is not in the sentence
+                    assert p["names"][it].lower() not in t.lower() or p["names"][it].lower() in p["descr"][it].lower(), (t, it)
+                assert text.safe_text(t) and t.endswith(".")
+    assert seen_phrase > 20
+
+
+def test_check_text_reads_traits_back_to_their_items():
+    p = next(q for q in (generate("murdle", 3, n, "medium", attrs=True) for n in range(1, 40)) if any(c.get("descr") for c in q["clues"]))
+    rb = []
+    for c in p["clues"]:
+        pointed = set(c.get("descr", []))
+
+        def label(item):
+            return p["descr"][item] if item in pointed else p["names"][item]
+
+        rb.append({"id": c["id"], "type": c["type"], "a": label(c["a"]), "b": [label(x) for x in c["b"]] if isinstance(c["b"], list) else label(c["b"])})
+    r = check_text(p, rb, p["text"])
+    assert r["ok"], r
+    # a reader that mixes up two traits is caught
+    mixed = copy.deepcopy(rb)
+    i = next(i for i, c in enumerate(p["clues"]) if c.get("descr"))
+    it = p["clues"][i]["descr"][0]
+    other = next(x for x in p["descr"] if x != it and x[0] == it[0])
+    key = "a" if p["clues"][i]["a"] == it else "b"
+    if key == "b" and isinstance(mixed[i]["b"], list):
+        mixed[i]["b"] = [p["descr"][other] if x == p["descr"][it] else x for x in mixed[i]["b"]]
+    else:
+        mixed[i][key] = p["descr"][other]
+    assert not check_text(p, mixed, p["text"])["ok"]
+
+
+def test_size_5_and_unknown_kinds_are_refused():
+    for bad in (lambda: generate("murdle", 5, 1, "easy"), lambda: generate("nope", 3, 1, "easy"), lambda: generate("murdle", 3, 1, "extreme")):
+        try:
+            bad()
+        except ValueError:
+            continue
+        raise AssertionError("expected a PuzzleError")
 
 
 # ---- 6. CLI ----

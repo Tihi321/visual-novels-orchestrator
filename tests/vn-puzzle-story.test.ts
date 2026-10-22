@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { deriveAssets } from '../src/engine/assets/derive'
-import { puzzleCoreSchema, puzzleEntrySchema } from '../src/shared/puzzle'
+import { puzzleCoreSchema, puzzleEntityIds, puzzleEntrySchema, puzzleTextIds } from '../src/shared/puzzle'
 import type { PuzzleEntry } from '../src/shared/puzzle'
 import { applyStoryOps, buildBook, storyInputSchema, syncEdition, validateBook } from '../src/engine/vn/story'
 import type { StoryOp } from '../src/engine/vn/story'
@@ -157,5 +157,31 @@ describe('editions and assets', () => {
     const plain = deriveAssets(story().book, settings()).some((a) => a.id === 'cg_rope')
     expect(plain).toBe(false)
     expect(deriveAssets(withPuzzle({ links: { w1: { type: 'image', key: 'rope' } } }), settings()).some((a) => a.id === 'cg_rope')).toBe(true)
+  })
+})
+
+describe('a bigger Murdle (4x4, a motive, attribute clues)', () => {
+  const big = JSON.parse(readFileSync(path.resolve(__dirname, 'fixtures', 'puzzles', 'murdle-4x4-motive-attrs-2.json'), 'utf8')) as Record<string, unknown> & { names: Record<string, string>; text: Record<string, string> }
+  const bigCore = puzzleCoreSchema.parse(big)
+
+  it('the core parses with four categories, the descr phrases, clues that point at items by a trait and a motive in the answer', () => {
+    expect(bigCore.size).toBe(4)
+    expect(bigCore.categories.map((c) => c.key)).toEqual(['suspect', 'weapon', 'place', 'motive'])
+    expect(bigCore.descr).toMatchObject({ s1: expect.any(String), w1: expect.any(String) })
+    expect(bigCore.clues.some((c) => (c.descr ?? []).length > 0)).toBe(true)
+    expect(bigCore.murder.answer.motive).toMatch(/^m\d$/)
+    expect(puzzleEntityIds(bigCore)).toHaveLength(16)
+    expect(puzzleTextIds(bigCore)).toEqual([...bigCore.clues.map((c) => c.id), 'murder'])
+    expect(() => puzzleCoreSchema.parse({ ...big, size: 6 })).toThrow()
+  })
+
+  it('a book accepts it and validates every name and clue text', () => {
+    const { book } = story()
+    const entryBig = puzzleEntrySchema.parse({ key: 'dinner', kind: 'murdle', data: bigCore, names: big.names, text: big.text, verified: { unique: true, deducible: true, score: bigCore.difficulty.score, textChecked: true, by: 'test' } })
+    const b = vnBookSchema.parse({ ...book, puzzles: [entryBig] })
+    expect(validateBook(b).errors).toEqual([])
+    const missing = { ...big.names }
+    delete missing.m3
+    expect(validateBook(vnBookSchema.parse({ ...book, puzzles: [{ ...entryBig, names: missing }] })).errors.join(' ')).toMatch(/item m3 has no name/)
   })
 })
