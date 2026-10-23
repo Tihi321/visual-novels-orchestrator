@@ -1,5 +1,18 @@
 # VNO-20 and VNO-21 changelog
 
+## 2026-10-23 (later still): VNO-25 to VNO-27, found by the hub's puzzle production
+
+Same branch `VNO-20-23_fixes`. Committed, not pushed. Evidence: the hub's `runs/the-winter-garden-clock.md` "Found" and `.claude/temp/hub10-p5/`.
+
+| Ticket | Commit | Files | What changed |
+|---|---|---|---|
+| VNO-25 | 2630bd7 | `templates/puzzles/game/python-packages/vno_puzzles/testimony.py`, `tests/puzzles/test_testimony.py`, `tests/fixtures/puzzles/testimony-medium-4.json` | New `repeats(p)` finds repeated statements, press lines that only repeat, and evidence items with the same fact. The generator gives each statement, press line and evidence item its own key and re-rolls a core that repeats; two new vocabulary keys (`window`, `shoes`). Tested over 107 seeds per band, including the production's seeds. |
+| VNO-26 | bf7f6de | `templates/puzzles/game/python-packages/vno_puzzles/knights.py`, `tests/puzzles/test_knights.py` | Every Knights and Knaves speaker gets a statement (a silent one gets a true one before minimising, the minimiser never drops a speaker's last statement, a final re-roll guard). Seed 517353379 was silent before (1101 of 1331 sampled puzzles had a silent speaker). Uniqueness and deduction proofs unchanged. |
+| VNO-27 | 9201770 | `docs/mcp-guide.md`, `docs/protocol.md` | `CLUE:` ids per puzzle kind (Murdle/logic `c1..` + `murder`/`intro`; Knights and Knaves `intro`, `t1..`; testimony `e1..`, `intro`). A K&K `CLUE:` line only replaces a statement's words (all show from the start); `t1.press` cannot be a `CLUE:` id. |
+| docs | addc9ba | `ROADMAP.md`, `plan.md`, `tests/renpy-puzzle-emit.test.ts` | Done lines; the emit test reads the solution from the regenerated fixture instead of hard-coded ids. |
+
+Verification: puzzle library tests with the SDK's Python 3.12.7 (testimony 14, knights 13, vno_puzzles 26, logic), `yarn typecheck`, `yarn lint` pass. Full `yarn test` after the last commit (run by the orchestrator while three productions loaded the machine): 915 of 916; the failing `tests/scheduler.test.ts` "runs a job end to end" passed 3 of 3 when run alone and the branch does not touch the scheduler: a timing flake under load. Not run: `renpy lint` (no Ren'Py output changed); the production's puzzles were made on master (before this fix).
+
 ## 2026-10-23 (later): VNO-22 to VNO-24, found by the hub's HUB-07 live run
 
 Same branch, renamed `VNO-20-23_fixes`. Committed, not pushed.
