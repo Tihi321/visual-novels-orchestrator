@@ -36,6 +36,8 @@ export const comfyConfigSchema = z.object({
   requestTimeoutMs: z.number().int().positive().default(REQUEST_TIMEOUT_MS),
   jobTimeoutMs: z.number().int().positive().default(1_800_000),
   pollIntervalMs: z.number().int().positive().default(4000),
+  /** How long ComfyUI may stay unreachable while a job waits before the job fails. */
+  unreachableTimeoutMs: z.number().int().positive().default(300_000),
   freeBeforeDispatch: z.boolean().default(false),
   /** Engines offered by the app; empty means all. */
   enabledEngines: z.array(z.string()).default([]),
@@ -237,28 +239,69 @@ export type ComfyOutputs = Record<string, { images?: OutputItem[]; audio?: Outpu
 export interface WaitOptions {
   timeoutMs: number
   pollMs?: number
+  /** Fail when ComfyUI has not answered for this long (default 5 minutes). */
+  unreachableMs?: number
   signal?: AbortSignal
   onPoll?: (info: { status: string; elapsedMs: number }) => void
+}
+
+/** ComfyUI answers but knows nothing of the prompt: it is neither queued, running nor in the history (e.g. after a crash and restart). */
+export class LostPromptError extends Error {
+  constructor(readonly promptId: string) {
+    super(`ComfyUI lost job ${promptId}: it is not in the queue or the history (ComfyUI probably crashed and restarted)`)
+    this.name = 'LostPromptError'
+  }
 }
 
 /**
  * Polls `/history/<id>` until the job reports outputs. A job that errored, was interrupted, or finished with no
  * outputs throws: a silent empty result is the failure mode this client exists to avoid.
  */
-export async function waitForOutputs(lane: string, promptId: string, { timeoutMs, pollMs = 4000, signal, onPoll }: WaitOptions): Promise<ComfyOutputs> {
+export async function waitForOutputs(lane: string, promptId: string, { timeoutMs, pollMs = 4000, unreachableMs = 300_000, signal, onPoll }: WaitOptions): Promise<ComfyOutputs> {
   const started = Date.now()
   const deadline = started + timeoutMs
   let lastStatus = ''
+  let downSince = 0 // when ComfyUI first stopped answering, 0 while it answers
+  type History = Record<string, { status?: { status_str?: string; messages?: unknown[] }; outputs?: ComfyOutputs } | undefined>
+  const unreachable = () => {
+    downSince ||= Date.now()
+    if (Date.now() - downSince > unreachableMs) {
+      throw new Error(`ComfyUI at ${lane} has not answered for ${Math.round((Date.now() - downSince) / 1000)}s while waiting for job ${promptId}; giving up`)
+    }
+  }
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new Error(`ComfyUI job ${promptId} cancelled`)
     await new Promise((resolve) => setTimeout(resolve, pollMs))
-    let history: Record<string, { status?: { status_str?: string; messages?: unknown[] }; outputs?: ComfyOutputs } | undefined>
+    let history: History
     try {
       history = await fetchJson(`${lane}/history/${promptId}`, { timeoutMs: 15000 })
+      downSince = 0
     } catch {
-      continue // a transient poll failure is not a job failure
+      unreachable() // a transient poll failure is not a job failure, a long outage is
+      continue
     }
-    const entry = history?.[promptId]
+    let entry = history?.[promptId]
+    if (!entry) {
+      // Not in the history: it is queued or running, or ComfyUI crashed and restarted and forgot it.
+      let inQueue: boolean
+      try {
+        const q = await fetchJson<{ queue_running?: unknown[][]; queue_pending?: unknown[][] }>(`${lane}/queue`, { timeoutMs: 15000 })
+        inQueue = [...(q?.queue_running ?? []), ...(q?.queue_pending ?? [])].some((item) => Array.isArray(item) && item[1] === promptId)
+      } catch {
+        unreachable()
+        continue
+      }
+      if (!inQueue) {
+        // It may have finished between the two calls: look at the history once more before calling it lost.
+        try {
+          entry = ((await fetchJson(`${lane}/history/${promptId}`, { timeoutMs: 15000 })) as History)?.[promptId]
+        } catch {
+          unreachable()
+          continue
+        }
+        if (!entry) throw new LostPromptError(promptId)
+      }
+    }
     if (!entry) {
       onPoll?.({ status: 'queued', elapsedMs: Date.now() - started })
       continue
@@ -441,15 +484,25 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
   }
 
   async function runGraph(lane: string, graph: Graph, req: { onProgress?: ComfyRequest['onProgress']; signal?: AbortSignal }, preferNode?: string) {
-    const promptId = await postPrompt(lane, graph)
-    req.onProgress?.({ stage: 'queued', message: `queued ${promptId}` })
-    const outputs = await waitForOutputs(lane, promptId, {
-      timeoutMs: config.jobTimeoutMs,
-      pollMs: config.pollIntervalMs,
-      signal: req.signal,
-      onPoll: (p) => req.onProgress?.({ stage: 'running', message: `${p.status} ${Math.round(p.elapsedMs / 1000)}s` })
-    })
-    return { promptId, collected: collectOutputs(outputs, preferNode) }
+    // A prompt ComfyUI lost (crash and restart) is submitted once more; a second loss fails the job.
+    for (let attempt = 1; ; attempt++) {
+      const promptId = await postPrompt(lane, graph)
+      req.onProgress?.({ stage: 'queued', message: attempt === 1 ? `queued ${promptId}` : `queued again ${promptId}` })
+      try {
+        const outputs = await waitForOutputs(lane, promptId, {
+          timeoutMs: config.jobTimeoutMs,
+          pollMs: config.pollIntervalMs,
+          unreachableMs: config.unreachableTimeoutMs,
+          signal: req.signal,
+          onPoll: (p) => req.onProgress?.({ stage: 'running', message: `${p.status} ${Math.round(p.elapsedMs / 1000)}s` })
+        })
+        return { promptId, collected: collectOutputs(outputs, preferNode) }
+      } catch (error) {
+        if (!(error instanceof LostPromptError)) throw error
+        if (attempt >= 2) throw new Error(`${error.message}; it was submitted again once and was lost again, so the job failed. Check the ComfyUI window and restart it.`, { cause: error })
+        req.onProgress?.({ stage: 'queued', message: `${error.message}; submitting it again` })
+      }
+    }
   }
 
   async function finish(lane: string, promptId: string, kind: EngineKind, items: { images: OutputItem[]; audio: OutputItem[] }, req: ComfyRequest, seed: number): Promise<ComfyResult> {

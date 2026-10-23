@@ -11,8 +11,10 @@ export function readBackTask(p: Pick<PuzzleEntry, 'data'>, words: { names: Recor
     return [
       'Read these statements of a Knights and Knaves puzzle (knights always tell the truth, knaves always lie) and write each one back as structured data. Use only the names in the list; do not guess what is not said.',
       names,
+      `intro: ${words.text.intro ?? '(missing)'}`,
       ...d.statements.map((s) => `${s.id}: ${words.text[s.id] ?? '(missing)'}`),
-      'Answer with JSON: [{"id": "t1", "speaker": "<a name>", "claim": <claim>}] where a claim is one of: {"type": "knight" | "knave", "who": "<name>"} ("X is a knight"), {"type": "same" | "diff", "a": "<name>", "b": "<name>"} (same kind / different kinds), {"type": "some_knave" | "all_knight", "of": ["<name>", ...]} ("at least one of ... is a knave" / "all of ... are knights"), {"type": "exactly", "k": <number>, "of": [...]} ("exactly k of ... are knights"), {"type": "not", "c": <claim>}, {"type": "and" | "or", "a": <claim>, "b": <claim>}. "Of us" means every speaker: list every name.'
+      'First the intro: it says who always tells the truth and who always lies, in the words of this story. State that rule back as {"id": "intro", "truthTellers": "<the words of the intro for those who always tell the truth>", "liars": "<the words of the intro for those who always lie>"}, copying the words as written. In the claims below, a knight is one who always tells the truth and a knave one who always lies, whatever the story calls them.',
+      'Then the statements. Answer with JSON: [{"id": "intro", ...}, {"id": "t1", "speaker": "<a name>", "claim": <claim>}] where a claim is one of: {"type": "knight" | "knave", "who": "<name>"} ("X is a knight"), {"type": "same" | "diff", "a": "<name>", "b": "<name>"} (same kind / different kinds), {"type": "some_knave" | "all_knight", "of": ["<name>", ...]} ("at least one of ... is a knave" / "all of ... are knights"), {"type": "exactly", "k": <number>, "of": [...]} ("exactly k of ... are knights"), {"type": "not", "c": <claim>}, {"type": "and" | "or", "a": <claim>, "b": <claim>}. "Of us" means every speaker: list every name.'
     ].join('\n')
   }
   if (d.kind === 'testimony') {

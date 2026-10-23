@@ -35,6 +35,20 @@ describe('the puzzle lines of a script', () => {
     expect(r.uncertain.filter((u) => u.kind === 'speaker')).toEqual([])
   })
 
+  it('an EVIDENCE picture is shown with its line and hidden at the next beat, whatever the puzzles are (VNO-30)', () => {
+    const r = parse(
+      ['SCENE: The kitchen, evening', 'HARTLEY: Look.', 'EVIDENCE: pocket_watch: A pocket watch, stopped at nine.', 'HARTLEY: Hm.', 'EVIDENCE: brass_glove: A brass glove.', 'CG: the moon', 'HARTLEY: Night.', 'SCENE: The yard, night', 'EVIDENCE: ninth_key: A key.'].join('\n')
+    )
+    const [kitchen, yard] = r.scenes
+    expect(kitchen!.beats.map((b) => b.image)).toEqual([undefined, 'pocket_watch', null, 'brass_glove', 'moon'])
+    expect(kitchen!.beats).toHaveLength(5)
+    // the last beat of a scene is not followed by a hide: the end of the scene clears it
+    expect(yard!.beats.map((b) => b.image)).toEqual(['ninth_key'])
+    // an INSERT line right before the evidence line keeps its own picture
+    const own = parse(['SCENE: The kitchen, evening', 'INSERT: a torn letter', 'EVIDENCE: pocket_watch: A pocket watch.', 'HARTLEY: Hm.'].join('\n'))
+    expect(own.scenes[0]!.beats.map((b) => b.image)).toEqual(['torn_letter', undefined])
+  })
+
   it('a PUZZLE line without a kind, bold keywords, and a speaker that is not called CLUE', () => {
     const r = parse(['SCENE: The kitchen, evening', '**PUZZLE:** dinner', '**CLUE:** dinner/c1: Not the rope.'].join('\n'))
     expect(r.puzzleLines.puzzles[0]).toMatchObject({ key: 'dinner', kind: null })

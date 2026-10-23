@@ -501,7 +501,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       const refs = a.kind === 'sprite' || a.kind === 'cg' ? (a.refs ?? []) : []
       const sheets = refs.flatMap((r) => generated.get(r) ?? [])
       const otherSheet = refs.length ? (await svc.activeGenerateJobs(slug, refs)).filter((j) => j.data.round !== run).map((j) => j.id) : []
-      const id = await svc.enqueue(slug, svc.generateTask(settings, a), a.id, run, { depends_on: [...sheets, ...otherSheet], body: { force: !!body.force }, label: `generate ${a.id}`, priority, max_attempts: svc.maxAttempts(settings, a) })
+      const id = await svc.enqueue(slug, svc.generateTask(settings, a), a.id, run, { depends_on: [...sheets, ...otherSheet], body: { force: !!body.force }, label: `generate ${a.id}`, priority, max_attempts: svc.maxAttempts(settings, a), lane: svc.generateLane(settings, a) })
       generated.set(a.id, id)
       all.push(id)
       if (reviewOn && IMAGE_KINDS.has(a.kind)) all.push(await svc.enqueue(slug, TASKS.review, a.id, run, { depends_on: [id], vision: true, label: `review ${a.id}`, priority }))

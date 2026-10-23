@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -236,6 +236,28 @@ describe('reader', () => {
     expect(await listBooks(join(dir, 'nothing'))).toEqual([])
   })
 
+  it('VNO-35: a title the person fixed in brief.md (such as one ending in "(VN)") is the title; without title_fixed the book.md title stays', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'vno-title-'))
+    try {
+      const make = async (name: string, brief: string | null) => {
+        await cp(join(books, 'linear-en'), join(root, 'books', name), { recursive: true })
+        const md = join(root, 'books', name, 'book.md')
+        await writeFile(md, (await readFile(md, 'utf8')).replace(/^title: .*$/m, 'title: The Lighthouse That Kept Lists'))
+        if (brief !== null) await writeFile(join(root, 'books', name, 'brief.md'), brief)
+      }
+      await make('fixed', '---\nkind: brief\ntitle: The Lighthouse That Kept Lists (VN)\ntitle_fixed: true\n---\n')
+      await make('free', '---\nkind: brief\ntitle: Something Else\ntitle_fixed: false\n---\n')
+      await make('nobrief', null)
+      for (const [name, title] of [['fixed', 'The Lighthouse That Kept Lists (VN)'], ['free', 'The Lighthouse That Kept Lists'], ['nobrief', 'The Lighthouse That Kept Lists']] as const) {
+        expect((await readBookFolder(join(root, 'books', name))).book.title).toBe(title)
+        expect((await listBooks(root)).find((b) => b.path.endsWith(name))!.title).toBe(title)
+      }
+      expect((await importBook(join(root, 'books', 'fixed'))).book.title).toBe('The Lighthouse That Kept Lists (VN)')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('reads a bare folder', async () => {
     const raw = await readBookFolder(join(books, 'linear-hr'))
     expect(raw.chapters.map((c) => c.n)).toEqual([1, 2, 3])
@@ -367,15 +389,34 @@ describe('media cue lines', () => {
     expect(p.warnings).toEqual([])
   })
 
-  it('a CG or insert gets the characters whose name or alias is in its cue text (at most 3, in order); none when nobody is named', () => {
+  it('a CG gets the characters whose name or alias is in its cue text (at most 3, in order); none when nobody is named; an insert never does', () => {
     const b = parseBible('## Characters\n- **Mara**: A girl. Aliases: the red cloak. Voice: soft\n- **Tomas**: A man.\n- **Dr Vey**: A doctor.\n- **Ana**: A cook.\n\n## Places\n- **Hall**: A hall.\n')
     const p = parseChapterScript('SCENE: The hall, night\nA quiet hall.\nCG: Tomas and the red cloak stand by Dr. Vey and Ana\nMARA: One.\nINSERT: A torn letter signed Ana\nMARA: Two.\nCG: Marathon runners in the street\nMARA: Three.\n', { chapter: 1, bible: b })
     const key = (name: string) => b.characters.find((c) => c.name === name)!.key
     expect(p.images).toHaveLength(3)
     expect(p.images[0]!.characters).toEqual([key('Tomas'), key('Mara'), key('Dr Vey')])
-    expect(p.images[1]!.characters).toEqual([key('Ana')])
     expect(p.images[1]).toMatchObject({ display: 'insert' })
+    expect(p.images[1]).not.toHaveProperty('characters')
     expect(p.images[2]).not.toHaveProperty('characters')
+  })
+
+  it('VNO-32: a name in a possessive that names a place or thing, or in a heading on a document, does not put the character in the CG', () => {
+    const b = parseBible('## Characters\n- **Mara**: A girl.\n- **Ivka**: A woman.\n- **Dino**: A man.\n\n## Places\n- **Hall**: A hall.\n')
+    const chars = (text: string) => parseChapterScript('SCENE: The hall, night\nA quiet hall.\nCG: ' + text + '\nMARA: One.\n', { chapter: 1, bible: b }).images[0]!.characters ?? []
+    const key = (name: string) => b.characters.find((c) => c.name === name)!.key
+    expect(chars("Mara and Dino in a dark alley looking up at a lit window behind Ivka's shop")).toEqual([key('Mara'), key('Dino')])
+    expect(chars('Dino filling Mara’s doorway')).toEqual([key('Dino')])
+    expect(chars("Mara holds Ivka's hand in the doorway")).toEqual([key('Mara'), key('Ivka')])
+    expect(chars('Mara reading a sheet headed FOR IVKA. ONE APOLOGY, IN PARTS.')).toEqual([key('Mara')])
+    expect(chars('Dino holds a sheet signed IVKA')).toEqual([key('Dino')])
+    expect(chars('Mara reads the card that says "For Dino" aloud')).toEqual([key('Mara')])
+    expect(chars("Ivka at Ivka's shop")).toEqual([key('Ivka')])
+  })
+
+  it('VNO-32: an INSERT never gets characters from its text', () => {
+    const b = parseBible('## Characters\n- **Mara**: A girl.\n- **Ivka**: A woman.\n\n## Places\n- **Hall**: A hall.\n')
+    const p = parseChapterScript('SCENE: The hall, night\nA quiet hall.\nINSERT: a teleprinter sheet headed FOR IVKA, signed Mara\nMARA: One.\n', { chapter: 1, bible: b })
+    expect(p.images).toEqual([{ key: expect.any(String), description: expect.any(String), display: 'insert' }])
   })
 
   it('CG: none, END CG and AMBIENCE: none clear; Croatian lines work; a reused description keeps one entry', () => {
@@ -389,9 +430,19 @@ describe('media cue lines', () => {
     expect(p.sounds).toEqual([{ key: 'zvono_zvoni', kind: 'sfx', description: 'Zvono zvoni' }])
   })
 
-  it('a cue with no beat after it in its scene is dropped with a warning', () => {
-    const p = parse('MARA: Hello.\nSFX: A door creaks')
-    expect(p.scenes[0]!.beats.every((b) => !('sfx' in b))).toBe(true)
-    expect(p.warnings).toEqual([expect.stringMatching(/a SFX line .* has no beat after it in its scene: dropped/)])
+  it('a CG or ambience with no beat after it in its scene is dropped with a warning', () => {
+    const p = parse('MARA: Hello.\nCG: A torn letter\nAMBIENCE: Wind')
+    expect(p.scenes[0]!.beats.every((b) => !('image' in b) && !('ambience' in b))).toBe(true)
+    expect(p.warnings).toEqual([expect.stringMatching(/a CG and AMBIENCE line .* has no beat after it in its scene: dropped/)])
+  })
+
+  it('VNO-33: a trailing SFX goes on the last beat of its scene, so its sound has a cue; when that beat has a sound already it is dropped with a warning', () => {
+    const p = parse('MARA: Hello.\nSFX: A door creaks\n---\nSCENE: The yard, day\nMARA: Bye.\nSFX: Rain\n')
+    expect(p.scenes[0]!.beats.at(-1)).toMatchObject({ sfx: 'door_creaks' })
+    expect(p.scenes[1]!.beats.at(-1)).toMatchObject({ sfx: 'rain' })
+    expect(p.warnings).toEqual([])
+    const q = parse('SFX: A bell\nMARA: Hello.\nSFX: A door creaks')
+    expect(q.scenes[0]!.beats.at(-1)).toMatchObject({ sfx: 'bell' })
+    expect(q.warnings).toEqual([expect.stringMatching(/a SFX line .* has no beat after it in its scene: dropped/)])
   })
 })

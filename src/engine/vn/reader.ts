@@ -59,6 +59,15 @@ async function readMd(path: string) {
 
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : fallback)
 
+/**
+ * The title of a book: `book.md`'s, unless the brief's title was fixed by the person (`title_fixed: true` in `brief.md`), which then wins. Scriptorium
+ * keeps a suffix the person chose, such as "(VN)", only in the brief; `book.md` has the plain title.
+ */
+export function titleOf(book: Record<string, unknown> | undefined, brief: Record<string, unknown> | undefined): unknown {
+  const fixed = brief?.title_fixed === true && typeof brief.title === 'string' && brief.title.trim() ? brief.title.trim() : ''
+  return fixed || book?.title
+}
+
 /** The books in a Scriptorium data folder that can become visual novels. */
 export async function listBooks(scriptoriumDataDir: string): Promise<BookSummary[]> {
   const root = join(scriptoriumDataDir, 'books')
@@ -72,6 +81,7 @@ export async function listBooks(scriptoriumDataDir: string): Promise<BookSummary
   for (const name of names.sort()) {
     const doc = await readMd(join(root, name, 'book.md'))
     if (!doc) continue
+    const brief = await readMd(join(root, name, 'brief.md'))
     const format = str(doc.data.format)
     const script = doc.data.script === true
     const isVn = (VN_FORMATS as readonly string[]).includes(format) && script
@@ -79,7 +89,7 @@ export async function listBooks(scriptoriumDataDir: string): Promise<BookSummary
     if (!isVn && !isProse) continue
     out.push({
       slug: str(doc.data.slug, name),
-      title: str(doc.data.title, name),
+      title: str(titleOf(doc.data, brief?.data), name),
       format,
       script,
       stage: str(doc.data.stage, 'unknown'),
@@ -93,6 +103,7 @@ export async function listBooks(scriptoriumDataDir: string): Promise<BookSummary
 /** Reads a book folder (Scriptorium layout) from anywhere into its raw parts. Missing files are tolerated. */
 export async function readBookFolder(path: string): Promise<RawBook> {
   const book = await readMd(join(path, 'book.md'))
+  const brief = await readMd(join(path, 'brief.md'))
   const bibleDoc = (await readMd(join(path, 'bible', 'bible.md'))) ?? (await readMd(join(path, 'bible.md')))
   const outline = await readMd(join(path, 'outline.md'))
   const cover = await readMd(join(path, 'cover-brief.md'))
@@ -129,7 +140,7 @@ export async function readBookFolder(path: string): Promise<RawBook> {
   return {
     path,
     slug: str(book?.data.slug, basename(path)),
-    book: book?.data ?? {},
+    book: { ...(book?.data ?? {}), ...(titleOf(book?.data, brief?.data) !== undefined ? { title: titleOf(book?.data, brief?.data) } : {}) },
     bible: bibleDoc?.body ?? '',
     outline: outline?.data ?? {},
     chapters,

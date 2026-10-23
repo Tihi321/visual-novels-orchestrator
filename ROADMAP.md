@@ -2,24 +2,38 @@
 
 What VN Studio still lacks on its own. Work that needs the other tools or a production run (live checks, Flow as a provider, starting the studios, puzzle visual novels) is planned in the creative hub (`C:\projects\Personal\creative-hub\ROADMAP.md`, tickets `HUB-NN` in its `.claude/tickets/`). Each item here is a ticket with a plan in `.claude/tickets/VNO-NN-<name>/plan.md`, done in the order below. Finished work is in `.claude/tickets/` (VNO-04 story tools and languages, VNO-05 client provider, VNO-06 end-screen restart, VNO-07 hand-drawn art, VNO-08 the hub roadmap fixes). Work on a ticket branch (`VNO-NN_<what>`) cut from `master`.
 
-## Where it stands (2026-10-22, master 6e25fa0)
+## Where it stands (2026-10-23, branch `VNO-20-23_fixes` on master 2f22db1)
 
-- **Merged:** VNO-04 to VNO-09. VNO-08 closed every VN Studio item of the hub roadmap. 717 tests pass; `renpy lint` is clean on all 9 integration cases (Ren'Py 8.5.3).
-- **On branch `VNO-17-18_roadmap-tasks` (not merged):** VNO-17 and VNO-18, test-only; 741 tests pass.
+- **Merged:** VNO-04 to VNO-19 (VNO-10 to VNO-19 in PR #11). VNO-08 closed every VN Studio item of the hub roadmap. `renpy lint` was clean on all 9 integration cases (Ren'Py 8.5.3) at VNO-08.
+- **On branch `VNO-20-23_fixes` (not merged):** VNO-20 to VNO-35, the findings of the hub runs; 930 tests pass, typecheck and lint clean.
 - **Verified live:** two *Clockless God* VNs (linear and with choices) built from Scriptorium scripts and played by the user; a pixel-art book with Claude as the client for the model roles; story tools with German, English and Arabic editions.
 - **Hub tasks that change or use this repo:** HUB-03 (VNO-08 live check), HUB-06 (CG characters at import, `VNO-16`), HUB-07 (Flow provider, `VNO-10`), HUB-08 (start the studios, `VNO-11`), HUB-10 (puzzle visual novels, `VNO-12` to `VNO-15`). Those numbers are reserved; this roadmap's tickets start at VNO-17.
 
 ## Tasks, in order
 
-Two findings from the hub run (2026-10-22), not planned yet (no plan file; each gets one in `.claude/tickets/VNO-NN-<name>/plan.md` when it is taken up):
+No open tasks.
 
-- **VNO-20: a lost ComfyUI prompt must not leave a job running.** A generate job stayed `running` after ComfyUI crashed natively and came back with an empty queue; `vno_stop_now` and `vno_resume_all` restarted it. Detect a lost prompt (the prompt id is no longer in the queue or the history) and fail the job or retry it.
-- **VNO-21: check that VNO-08's hr UI strings reach older projects on rebuild.** The `the-clockless-god-3` Croatian build had 46 of 87 screen strings still in English. Check that the Croatian UI strings VNO-08 added are written into a project made before them when it is rebuilt, and fix what is missing.
-
-New work gets the next free number (VNO-22), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
+New work gets the next free number (VNO-32), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
 
 ## Done
 
+- **VNO-25** (2026-10-23): testimony puzzles no longer repeat themselves. Each statement is about its own key, a press line adds a key of its own, and no key is shown by two pieces of evidence (so no "key log 2"); `repeats()` in `testimony.py` rejects and re-rolls a core that breaks this. Two more keys in the built-in vocabulary (`window`, `shoes`) so the hard band has enough. Seeds 933273182 and 11 to 66 reproduced the repeats; tests over 107 seeds per band plus the 200-seed proofs.
+- **VNO-26** (2026-10-23): every Knights and Knaves speaker has a statement (seed 517353379, 3 speakers, left one silent; 1101 of 1331 sampled puzzles had a silent speaker). A silent speaker gets a true statement before minimising, and minimising keeps each speaker's last statement.
+- **VNO-27** (2026-10-23): `docs/mcp-guide.md` (import) lists the `CLUE:` ids per kind (Murdle and logic `c1`.. with `murder` or `intro`, Knights and Knaves `intro` and `t1`.., a testimony's `e1`.. and `intro`) and how a chapter may spread them; one line in `docs/protocol.md`.
+- **VNO-28** (2026-10-23): Flow image jobs no longer wait behind a ComfyUI book. A job can name a `lane`; a laned job takes no slot of its agent and waits only for the same lane. Flow images and Flow Music use the `flow` lane; ComfyUI keeps the art director's slot (it shares the GPU with the local models). Jobs queued before the change have no lane.
+- **VNO-29** (2026-10-23): the Knights and Knaves `intro` is read back. `readBackTask` lists it and asks for its rule (`{id: "intro", truthTellers, liars}`, the story's words); `vno_puzzle_check_text` refuses a missing rule, words not in the intro, "knaves tell the truth", and an intro that disagrees with the statements that use its words.
+- **VNO-30** (2026-10-23): an `EVIDENCE:` picture is shown with its line in every book, not only with a testimony's court record: the beat gets the insert image, the next beat of the scene hides it (the scene end clears it), and the asset plan has `cg_<key>`.
+- **VNO-32** (2026-10-23): a CG's `characters` skip a name in a possessive that names a place or thing ("Ivka's shop") and a name in an all-caps heading, after headed/signed/titled, or in quotes on a document; "Ivka's hand" still counts. An `INSERT:` never gets characters from its text.
+- **VNO-33** (2026-10-23): a trailing `SFX:` goes on the scene's last beat (when it has no sound of its own) instead of being dropped with its sound left in the catalogue; `deriveAssets` plans `sfx_<key>` and `amb_<key>` for every listed sound. A trailing `CG:` or `AMBIENCE:` is still dropped with a warning.
+- **VNO-34** (2026-10-23): the prompt of a CG with two or three characters names each person with looks and a place left to right ("two different people ... on the left: Mara (...); on the right: Ivka (...)"), says which reference image is whom, and is used for the agent's prompt and the fallback prompt. A model can still merge two people.
+- **VNO-35** (2026-10-23): the import (and the book list) takes the title from `brief.md` when `title_fixed: true`; Scriptorium keeps a chosen suffix such as "(VN)" only in the brief, `book.md` has the plain title.
+- **VNO-31** (2026-10-23): the art plan keeps a place's description when a character name is in it. `withoutCharacterSentences` dropped a whole sentence that named a character ("a salon in the Moreau house: ..."), leaving "Warm golden light." or nothing; now only the colon or semicolon clauses that name one go.
+
+- **VNO-20** (2026-10-23): a ComfyUI prompt that is in neither `/queue` nor `/history` while the job waits (ComfyUI crashed and restarted) is submitted once more, then the job fails with a clear error instead of staying `running`; ComfyUI unreachable for more than `unreachableTimeoutMs` (default 300 s, `config/comfy.md`) fails the wait. Fake-client tests only; a live ComfyUI crash was not run.
+- **VNO-24** (2026-10-23): a Gemini 429 whose retry time (`retry in 21h21m47.5s`, `retry in 45s`, `retryDelay`) is longer than the retry schedule and 5 minutes is a daily quota: that clip and the remaining clips of the job fail at once without more Flow calls, with one message that gives the reset time. Shorter retry times retry as before; clips already made are kept.
+- **VNO-22** (2026-10-23): `flow_status` with `chrome_running: false` is an unknown sign-in (`signedIn: null`, no hint), no longer "signed out"; flow-music-mcp opens Chrome on the first real call, so the generate pre-check goes on. A real sign-out still fails fast.
+- **VNO-23** (2026-10-23): `seed/config/studios.md` had a form feed in `flowRepo` (`C:\projects\Personal<FF>low-music-mcp`); fixed. No other seed file had control characters. A test checks the seed files; unedited data copies are refreshed by the seed hashes at the next start (tested). A data copy that was edited stays as it is.
+- **VNO-21** (2026-10-23): not a stale-project bug: a rebuild already refills the strings from the built-in table. The 46 English strings of the *Clockless God* build are Ren'Py's stock help and sync screen strings, which the 49-string table never had. The Croatian table now has the translatable ones (33 more); other languages still lack them, the language-neutral ones (Enter, Ctrl, Tab, Page Up/Down, Test, page letters, date format) stay as they are. A rebuild in the app is still to do.
 - **VNO-17** (2026-10-22): unit tests for media cues and expression sets: story, import, derive, generate, Ren'Py output (snapshots `media-ch01.rpy`, `media-ch02.rpy`), cue precedence and the MCP tools. No bug found.
 - **VNO-18** (2026-10-22): the hand-mode test imports a sprite through `vno_asset_import` in both art styles; the flat-colour `key` cuts it out and ComfyUI is never called. 741 tests pass.
 - **VNO-16** (2026-10-22): a `CG:` or `INSERT:` image from an imported script gets `characters`: the bible characters whose name or alias is in the cue text (at most 3, in text order), so the art director has their looks and sheets. No match leaves it unset.

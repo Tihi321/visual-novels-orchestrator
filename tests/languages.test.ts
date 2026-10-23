@@ -45,7 +45,8 @@ describe('the language table', () => {
 })
 
 describe('UI strings of the built-in languages', () => {
-  const hr = Object.keys(UI_STRINGS.hr!)
+  const hrAll = Object.keys(UI_STRINGS.hr!)
+  const hr = hrAll.slice(0, 49) // the core strings every language has; Croatian goes on with the help-screen ones
   const others = BUILTIN_LANGUAGES.filter((l) => l.code !== 'en')
 
   it('every built-in language except English has a table, and English has none', () => {
@@ -54,21 +55,31 @@ describe('UI strings of the built-in languages', () => {
     expect(languageInfo('en')?.ui).toBeUndefined()
     expect(Object.keys(UI_STRINGS).sort()).toEqual(others.map((l) => l.code).sort())
   })
-  it('each table has exactly the keys of the Croatian one, which are the template strings', () => {
+  it('each table has exactly the 49 core keys of the Croatian one, which are the template strings', () => {
     expect(hr).toHaveLength(49)
+    expect(hrAll.length).toBeGreaterThan(49)
     for (const k of ['Language', 'The End', 'Start again', 'Back to main menu', 'Page {}']) expect(hr).toContain(k)
-    for (const l of others) expect(Object.keys(l.ui!), l.code).toEqual(hr)
+    for (const l of others) expect(Object.keys(l.ui!), l.code).toEqual(l.code === 'hr' ? hrAll : hr)
   })
   it('keeps the placeholders and line breaks, and nothing that would break a Ren’Py string', () => {
     const BREAK = '\\n' // a backslash and an n, as in the template source
     for (const l of others) {
-      for (const [src, dst] of Object.entries(l.ui!)) {
+      for (const [src, dst] of Object.entries(l.ui!).slice(0, 49)) {
         const at = `${l.code}: ${src}`
         expect(dst.trim(), at).not.toBe('')
         expect(dst.includes('{}'), at).toBe(src.includes('{}'))
         expect(dst.split(BREAK).length, at).toBe(src.split(BREAK).length)
         expect(dst.replace('{}', '').replaceAll(BREAK, ''), at).not.toMatch(/["[\]{}%\\]/)
       }
+    }
+  })
+  it('the Croatian help-screen strings keep tags and line breaks and break no Ren’Py string', () => {
+    const tags = (t: string): string[] => t.match(/\{[^}]*\}/g) ?? []
+    for (const [src, dst] of Object.entries(UI_STRINGS.hr!).slice(49)) {
+      expect(dst.trim(), src).not.toBe('')
+      expect(tags(dst), src).toEqual(tags(src))
+      expect(dst.split('\\n').length, src).toBe(src.split('\\n').length)
+      expect(dst, src).not.toMatch(/["[\]%]/)
     }
   })
   it('is written in the script of the language (checked for the non-Latin ones)', () => {

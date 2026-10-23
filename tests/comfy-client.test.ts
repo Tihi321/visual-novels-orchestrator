@@ -164,6 +164,25 @@ describe('waitForOutputs', () => {
     await expect(waitForOutputs('http://x', 'p1', { timeoutMs: 30, pollMs: 5 })).rejects.toThrow(/did not finish/)
   })
 
+  it('fails a prompt that is in neither the queue nor the history, but not one still queued', async () => {
+    stubFetch((url) => (url.pathname === '/queue' ? json({ queue_running: [], queue_pending: [] }) : json({})))
+    await expect(waitForOutputs('http://x', 'p1', { timeoutMs: 1000, pollMs: 1 })).rejects.toThrow(/lost job p1/)
+    vi.unstubAllGlobals()
+    let polls = 0
+    stubFetch((url) => {
+      if (url.pathname === '/queue') return json({ queue_running: [], queue_pending: [[0, 'p1', {}]] })
+      polls++
+      return json(polls > 3 ? { p1: { status: { status_str: 'success' }, outputs: { 9: { images: [{ filename: 'a.png' }] } } } } : {})
+    })
+    const out = await waitForOutputs('http://x', 'p1', { timeoutMs: 1000, pollMs: 1 })
+    expect(collectOutputs(out).images).toHaveLength(1)
+  })
+
+  it('fails when ComfyUI stays unreachable longer than the bound', async () => {
+    stubFetch(() => undefined)
+    await expect(waitForOutputs('http://x', 'p1', { timeoutMs: 5000, pollMs: 2, unreachableMs: 30 })).rejects.toThrow(/has not answered/)
+  })
+
   it('prefers the named output node', () => {
     const outputs = { 3: { audio: [{ filename: 'one.mp3' }] }, 5: { audio: [{ filename: 'two.mp3' }] } }
     expect(collectOutputs(outputs, '5').audio.map((a) => a.filename)).toEqual(['two.mp3'])
@@ -202,6 +221,41 @@ function fakeComfy(opts: { outputName?: string; kind?: 'images' | 'audio'; bytes
 }
 
 const config = (over: Record<string, unknown> = {}) => parseComfyConfig({ pollIntervalMs: 1, jobTimeoutMs: 2000, ...over })
+
+describe('createComfyClient: a lost prompt', () => {
+  /** Fake ComfyUI whose first `lose` prompts vanish (empty queue and history), as after a crash and restart. */
+  function flaky(lose: number) {
+    let n = 0
+    const ok = new Set<string>()
+    stubFetch((url) => {
+      if (url.pathname === '/queue') return json({ queue_running: [], queue_pending: [] })
+      if (url.pathname === '/prompt') {
+        const id = `pid${++n}`
+        if (n > lose) ok.add(id)
+        return json({ prompt_id: id })
+      }
+      if (url.pathname.startsWith('/history/')) {
+        const id = url.pathname.split('/')[2]!
+        return json(ok.has(id) ? { [id]: { status: { status_str: 'success' }, outputs: { 9: { images: [{ filename: 'a.png', subfolder: '', type: 'output' }] } } } } : {})
+      }
+      if (url.pathname === '/view') return new Response('BYTES')
+    })
+    return () => n
+  }
+
+  it('submits a vanished prompt once more and succeeds', async () => {
+    const posted = flaky(1)
+    const r = await createComfyClient({ config: config() }).generate({ engine: 'z-image-turbo', prompt: 'x' })
+    expect(r.bytes.toString()).toBe('BYTES')
+    expect(posted()).toBe(2)
+  })
+
+  it('fails the job when the prompt vanishes twice', async () => {
+    const posted = flaky(2)
+    await expect(createComfyClient({ config: config() }).generate({ engine: 'z-image-turbo', prompt: 'x' })).rejects.toThrow(/lost again, so the job failed/)
+    expect(posted()).toBe(2)
+  })
+})
 
 describe('createComfyClient', () => {
   it('runs a text-to-image engine and returns bytes and extension', async () => {

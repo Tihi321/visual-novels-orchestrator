@@ -1,6 +1,6 @@
 /**
  * The Ren'Py template's menu strings in each built-in language other than English (`old` -> `new`, the keys are the strings as they appear in the
- * template). The source is English, so English has no table. Every table has exactly the keys of the Croatian one, `{}` and `\\n` kept as they are.
+ * template). The source is English, so English has no table. Every table has the 49 core keys of the Croatian one (its first 49), `{}` and `\\n` kept as they are; the Croatian table goes on with the help-screen strings.
  *
  * The tables were written by a language model, not by native speakers: native review is welcome. `ui` of a language in `config/languages.md`
  * overrides single strings.
@@ -55,7 +55,42 @@ export const UI_STRINGS: Readonly<Record<string, Readonly<Record<string, string>
     'Loading will lose unsaved progress.\\nAre you sure you want to do this?': 'Učitavanje će izgubiti nespremljeni napredak.\\nJeste li sigurni da to želite?',
     'Are you sure you want to return to the main menu?\\nThis will lose unsaved progress.': 'Jeste li sigurni da se želite vratiti u glavni izbornik?\\nNespremljeni napredak će se izgubiti.',
     'Are you sure you want to begin skipping?': 'Jeste li sigurni da želite početi preskakati?',
-    'Are you sure you want to skip to the next choice?': 'Jeste li sigurni da želite preskočiti do sljedećeg izbora?'
+    'Are you sure you want to skip to the next choice?': 'Jeste li sigurni da želite preskočiti do sljedećeg izbora?',
+    // The template's help and sync screens (Ren'Py's stock ones). Croatian only so far: the other languages keep these in English.
+    // Left out as language-neutral or technical: Enter, Ctrl, Tab, Page Up, Page Down, Test, `<`, `>`, the page letters, the date format, Version and the Ren'Py credit.
+    'End Replay': 'Završi ponavljanje',
+    'Upload Sync': 'Pošalji sinkronizaciju',
+    'Download Sync': 'Preuzmi sinkronizaciju',
+    'Keyboard': 'Tipkovnica',
+    'Mouse': 'Miš',
+    'Gamepad': 'Kontroler',
+    'Advances dialogue and activates the interface.': 'Pomiče dijalog i aktivira sučelje.',
+    'Space': 'Razmaknica',
+    'Advances dialogue without selecting choices.': 'Pomiče dijalog bez biranja opcija.',
+    'Arrow Keys': 'Tipke sa strelicama',
+    'Navigate the interface.': 'Kretanje sučeljem.',
+    'Escape': 'Esc',
+    'Accesses the game menu.': 'Otvara izbornik igre.',
+    'Skips dialogue while held down.': 'Preskače dijalog dok je tipka pritisnuta.',
+    'Toggles dialogue skipping.': 'Uključuje i isključuje preskakanje dijaloga.',
+    'Rolls back to earlier dialogue.': 'Vraća se na raniji dijalog.',
+    'Rolls forward to later dialogue.': 'Ide naprijed na kasniji dijalog.',
+    'Hides the user interface.': 'Sakriva korisničko sučelje.',
+    'Takes a screenshot.': 'Snima snimku zaslona.',
+    'Toggles assistive {a=https://www.renpy.org/l/voicing}self-voicing{/a}.': 'Uključuje i isključuje pomoćno {a=https://www.renpy.org/l/voicing}samoizgovaranje{/a}.',
+    'Opens the accessibility menu.': 'Otvara izbornik pristupačnosti.',
+    'Left Click': 'Lijevi klik',
+    'Middle Click': 'Srednji klik',
+    'Right Click': 'Desni klik',
+    'Mouse Wheel Up': 'Kotačić miša gore',
+    'Mouse Wheel Down': 'Kotačić miša dolje',
+    'Right Trigger\\nA/Bottom Button': 'Desni okidač\\nA/donja tipka',
+    'Left Trigger\\nLeft Shoulder': 'Lijevi okidač\\nLijevi branik',
+    'Right Shoulder': 'Desni branik',
+    'D-Pad, Sticks': 'Smjerne tipke, štapići',
+    'Start, Guide, B/Right Button': 'Start, Guide, B/desna tipka',
+    'Y/Top Button': 'Y/gornja tipka',
+    'Calibrate': 'Kalibriraj'
   },
   de: {
     'Language': 'Sprache',

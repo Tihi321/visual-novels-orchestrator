@@ -159,9 +159,10 @@ describe('a testimony in the script', () => {
     expect(r.files['ch01.rpy']).toContain('call vno_puzzle_play("dinner", vno_puzzle_data["dinner"])')
     expect(r.files['ch01.rpy']).toContain('$ vno_clue_found("dinner", "e2")')
     const data = r.files['vno_puzzles_data.rpy']!
+    const sol = (tm as unknown as { solution: { statement: string; evidence: string } }).solution
     expect(data).toContain('"kind": "testimony"')
     expect(data).toContain('"statements": [{"id": "t1"')
-    expect(data).toContain('"solution": {"statement": "t5", "evidence": "e1", "press": True}')
+    expect(data).toContain(`"solution": {"statement": "${sol.statement}", "evidence": "${sol.evidence}", "press": True}`)
     expect(data).toContain('{"id": "e2", "facts"')
     expect(data).toMatch(/"at": "ch01.s01.b002"/)
     expect(data).toContain(`"intro": _("${tm.text.intro}")`)

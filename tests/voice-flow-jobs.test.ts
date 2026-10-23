@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { flowVoiceList, flowVoiceProblem, parseFlowVoice } from '../src/engine/voice/flow-catalog'
-import { generateFlowClips } from '../src/engine/voice/flow'
+import { generateFlowClips, parseRetryDelayMs } from '../src/engine/voice/flow'
 import { voiceSubjects } from '../src/engine/vn/agents/voice-director'
 import { book, failures, makeVnEnv, waitIdle } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
@@ -166,6 +166,52 @@ describe('voice clips (Google Flow)', () => {
     await writeFile(path.join(vdir(h, 'en'), 'index.json'), '{}')
     h.flow.alwaysRateLimited = true
     await expect(run({ retries: 1 })).rejects.toThrow(/all \d+ clip\(s\) failed.*rate limited/)
+  })
+
+  it('parses the retry time of a Gemini 429', () => {
+    expect(parseRetryDelayMs('Please retry in 21h21m47.5s.')).toBe(76_907_500)
+    expect(parseRetryDelayMs('retry in 45s')).toBe(45_000)
+    expect(parseRetryDelayMs('{"retryDelay":"76800s"}')).toBe(76_800_000)
+    expect(parseRetryDelayMs('wait about a minute')).toBeUndefined()
+  })
+
+  it('a daily quota (a retry time of hours) stops the job after the first clip, without waiting or calling Flow again; a short retry time still retries', async () => {
+    const h = await setup()
+    h.env.mock.on({ task: 'vn.voice.plan' }, 'no')
+    await plan(h)
+    const waits: number[] = []
+    const run = () => generateFlowClips(h.svc, h.slug, 'en', { flow: h.flow, format: 'mp3', settings: { pauseMs: 0, retries: 3 }, log: () => undefined, sleep: async (ms) => void waits.push(ms) })
+    h.flow.alwaysRateLimited = true
+    h.flow.rateLimitText = 'Gemini TTS rate limited (HTTP 429): Please retry in 45s'
+    await expect(run()).rejects.toThrow(/rate limited/)
+    expect(waits.length).toBeGreaterThan(3) // every clip retried 3 times
+
+    await writeFile(path.join(vdir(h, 'en'), 'index.json'), '{}')
+    waits.length = 0
+    const before = h.flow.calls.filter((c) => c.tool === 'flow_narrate').length
+    h.flow.rateLimitText = 'Gemini TTS rate limited (HTTP 429): Please retry in 21h21m47.5s'
+    await expect(run()).rejects.toThrow(/daily voice quota is used up/)
+    expect(h.flow.calls.filter((c) => c.tool === 'flow_narrate').length - before).toBe(1)
+    expect(waits).toEqual([])
+  })
+
+  it('clips made before the quota ran out are kept and the message says how many failed', async () => {
+    const h = await setup()
+    h.env.mock.on({ task: 'vn.voice.plan' }, 'no')
+    await plan(h)
+    h.flow.rateLimitText = 'Please retry in 20h'
+    const orig = h.flow.narrate.bind(h.flow)
+    let n = 0
+    h.flow.narrate = async (a) => {
+      if (++n === 3) h.flow.alwaysRateLimited = true
+      return orig(a)
+    }
+    const r = await generateFlowClips(h.svc, h.slug, 'en', { flow: h.flow, format: 'mp3', settings: { pauseMs: 0, retries: 3 }, log: () => undefined, sleep: async () => undefined })
+    expect(r.made).toBe(2)
+    expect(r.failed).toBeGreaterThan(0)
+    expect(r.message).toMatch(/daily voice quota is used up/)
+    expect(Object.keys(await readIndex(h, 'en'))).toHaveLength(2)
+    expect(n).toBe(3)
   })
 
   it('a beat over the tool limit fails alone with a clear error, and a persistent failure of the others is not hidden', async () => {

@@ -106,6 +106,9 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
   const imageEntries = pictures.flatMap((k) => book.images?.find((i) => i.key === k) ?? [])
   for (const img of imageEntries) for (const c of (img.characters ?? []).slice(0, 3)) if (book.characters.some((x) => x.key === c)) note(appearing, c)
 
+  // every listed sound has an asset, also one no beat plays (the stage director may cue it, and a person may add one with `vno_sound_set`)
+  for (const snd of book.sounds ?? []) note(snd.kind === 'sfx' ? effects : ambiences, snd.key)
+
   const art = settings.art
   // a Flow project makes every image with Flow, whatever the ComfyUI engines are
   const gen = art.provider === 'flow' ? FLOW_ENGINE : art.generator
@@ -189,7 +192,12 @@ export function visualLooks(text: string | undefined): string {
     .replace(/\.$/, '')
 }
 
-/** The sentences that do not mention a character of the book (an empty background must not describe who is in it). */
+/**
+ * What can be drawn in an empty place: the sentences that do not mention a character of the book (an empty background must not
+ * describe who is in it). A sentence that names one is not thrown away whole when a colon or semicolon splits it: a place description is
+ * often one long sentence, "a salon in the Moreau house: panelled walls, a chandelier; warm light", where the name is only in its head
+ * ("Moreau house", "Ines's atelier") and the rest is the place. Only the clauses with a name go.
+ */
 export function withoutCharacterSentences(text: string | undefined, book: Pick<VnBook, 'characters'>): string {
   if (!text) return ''
   const words = new Set<string>()
@@ -197,9 +205,17 @@ export function withoutCharacterSentences(text: string | undefined, book: Pick<V
     for (const w of normText(c.name).split(' ')) if (w.length > 2) words.add(w)
     words.add(c.key)
   }
-  return sentences(text)
-    .filter((s) => !normText(s).split(' ').some((w) => words.has(w)))
-    .join(' ')
+  const named = (s: string): boolean => normText(s).split(' ').some((w) => words.has(w))
+  const out: string[] = []
+  for (const sentence of sentences(text)) {
+    if (!named(sentence)) {
+      out.push(sentence)
+      continue
+    }
+    const kept = sentence.split(/(?<=[:;])\s+/).filter((clause) => !named(clause))
+    if (kept.length) out.push(kept.join(' ').replace(/[:;,]\s*$/, '').replace(/([^.!?])$/, '$1.'))
+  }
+  return out.join(' ')
 }
 
 /** The framing words that keep an image model to one figure, or to an empty place. */
@@ -231,6 +247,22 @@ function sceneOf(book: VnBook, backgroundId: string): VnScene | undefined {
 
 function lookupChar(book: VnBook, key: string) {
   return book.characters.find((c) => c.key === key)
+}
+
+const POSITIONS: string[][] = [[], [], ['on the left', 'on the right'], ['on the left', 'in the middle', 'on the right']]
+
+/**
+ * What keeps a picture of two or three people from merging them: the number of different people, each one named with their looks and a place
+ * in the picture (left to right, in the order of their sheets, which are the reference images in the same order), and a ban on repeating a
+ * face. Empty for fewer than two characters of the book. The model can still fail to keep them apart: this is a prompt, not a guarantee.
+ */
+export function peopleClause(book: Pick<VnBook, 'characters'>, keys: string[]): string {
+  const people = keys.slice(0, 3).flatMap((k) => book.characters.find((c) => c.key === k) ?? [])
+  if (people.length < 2) return ''
+  const where = POSITIONS[people.length]!
+  const named = people.map((c, i) => `${where[i]}: ${c.name}${visualLooks(c.looks) ? ` (${visualLooks(c.looks).slice(0, 160).replace(/[.\s]+$/, '')})` : ''}`).join('; ')
+  const order = people.map((c, i) => `image ${i + 1} is ${c.name}`).join(', ')
+  return `${people.length === 2 ? 'two' : 'three'} different people, each with their own face, hair and clothes, none repeated: ${named} (unless the picture says otherwise). Reference images: ${order}; keep each person as in their own reference image`
 }
 
 /** Splits a sprite id `sprite_<charKey>_<expression>` (the expression has no underscore). */
@@ -281,7 +313,8 @@ export function fallbackPrompt(asset: Pick<AssetEntry, 'id' | 'kind'>, book: VnB
       if (img.display === 'insert') return [style, img.description, INSERT_FRAMING].filter(Boolean).join(', ')
       const scene = sceneShowing(book, img.key)
       const place = scene?.placeKey ? book.places.find((p) => p.key === scene.placeKey) : undefined
-      const people = (img.characters ?? []).map((k) => visualLooks(lookupChar(book, k)?.looks)).filter(Boolean)
+      const clause = peopleClause(book, img.characters ?? [])
+      const people = clause ? [clause] : (img.characters ?? []).map((k) => visualLooks(lookupChar(book, k)?.looks)).filter(Boolean)
       return [style, img.description, ...people, withoutCharacterSentences(place?.looks, book), 'cinematic illustration, full-bleed artwork filling the whole frame, no border, no frame, no text'].filter(Boolean).join(', ')
     }
     case 'ambience': {

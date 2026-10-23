@@ -680,4 +680,50 @@ describe('job priority (V11)', () => {
     await waitFor(async () => (await jobsIn(env!, 'done')).length === 4, 8000, 'all done')
     expect(order).toEqual(['new1', 'old0', 'new1-dep'])
   })
+
+  describe('lanes (VNO-28)', () => {
+    /** Four no-model jobs on one art-director agent (max_parallel 1): which of them run together. */
+    const run = async (lanes: Record<string, string | undefined>) => {
+      env = await makeEnv({ roles: { art: ['loc/m1'] }, agents: [{ role: 'art', name: 'Art' }] })
+      const live = new Set<string>()
+      const together: string[] = []
+      let release: () => void = () => {}
+      const gate = new Promise<void>((r) => (release = r))
+      env.engine.scheduler.register(
+        't',
+        async (ctx) => {
+          live.add(ctx.job.id)
+          together.push([...live].sort().join('+'))
+          await gate
+          live.delete(ctx.job.id)
+          return { result: 'ok' }
+        },
+        { noModel: true }
+      )
+      for (const [id, lane] of Object.entries(lanes)) await env.engine.jobs.enqueue({ id, task: 't', role: 'art', ...(lane ? { lane } : {}) })
+      await sleep(600)
+      const first = [...live].sort()
+      release()
+      await waitFor(async () => (await jobsIn(env!, 'done')).length === Object.keys(lanes).length, 8000, 'all done')
+      return { first, together }
+    }
+
+    it('a flow job and a job without a lane run at the same time', async () => {
+      const r = await run({ comfy1: undefined, flow1: 'flow' })
+      expect(r.first).toEqual(['comfy1', 'flow1'])
+    })
+
+    it('two jobs without a lane still run one at a time', async () => {
+      const r = await run({ comfy1: undefined, comfy2: undefined })
+      expect(r.first).toHaveLength(1)
+      expect(r.together.every((t) => !t.includes('+'))).toBe(true)
+    })
+
+    it('two jobs of the flow lane run one at a time, with a job without a lane beside them', async () => {
+      const r = await run({ comfy1: undefined, flow1: 'flow', flow2: 'flow' })
+      expect(r.first).toHaveLength(2)
+      expect(r.first).toContain('comfy1')
+      expect(r.together.every((t) => t.split('+').filter((x) => x.startsWith('flow')).length <= 1)).toBe(true)
+    })
+  })
 })

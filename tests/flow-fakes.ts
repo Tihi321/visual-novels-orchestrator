@@ -40,6 +40,8 @@ export class FakeFlow implements FlowClient {
   rateLimited = 0
   /** Every narrate call fails (a persistent rate limit). */
   alwaysRateLimited = false
+  /** The text of the rate-limit error. */
+  rateLimitText = 'Gemini TTS rate limited (HTTP 429): wait about a minute'
   /** The Google AI Studio key is set up (the Gemini voices work). */
   geminiReady = true
   songError: FlowError | null = null
@@ -80,7 +82,7 @@ export class FakeFlow implements FlowClient {
     if (!this.up) throw new FlowError(DOWN, 'unreachable')
     if (this.alwaysRateLimited || this.rateLimited > 0) {
       this.rateLimited--
-      throw new FlowError('Gemini TTS rate limited (HTTP 429): wait about a minute', 'rateLimit')
+      throw new FlowError(this.rateLimitText, 'rateLimit')
     }
     if (a.text.length > 4000) throw new FlowError(`Text is ${a.text.length} characters; engine "${a.engine}" takes at most 4000.`, 'tool')
     await mkdir(a.out, { recursive: true })

@@ -179,6 +179,12 @@ export const jobSchema = z.looseObject({
   label: z.string().optional(),
   /** Locks that must be free to run, for example `bible:silver-inn`. */
   locks: z.array(z.string()).default([]),
+  /**
+   * A lane of its own: the job takes no slot of its agent (`max_parallel` stays the cap of the agent's model calls and ordinary jobs) and
+   * waits only for other jobs of the same lane, as many at a time as the agent's `max_parallel`. For work on a machine that is not the
+   * model's, like Google Flow images, so a Flow book does not wait behind a ComfyUI book.
+   */
+  lane: z.string().nullable().default(null),
   /** Reviewers prefer a model family different from this one. */
   avoid_family: z.string().nullable().default(null),
   /** Prefer this agent (same writer for a book's chapters). Not strict. */

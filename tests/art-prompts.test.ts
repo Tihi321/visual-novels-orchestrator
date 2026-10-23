@@ -1,13 +1,65 @@
 import path from 'node:path'
 import sharp from 'sharp'
 import { describe, expect, it } from 'vitest'
-import { defaultStylePrompt, fallbackNegative, fallbackPrompt, resolveStylePrompt, visualLooks } from '../src/engine/assets/derive'
+import { defaultStylePrompt, fallbackNegative, fallbackPrompt, peopleClause, resolveStylePrompt, visualLooks, withoutCharacterSentences } from '../src/engine/assets/derive'
 import { keepMainSubject } from '../src/engine/assets/postprocess'
-import { ensureFraming } from '../src/engine/vn/agents/art-director'
+import { describeAsset, ensureFraming } from '../src/engine/vn/agents/art-director'
 import { importBook } from '../src/engine/vn/import'
 import { projectSettingsSchema } from '../src/shared/vn'
 
 const soother = () => importBook(path.resolve(__dirname, 'fixtures/books/soother'))
+
+describe('a CG with two or three characters names each person (VNO-34)', () => {
+  const book = {
+    characters: [
+      { key: 'mara', name: 'Mara', looks: 'A girl of fourteen with red braids and a huge yellow raincoat.' },
+      { key: 'ivka', name: 'Ivka', looks: 'An old woman with a grey bun and an orange life jacket.' },
+      { key: 'dino', name: 'Dino', looks: 'A stocky man in a collared jacket.' }
+    ],
+    images: [
+      { key: 'two', description: 'Mara reading the sheet aloud, Ivka very still beside her', display: 'full', characters: ['mara', 'ivka'] },
+      { key: 'three', description: 'the three walk the causeway', display: 'full', characters: ['mara', 'ivka', 'dino'] },
+      { key: 'one', description: 'Mara at the rail', display: 'full', characters: ['mara'] },
+      { key: 'sheet', description: 'a sheet headed FOR IVKA', display: 'insert', characters: ['mara', 'ivka'] }
+    ],
+    format: 'novel',
+    style: '',
+    places: [],
+    chapters: []
+  } as never
+
+  it('the clause says how many different people, who is where, and which reference image is whom, in the order of the characters', () => {
+    const c = peopleClause(book, ['mara', 'ivka'])
+    expect(c).toMatch(/^two different people/)
+    expect(c).toContain('on the left: Mara (A girl of fourteen with red braids')
+    expect(c).toContain('on the right: Ivka (An old woman')
+    expect(c).toContain('image 1 is Mara, image 2 is Ivka')
+    expect(c.indexOf('Mara')).toBeLessThan(c.indexOf('Ivka'))
+    const three = peopleClause(book, ['mara', 'ivka', 'dino'])
+    expect(three).toMatch(/^three different people/)
+    expect(three).toContain('in the middle: Ivka')
+    expect(three).toContain('on the right: Dino')
+    expect(three).toContain('image 3 is Dino')
+    expect(peopleClause(book, ['mara'])).toBe('')
+    expect(peopleClause(book, [])).toBe('')
+  })
+
+  it('an agent prompt for a CG with two characters gets the clause once; one character, an insert and a prompt that has it are left alone', () => {
+    const a = ensureFraming('cg', 'cg_two', 'Mara reading, Ivka beside her', book)
+    expect(a).toContain('two different people')
+    expect(a).toContain('image 2 is Ivka')
+    expect(ensureFraming('cg', 'cg_two', a, book)).toBe(a)
+    expect(ensureFraming('cg', 'cg_one', 'Mara at the rail', book)).toBe('Mara at the rail')
+    expect(ensureFraming('cg', 'cg_sheet', 'a sheet, close-up', book)).toBe('a sheet, close-up')
+  })
+
+  it('the fallback prompt of a CG with several characters has the clause instead of the bare looks', () => {
+    const p = fallbackPrompt({ id: 'cg_three', kind: 'cg' }, book)
+    expect(p).toContain('three different people')
+    expect(p).toContain('on the left: Mara')
+    expect(fallbackPrompt({ id: 'cg_one', kind: 'cg' }, book)).not.toContain('different people')
+  })
+})
 
 describe('art prompts', () => {
   it('keeps only the visual sentences of a bible entry', async () => {
@@ -56,6 +108,22 @@ describe('art prompts', () => {
     expect(ensureFraming('sheet', 'sheet_petra', 'a girl in a yellow raincoat')).toContain('one full-body figure only')
     expect(ensureFraming('background', 'bg_x', 'a cave')).toContain('no people')
     expect(ensureFraming('sprite', 'sprite_petra_sad', 'same character, sad')).toContain('sad facial expression')
+  })
+
+  it('a place description with a character name in it keeps the rest of the place (VNO-31)', async () => {
+    const { book } = await soother()
+    const people = { characters: [{ key: 'moreau', name: 'Moreau' }, { key: 'ines', name: 'Inès' }] } as never
+    // one long sentence whose head names a character as part of the place ("the Moreau house", "Inès's atelier")
+    const salon = 'Indoors, a long salon in the Moreau house: cream panelled walls covered with clocks, a crystal chandelier, rows of gold chairs; tall windows onto a snowy courtyard. Warm golden light.'
+    expect(withoutCharacterSentences(salon, people)).toBe('cream panelled walls covered with clocks, a crystal chandelier, rows of gold chairs; tall windows onto a snowy courtyard. Warm golden light.')
+    const atelier = "Indoors, Inès's restoration atelier on a top floor: a big slanted skylight with night sky, easels, a worktable of brushes; plaster walls, warm lamplight."
+    expect(withoutCharacterSentences(atelier, people)).toBe('a big slanted skylight with night sky, easels, a worktable of brushes; plaster walls, warm lamplight.')
+    // a sentence about a person and no colon is still left out whole, and a clause naming one is cut
+    expect(withoutCharacterSentences('A tall hall. Moreau stands at the lectern, gloved. Snow at the windows.', people)).toBe('A tall hall. Snow at the windows.')
+    expect(withoutCharacterSentences('A cellar: Inès sits on a crate; barrels along the wall.', people)).toBe('A cellar: barrels along the wall.')
+    // the art-director's task carries the place's looks
+    const b = { ...book, characters: [...book.characters, { ...book.characters[0]!, key: 'moreau', name: 'Moreau' }], places: [{ key: 'salon', name: 'Salon', looks: salon }], chapters: [{ ...book.chapters[0]!, scenes: [{ ...book.chapters[0]!.scenes[0]!, backgroundId: 'bg_salon_any', placeKey: 'salon', description: '' }] }] }
+    expect(describeAsset(b, { id: 'bg_salon_any', kind: 'background' }).placeLooks).toContain('cream panelled walls')
   })
 
   it('keepMainSubject drops stray islands and a second figure but keeps pieces next to the figure', async () => {

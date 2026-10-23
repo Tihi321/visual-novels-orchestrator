@@ -17,7 +17,7 @@ chiptuneStudioToken: ''
 # flow-music-mcp: Google Flow images (free), narration voices (free Gemini and Windows engines) and Flow Music songs (SPEND CREDITS).
 # Used when a project's art / voice / music provider is `flow`. Start it: hub.ps1 start flow-music-mcp. Sign in once: yarn login in the repo.
 flowUrl: http://127.0.0.1:7462/mcp
-flowRepo: C:\projects\Personallow-music-mcp
+flowRepo: C:\projects\Personal\flow-music-mcp
 # The bearer token of its MCP server; the environment variable FLOW_MUSIC_MCP_TOKEN and the credential store win over this field.
 flowToken: ''
 # Seconds per wait call (at most 50), and when to give up on one image job / one song.

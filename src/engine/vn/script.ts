@@ -169,9 +169,28 @@ export function matchCharacterDetail(label: string, chars: BibleCharacter[], o: 
 /** The most characters a CG or insert gets from its cue text (the art director draws from their sheets). */
 export const MAX_CUE_CHARACTERS = 3
 
-/** The bible characters whose name or alias appears, as whole words, in a cue text, in the order they appear; at most `MAX_CUE_CHARACTERS`. */
+/** Words after a possessive name that are part of the person (Ivka's hand): the name then puts her in the picture. */
+const BODY_WORDS = new Set(['hand', 'hands', 'face', 'hair', 'eyes', 'eye', 'shoulder', 'shoulders', 'back', 'arm', 'arms', 'fingers', 'finger', 'head', 'feet', 'foot', 'legs', 'lap', 'mouth', 'braids', 'braid', 'silhouette', 'shadow', 'reflection', 'profile', 'gaze', 'smile', 'voice', 'figure'])
+
+/**
+ * The cue text without what only names a character: a name in a possessive that names a place or thing (`Ivka's shop`, not `Ivka's hand`), and
+ * a name in text written on a document: a run of two or more all-caps words (`FOR IVKA`), one all-caps word after headed / signed / titled /
+ * reads / marked / addressed, and anything in quotation marks.
+ */
+export function withoutNamesOnThings(text: string): string {
+  return text
+    .replace(/["“][^"”]*["”]/gu, ' ')
+    .replace(/(?<!\p{L})(?:headed|signed|titled|labelled|labeled|marked|addressed(?: to)?|reads?|stamped)\s+\p{Lu}{2,}(?!\p{L})/gu, ' ')
+    .replace(/(?<!\p{L})\p{Lu}{2,}(?:[\s,.:;!?-]+\p{Lu}{2,})+(?!\p{L})/gu, ' ')
+    .replace(/(\p{L}+)['’]s\s+(\p{L}+)/gu, (all, _name: string, next: string) => (BODY_WORDS.has(next.toLowerCase()) ? all : ' '))
+}
+
+/**
+ * The bible characters whose name or alias appears, as whole words, in a cue text, in the order they appear; at most `MAX_CUE_CHARACTERS`.
+ * A name in a possessive that names a place or thing, or in text written on a document, does not count (see `withoutNamesOnThings`).
+ */
 export function charactersInText(text: string, chars: BibleCharacter[]): string[] {
-  const hay = ` ${normText(text)} `
+  const hay = ` ${normText(withoutNamesOnThings(text))} `
   const found: { key: string; at: number }[] = []
   for (const c of chars) {
     let at = -1
@@ -343,7 +362,7 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
   const sounds = new Map<string, SoundEntry>()
   // the puzzle lines, with the drafts of the beats they became (the beat ids are known only when the scenes are numbered)
   const clueDrafts: { puzzle: string; clue: string; text: string; beat: BeatDraft }[] = []
-  const evidenceDrafts: { key: string; imageKey: string; text: string; beat: BeatDraft }[] = []
+  const evidenceDrafts: { key: string; imageKey: string; text: string; beat: BeatDraft; scene: SceneDraft }[] = []
   const puzzleDrafts: { key: string; kind: string | null; beat: BeatDraft }[] = []
   const testimonyDrafts: { witness: string; line: number; statements: { speaker: string; text: string; beat: BeatDraft }[] }[] = []
   let testimony: (typeof testimonyDrafts)[number] | null = null
@@ -351,8 +370,16 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
   /** Cues read since the last beat: they go on the next beat of the scene. */
   let pending: { image?: string | null; sfx?: string; ambience?: string | null } = {}
 
-  /** A cue with no beat after it in its scene is dropped, with a warning. */
+  /**
+   * A cue with no beat after it in its scene: a sound effect goes on the scene's last beat (when that beat has none of its own), so the sound
+   * is not left in the catalogue with no cue; the other cues are dropped, with a warning.
+   */
   const dropPending = (where: string) => {
+    const last = drafts[drafts.length - 1]?.beats.at(-1)
+    if (pending.sfx && last && !(last.body as { sfx?: string }).sfx) {
+      Object.assign(last.body, { sfx: pending.sfx })
+      delete pending.sfx
+    }
     if (Object.keys(pending).length) warnings.push(`chapter ${chapter}: a ${Object.keys(pending).map((k) => (k === 'image' ? 'CG' : k === 'sfx' ? 'SFX' : 'AMBIENCE')).join(' and ')} line ${where} has no beat after it in its scene: dropped`)
     pending = {}
   }
@@ -435,7 +462,8 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
         else {
           const key = cueKey(text)
           if (!images.has(key)) {
-            const characters = charactersInText(text, bible.characters)
+            // an insert is an object close-up: it never gets characters from its text
+            const characters = kind === 'INSERT' ? [] : charactersInText(text, bible.characters)
             images.set(key, { key, description: text, display: kind === 'INSERT' ? 'insert' : 'full', ...(characters.length ? { characters } : {}) })
           }
           pending.image = key
@@ -477,8 +505,11 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
         const imageKey = slugKey(key)
         if (!images.has(imageKey)) images.set(imageKey, { key: imageKey, description: text, display: 'insert' })
         const beat: BeatDraft = { body: { type: 'narration', text } }
-        add(scene(), beat)
-        evidenceDrafts.push({ key, imageKey, text, beat })
+        const s = scene()
+        add(s, beat)
+        // the picture is shown with its line, whatever the puzzles of the book are (VNO-30); an INSERT: line right before it wins
+        if (beat.body.image === undefined) beat.body.image = imageKey
+        evidenceDrafts.push({ key, imageKey, text, beat, scene: s })
       }
       continue
     }
@@ -582,6 +613,13 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
   }
 
   dropPending('at the end of the chapter')
+  // An evidence picture is hidden at the next beat of its scene (the end of the scene clears it), unless that beat shows or hides one itself.
+  for (const e of evidenceDrafts) {
+    if (e.beat.body.image !== e.imageKey) continue
+    const next = e.scene.beats[e.scene.beats.indexOf(e.beat) + 1]
+    if (next && next.body.image === undefined) next.body.image = null
+  }
+
   // Number the scenes that have beats.
   const scenes: VnScene[] = []
   const ids = new Map<SceneDraft, string>()

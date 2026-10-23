@@ -215,7 +215,7 @@ export type EditionPuzzle = z.infer<typeof editionPuzzleSchema>
 
 /**
  * The read-back of a puzzle's prose: what a reader (who never saw the structured data) understood from the words alone. A grid clue is
- * `{id, type, a, b}`; a Knights and Knaves statement is `{id, speaker, claim}`; both use the names of the puzzle.
+ * `{id, type, a, b}`; a Knights and Knaves statement is `{id, speaker, claim}` (and its intro `{id: 'intro', truthTellers, liars}`); both use the names of the puzzle.
  */
 export const readBackClueSchema = z.union([
   z.object({
@@ -226,6 +226,8 @@ export const readBackClueSchema = z.union([
     n: z.number().int().optional()
   }),
   z.object({ id: z.string(), speaker: z.string(), claim: z.record(z.string(), z.unknown()) }),
+  /** Knights and Knaves intro: the rule it states, in its own words (who always tells the truth, who always lies). */
+  z.object({ id: z.string(), truthTellers: z.string(), liars: z.string() }),
   /** Testimony: the claims of a statement (`t1`, `t1.press`) or the facts of a piece of evidence (`e1`). */
   z.object({ id: z.string(), claims: z.array(z.object({ key: z.string(), value: z.string() })).optional(), facts: z.array(z.object({ key: z.string(), value: z.string() })).optional() })
 ])
