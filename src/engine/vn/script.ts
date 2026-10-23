@@ -343,7 +343,7 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
   const sounds = new Map<string, SoundEntry>()
   // the puzzle lines, with the drafts of the beats they became (the beat ids are known only when the scenes are numbered)
   const clueDrafts: { puzzle: string; clue: string; text: string; beat: BeatDraft }[] = []
-  const evidenceDrafts: { key: string; imageKey: string; text: string; beat: BeatDraft }[] = []
+  const evidenceDrafts: { key: string; imageKey: string; text: string; beat: BeatDraft; scene: SceneDraft }[] = []
   const puzzleDrafts: { key: string; kind: string | null; beat: BeatDraft }[] = []
   const testimonyDrafts: { witness: string; line: number; statements: { speaker: string; text: string; beat: BeatDraft }[] }[] = []
   let testimony: (typeof testimonyDrafts)[number] | null = null
@@ -477,8 +477,11 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
         const imageKey = slugKey(key)
         if (!images.has(imageKey)) images.set(imageKey, { key: imageKey, description: text, display: 'insert' })
         const beat: BeatDraft = { body: { type: 'narration', text } }
-        add(scene(), beat)
-        evidenceDrafts.push({ key, imageKey, text, beat })
+        const s = scene()
+        add(s, beat)
+        // the picture is shown with its line, whatever the puzzles of the book are (VNO-30); an INSERT: line right before it wins
+        if (beat.body.image === undefined) beat.body.image = imageKey
+        evidenceDrafts.push({ key, imageKey, text, beat, scene: s })
       }
       continue
     }
@@ -582,6 +585,13 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
   }
 
   dropPending('at the end of the chapter')
+  // An evidence picture is hidden at the next beat of its scene (the end of the scene clears it), unless that beat shows or hides one itself.
+  for (const e of evidenceDrafts) {
+    if (e.beat.body.image !== e.imageKey) continue
+    const next = e.scene.beats[e.scene.beats.indexOf(e.beat) + 1]
+    if (next && next.body.image === undefined) next.body.image = null
+  }
+
   // Number the scenes that have beats.
   const scenes: VnScene[] = []
   const ids = new Map<SceneDraft, string>()
