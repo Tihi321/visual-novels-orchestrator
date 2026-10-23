@@ -230,9 +230,9 @@ export function createFlowClient(opts: FlowClientOptions): FlowClient {
         throw e
       }
       const flow = r.flow as { signed_in?: boolean; hint?: string } | undefined
-      const chrome = r.chrome_running !== false
-      const signedIn = !chrome ? false : flow ? flow.signed_in === true : null
-      const hint = !chrome ? `the Chrome window of flow-music-mcp is not running: run yarn login in ${opts.repo ?? 'flow-music-mcp'}` : signedIn === false ? (flow?.hint ?? `Google Flow is not signed in: run yarn login in ${opts.repo ?? 'flow-music-mcp'}`) : undefined
+      // Chrome not running is unknown, not signed out: flow-music-mcp opens Chrome itself on the first real call (only flow_status does not).
+      const signedIn = r.chrome_running === false ? null : flow ? flow.signed_in === true : null
+      const hint = signedIn === false ? (flow?.hint ?? `Google Flow is not signed in: run yarn login in ${opts.repo ?? 'flow-music-mcp'}`) : undefined
       return { up: true, signedIn, uploadRights: typeof r.upload_rights === 'string' && r.upload_rights.startsWith('agree'), ...(hint ? { hint } : {}) }
     },
 

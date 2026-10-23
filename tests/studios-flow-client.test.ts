@@ -56,7 +56,13 @@ describe('flow client', () => {
     flow = undefined
     expect(await c.status()).toMatchObject({ up: true, signedIn: null })
     chrome = false
-    expect(await c.status()).toMatchObject({ signedIn: false, hint: expect.stringContaining('Chrome') })
+    // Chrome closed is unknown (flow-music-mcp opens it on the first call), so it does not block
+    const closed = await c.status()
+    expect(closed).toMatchObject({ up: true, signedIn: null })
+    expect(closed.hint).toBeUndefined()
+    flow = { signed_in: false, hint: 'Flow is not signed in. Run `yarn login`' }
+    chrome = true
+    expect(await c.status()).toMatchObject({ signedIn: false })
     expect(s.seen.find((x) => x.body.params?.name === 'flow_status')!.body.params!.arguments).toEqual({ detailed: false })
     const down = createFlowClient({ url: 'http://127.0.0.1:1/mcp', notRunningHint: 'start flow-music-mcp', timeoutMs: 500 })
     expect(await down.status()).toMatchObject({ up: false, signedIn: null, hint: 'start flow-music-mcp' })

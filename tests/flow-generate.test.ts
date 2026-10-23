@@ -251,6 +251,16 @@ describe('the pipeline with Google Flow art', () => {
     expect(flow.calls.filter((c) => c.tool === 'flow_status').length).toBe(1) // checked once, before the fan-out
   }, 180_000)
 
+  it('an unknown sign-in state (Chrome not open yet) does not block the generate step', async () => {
+    const flow = new FakeFlow()
+    flow.signedIn = null
+    const { svc, slug } = await setup(flow)
+    await svc.runPipeline(slug, 'art')
+    const { failed } = await waitIdle(env!, slug, 120_000)
+    expect(failed, (await failures(env!)).join(' | ')).toEqual([])
+    expect(flow.calls.filter((c) => c.tool === 'flow_generate').length).toBeGreaterThan(0)
+  }, 180_000)
+
   it('not signed in or not running fails the generate step once, with the hint', async () => {
     const flow = new FakeFlow()
     flow.signedIn = false
