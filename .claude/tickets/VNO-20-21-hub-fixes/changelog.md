@@ -1,5 +1,17 @@
 # VNO-20 and VNO-21 changelog
 
+## 2026-10-23 (fifth round): VNO-29 to VNO-31, found by the hub's `the-winter-garden-clock` production
+
+Same branch `VNO-20-23_fixes`. Committed, not pushed. Evidence: the hub's `runs/the-winter-garden-clock.md` "Found" and `.claude/temp/hub10-p5/`.
+
+| Ticket | Commit | Files | What changed |
+|---|---|---|---|
+| VNO-29 | b7f966d | `templates/puzzles/game/python-packages/vno_puzzles/knights.py`, `src/engine/puzzles/readback.ts`, `src/shared/puzzle.ts`, `src/engine/mcp/tools-puzzle.ts`, `docs/mcp-guide.md`, `tests/puzzles/test_knights.py`, `tests/puzzle-python.test.ts` | The knights `intro` is part of the read-back: the reader states the rule back (`{id: "intro", truthTellers, liars}`) and the check compares it with the intro and the statements. Read-backs without it fail ("no rule for the intro") when the prose is given. |
+| VNO-30 | e279a01 | `src/engine/vn/script.ts`, `docs/mcp-guide.md`, `tests/vn-puzzle-import.test.ts` | The beat of an `EVIDENCE:` line shows the item's insert image; the next beat of the scene hides it (an `INSERT:` line before it, or a picture the next beat sets itself, wins). |
+| VNO-31 | dd18d00 | `src/engine/assets/derive.ts`, `tests/art-prompts.test.ts` | `withoutCharacterSentences` keeps the clauses of a colon/semicolon sentence that name nobody, so a one-sentence place description is no longer dropped for a character name in its head. The cause was not the bible parse. |
+
+Verification: full `yarn test` twice 922/922 (68 files), `yarn typecheck`, `yarn lint` clean; puzzle library tests with the SDK's Python 3.12.7 (testimony 14, knights 14, library 26, logic 13). Not run: `renpy lint`, a rebuild of the production.
+
 ## 2026-10-23 (last): VNO-28, Flow jobs in their own lane
 
 Same branch `VNO-20-23_fixes`. Committed, not pushed.

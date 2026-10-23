@@ -5,7 +5,7 @@ What VN Studio still lacks on its own. Work that needs the other tools or a prod
 ## Where it stands (2026-10-23, branch `VNO-20-23_fixes` on master 2f22db1)
 
 - **Merged:** VNO-04 to VNO-19 (VNO-10 to VNO-19 in PR #11). VNO-08 closed every VN Studio item of the hub roadmap. `renpy lint` was clean on all 9 integration cases (Ren'Py 8.5.3) at VNO-08.
-- **On branch `VNO-20-23_fixes` (not merged):** VNO-20 to VNO-28, the findings of the hub runs; 920 tests pass, typecheck and lint clean.
+- **On branch `VNO-20-23_fixes` (not merged):** VNO-20 to VNO-31, the findings of the hub runs; 922 tests pass, typecheck and lint clean.
 - **Verified live:** two *Clockless God* VNs (linear and with choices) built from Scriptorium scripts and played by the user; a pixel-art book with Claude as the client for the model roles; story tools with German, English and Arabic editions.
 - **Hub tasks that change or use this repo:** HUB-03 (VNO-08 live check), HUB-06 (CG characters at import, `VNO-16`), HUB-07 (Flow provider, `VNO-10`), HUB-08 (start the studios, `VNO-11`), HUB-10 (puzzle visual novels, `VNO-12` to `VNO-15`). Those numbers are reserved; this roadmap's tickets start at VNO-17.
 
@@ -13,7 +13,7 @@ What VN Studio still lacks on its own. Work that needs the other tools or a prod
 
 No open tasks.
 
-New work gets the next free number (VNO-25), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
+New work gets the next free number (VNO-32), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
 
 ## Done
 
@@ -21,6 +21,9 @@ New work gets the next free number (VNO-25), a plan in `.claude/tickets/VNO-NN-<
 - **VNO-26** (2026-10-23): every Knights and Knaves speaker has a statement (seed 517353379, 3 speakers, left one silent; 1101 of 1331 sampled puzzles had a silent speaker). A silent speaker gets a true statement before minimising, and minimising keeps each speaker's last statement.
 - **VNO-27** (2026-10-23): `docs/mcp-guide.md` (import) lists the `CLUE:` ids per kind (Murdle and logic `c1`.. with `murder` or `intro`, Knights and Knaves `intro` and `t1`.., a testimony's `e1`.. and `intro`) and how a chapter may spread them; one line in `docs/protocol.md`.
 - **VNO-28** (2026-10-23): Flow image jobs no longer wait behind a ComfyUI book. A job can name a `lane`; a laned job takes no slot of its agent and waits only for the same lane. Flow images and Flow Music use the `flow` lane; ComfyUI keeps the art director's slot (it shares the GPU with the local models). Jobs queued before the change have no lane.
+- **VNO-29** (2026-10-23): the Knights and Knaves `intro` is read back. `readBackTask` lists it and asks for its rule (`{id: "intro", truthTellers, liars}`, the story's words); `vno_puzzle_check_text` refuses a missing rule, words not in the intro, "knaves tell the truth", and an intro that disagrees with the statements that use its words.
+- **VNO-30** (2026-10-23): an `EVIDENCE:` picture is shown with its line in every book, not only with a testimony's court record: the beat gets the insert image, the next beat of the scene hides it (the scene end clears it), and the asset plan has `cg_<key>`.
+- **VNO-31** (2026-10-23): the art plan keeps a place's description when a character name is in it. `withoutCharacterSentences` dropped a whole sentence that named a character ("a salon in the Moreau house: ..."), leaving "Warm golden light." or nothing; now only the colon or semicolon clauses that name one go.
 
 - **VNO-20** (2026-10-23): a ComfyUI prompt that is in neither `/queue` nor `/history` while the job waits (ComfyUI crashed and restarted) is submitted once more, then the job fails with a clear error instead of staying `running`; ComfyUI unreachable for more than `unreachableTimeoutMs` (default 300 s, `config/comfy.md`) fails the wait. Fake-client tests only; a live ComfyUI crash was not run.
 - **VNO-24** (2026-10-23): a Gemini 429 whose retry time (`retry in 21h21m47.5s`, `retry in 45s`, `retryDelay`) is longer than the retry schedule and 5 minutes is a daily quota: that clip and the remaining clips of the job fail at once without more Flow calls, with one message that gives the reset time. Shorter retry times retry as before; clips already made are kept.
