@@ -349,14 +349,22 @@ def generate_knights(size=3, seed=0, band="medium", max_tries=400):
         else:
             continue
         keep = list(chosen)
+        # every speaker must say something: a silent speaker would be a clue nobody wrote (VNO-26)
+        for x in sp:
+            if not any(c["speaker"] == x for c in keep):
+                extra = next((c for c in cands if c["speaker"] == x and c not in keep), None)
+                if extra is not None:
+                    keep.append(extra)
         order = list(range(len(keep)))
         rng.shuffle(order)
         gone = set()
         for i in order:
             trial = [c for j, c in enumerate(keep) if j != i and j not in gone]
-            if trial and count_solutions(_with_ids(base, trial), 2) == 1:
+            if all(any(c["speaker"] == x for c in trial) for x in sp) and count_solutions(_with_ids(base, trial), 2) == 1:
                 gone.add(i)
         stmts = [c for j, c in enumerate(keep) if j not in gone]
+        if {c["speaker"] for c in stmts} != set(sp):
+            continue
         rng.shuffle(stmts)
         p = _with_ids(base, stmts)
         res = deduce(p)

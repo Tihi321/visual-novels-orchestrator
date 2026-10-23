@@ -37,7 +37,8 @@ def check_sound(p, band):
     K.verify_knights(p)
     for i in range(len(p["statements"])):
         rest = p["statements"][:i] + p["statements"][i + 1:]
-        assert not rest or K.count_solutions(p, 2, statements=rest) != 1, "statement %s is not needed (seed %s %s)" % (p["statements"][i]["id"], p["seed"], band)
+        only_one = sum(1 for t in p["statements"] if t["speaker"] == p["statements"][i]["speaker"]) == 1  # a speaker's only statement stays (VNO-26)
+        assert only_one or not rest or K.count_solutions(p, 2, statements=rest) != 1, "statement %s is not needed (seed %s %s)" % (p["statements"][i]["id"], p["seed"], band)
     res = K.deduce(p)
     assert res["solved"] and K.band_of(res) == band, (p["seed"], band, res["rules"])
     splits = res["splits"]
@@ -56,6 +57,20 @@ def test_soundness_200_seeds_per_band_and_size():
                 check_sound(p, band)
                 count += 1
     print("  %d Knights and Knaves puzzles, all unique, found without guessing, minimal and in their band" % count)
+
+
+def test_every_speaker_has_a_statement():
+    """VNO-26: a silent speaker is not a clue the text can explain, so every speaker says something (seed 517353379 left one silent)."""
+    count = 0
+    for size in (2, 3, 4, 5):
+        for band in BANDS:
+            if size == 2 and band == "hard":
+                continue
+            for seed in [517353379] + list(range(1, 61)):
+                p = generate("knights", size, seed, band)
+                assert {s["speaker"] for s in p["statements"]} == set(p["speakers"]), (size, band, seed)
+                count += 1
+    print("  %d puzzles, every speaker has a statement" % count)
 
 
 def test_two_speakers_easy_and_medium_and_no_hard_one():
