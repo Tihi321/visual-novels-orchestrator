@@ -1,5 +1,18 @@
 # VNO-20 and VNO-21 changelog
 
+## 2026-10-23 (later): VNO-22 to VNO-24, found by the hub's HUB-07 live run
+
+Same branch, renamed `VNO-20-23_fixes`. Committed, not pushed.
+
+| Ticket | Commit | Files | What changed |
+|---|---|---|---|
+| VNO-22 | 7189617 | `src/engine/studios/flow.ts`, `tests/studios-flow-client.test.ts`, `tests/flow-generate.test.ts` | `chrome_running: false` from `flow_status` is an unknown sign-in (`signedIn: null`, no hint), so the generate pre-check goes on and the first Flow call opens Chrome; Chrome up and `signed_in: false` still blocks. |
+| VNO-23 | f0e0006 | `seed/config/studios.md`, `tests/seed-files.test.ts` (new) | The seeded `flowRepo` had a form feed for the backslash and `f`; now `C:\projects\Personal\flow-music-mcp`. A test fails on any control character in a seed file and checks an unedited damaged copy is refreshed at start. No other damage found. |
+| VNO-24 | ed752bb | `src/engine/voice/flow.ts`, `tests/voice-flow-jobs.test.ts`, `tests/flow-fakes.ts` | `parseRetryDelayMs` reads Google's retry time ("retry in 21h21m47.5s", "retry in 45s", `retryDelay`). A 429 whose retry time is at least 5 minutes and longer than the retry schedule stops the voice job at once: that clip and the rest fail without more calls, with one message naming the reset time; clips already made stay. |
+| docs | 84a3aec, 0ebb153 | `ROADMAP.md`, `plan.md` | VNO-22 to VNO-24 done. |
+
+Verification: `yarn test` 916 passed, `yarn typecheck`, `yarn lint` clean (after the last commit). Live: VNO-22 and VNO-23 were seen in the hub run (`creative-hub/runs/hub07-flow-test.md`) on master, not yet re-run on this branch; VNO-24 not seen live with the fix (needs another exhausted quota).
+
 ## 2026-10-23: the two findings of the hub run fixed
 
 Branch `VNO-20-21_fixes` (from master 2f22db1), one commit per ticket. Committed, not pushed.
