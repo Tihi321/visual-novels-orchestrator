@@ -36,6 +36,21 @@ export interface FlowGenerateOpts {
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>
 }
 
+/**
+ * The wait Google asks for in a 429 text: `Please retry in 21h21m47.5s`, `retry in 45s`, or a `retryDelay` of `"76907s"`. Undefined when the text has none.
+ */
+export function parseRetryDelayMs(message: string): number | undefined {
+  const unit = { h: 3_600_000, m: 60_000, s: 1000 } as const
+  const sum = (text: string): number => [...text.matchAll(/(\d+(?:\.\d+)?)\s*([hms])/gi)].reduce((t, m) => t + Number(m[1]) * unit[m[2]!.toLowerCase() as keyof typeof unit], 0)
+  const retryIn = /retry in\s+((?:\d+(?:\.\d+)?\s*[hms]\s*)+)/i.exec(message)
+  if (retryIn) return Math.round(sum(retryIn[1]!))
+  const delay = /retryDelay\W+(\d+(?:\.\d+)?)\s*s/i.exec(message)
+  return delay ? Math.round(Number(delay[1]) * 1000) : undefined
+}
+
+/** A retry time longer than this (and than the whole retry schedule) is a daily quota, not a burst: waiting it out in the job makes no sense. */
+export const QUOTA_MIN_MS = 300_000
+
 const realSleep = (ms: number, signal?: AbortSignal): Promise<void> =>
   new Promise((resolve) => {
     const t = setTimeout(resolve, ms)
@@ -100,6 +115,7 @@ export async function generateFlowClips(svc: VnService, slug: string, lang: Lang
   const work = o.limit ? todo.slice(0, o.limit) : todo
   let made = 0
   let failed = 0
+  let quota: string | undefined // set when Gemini's daily quota is used up: the rest of the job is not tried
   const errors: string[] = []
   const fail = (beatId: string, message: string) => {
     failed++
@@ -107,6 +123,10 @@ export async function generateFlowClips(svc: VnService, slug: string, lang: Lang
   }
   for (const [i, t] of work.entries()) {
     o.signal?.throwIfAborted()
+    if (quota) {
+      failed++
+      continue
+    }
     const ref = parseFlowVoice(t.voice)
     if (!ref) {
       fail(t.beatId, `"${t.voice}" is not a Flow voice (gemini:<Name> or windows:<Voice Name>)`)
@@ -125,6 +145,16 @@ export async function generateFlowClips(svc: VnService, slug: string, lang: Lang
       } catch (e) {
         if (o.signal?.aborted) throw e
         if (e instanceof FlowError && (e.kind === 'unreachable' || e.kind === 'signedOut')) throw e
+        if (e instanceof FlowError && e.kind === 'rateLimit') {
+          const retryMs = parseRetryDelayMs(e.message)
+          const schedule = Array.from({ length: o.settings.retries }, (_, k) => backoff[Math.min(k, backoff.length - 1)] ?? 90_000).reduce((a, b) => a + b, 0)
+          if (retryMs !== undefined && retryMs > Math.max(schedule, QUOTA_MIN_MS)) {
+            const resets = new Date(Date.now() + retryMs).toLocaleString()
+            quota = `Gemini's daily voice quota is used up (Google asks to retry in ${Math.round(retryMs / 60_000)} min, about ${resets}); the remaining clips were not tried`
+            fail(t.beatId, quota)
+            break
+          }
+        }
         if (e instanceof FlowError && e.kind === 'rateLimit' && attempt < o.settings.retries) {
           const wait = backoff[Math.min(attempt, backoff.length - 1)] ?? 90_000
           o.log(`voice ${lang}: ${t.beatId}: rate limited, waiting ${Math.round(wait / 1000)} s (retry ${attempt + 1} of ${o.settings.retries})`)
@@ -148,11 +178,12 @@ export async function generateFlowClips(svc: VnService, slug: string, lang: Lang
     if (i < work.length - 1 && o.settings.pauseMs > 0) await sleep(o.settings.pauseMs, o.signal)
   }
   if (!work.length) await writeVoiceIndex(dir, index)
+  if (quota) o.log(`voice ${lang}: ${quota}`)
   if (failed && !made) throw new Error(`voice ${lang}: all ${failed} clip(s) failed: ${errors.join('; ')}`)
   const parts = [`${made} clip(s) made, ${kept} unchanged`]
   if (importedKept) parts.push(importedClipsNote(importedKept, importedStale))
   if (todo.length > work.length) parts.push(`${todo.length - work.length} left (limit ${o.limit})`)
-  if (failed) parts.push(`${failed} failed (${errors.join('; ')})`)
+  if (failed) parts.push(quota ? `${failed} failed: ${quota}` : `${failed} failed (${errors.join('; ')})`)
   if (skipped) parts.push(`${skipped} skipped: no ${lang} voice for ${[...missing].join(', ')} (${PLAN_HINT})`)
   return { made, kept, failed, skipped, status: 'done', message: `voice ${lang}: ${parts.join('; ')}` }
 }
