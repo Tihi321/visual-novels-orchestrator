@@ -44,6 +44,14 @@ VOCAB = [
         "key": "guest", "label": "who left first", "values": ["the doctor", "the colonel", "the cook"], "item": "guest list",
         "claim": "{v} left first", "fact": "It shows {v} leaving first",
     },
+    {
+        "key": "window", "label": "the library window", "values": ["shut", "broken", "wide open"], "item": "repair bill",
+        "claim": "The library window was {v}", "fact": "It records the library window as {v}",
+    },
+    {
+        "key": "shoes", "label": "the shoes by the door", "values": ["muddy", "polished", "missing"], "item": "boot print",
+        "claim": "The shoes by the door were {v}", "fact": "It shows the shoes by the door {v}",
+    },
 ]
 BY_KEY = {v["key"]: v for v in VOCAB}
 SIZES = {"easy": (4, 3), "medium": (5, 4), "hard": (6, 5)}  # statements, pieces of evidence
@@ -83,6 +91,42 @@ def near_misses(p):
             for e in p["evidence"]:
                 n += sum(1 for f in e["facts"] if f["key"] == c["key"] and f["value"] == c["value"])
     return n
+
+
+def repeats(p):
+    """Ways a puzzle says the same thing twice (VNO-25), as a list of strings; empty is good. The generator rejects a core that has any, and the
+    tests check it. It is not part of `validate_testimony`: an author may repeat on purpose."""
+    out = []
+    seen = {}
+    for s in p["statements"]:
+        said = frozenset(_pairs(s["claims"]))
+        if said in seen:
+            out.append("%s says what %s says" % (s["id"], seen[said]))
+        seen[said] = s["id"]
+        press = _pairs((s.get("press") or {}).get("claims", []))
+        if press and press <= said:
+            out.append("the press line of %s only repeats the statement" % s["id"])
+        if press and {c["key"] for c in s["claims"]} & {k for k, _ in press}:
+            out.append("the press line of %s is about the same thing as the statement" % s["id"])
+    claimed = {}
+    for s in p["statements"]:
+        for c in s["claims"]:
+            if c["key"] in claimed:
+                out.append("%s and %s both claim something about %s" % (claimed[c["key"]], s["id"], c["key"]))
+            claimed[c["key"]] = s["id"]
+    pressed = {}
+    for s in p["statements"]:
+        for c in (s.get("press") or {}).get("claims", []):
+            if c["key"] in pressed:
+                out.append("the press lines of %s and %s are about the same thing (%s)" % (pressed[c["key"]], s["id"], c["key"]))
+            pressed[c["key"]] = s["id"]
+    shown = {}
+    for e in p["evidence"]:
+        for f in e["facts"]:
+            if f["key"] in shown:
+                out.append("%s and %s show the same fact (%s)" % (shown[f["key"]], e["id"], f["key"]))
+            shown[f["key"]] = e["id"]
+    return out
 
 
 def band_of(p, found=None):
@@ -228,29 +272,38 @@ def generate_testimony(size=None, seed=0, band="medium", max_tries=200):
 
         liar_key = rng.choice(keys)
         pressed = band != "easy"
-        statements = []
         others = [k for k in keys if k != liar_key]
         liar_at = rng.randrange(n)
+        # VNO-25: every statement is about its own key, every press line about a key of its own, every piece of evidence about its own keys
+        mains = rng.sample(others, n if pressed else n - 1)
+        statements = []
+        press_keys = [liar_key] if pressed else []
         for i in range(n):
             if i == liar_at:
                 if pressed:
-                    st = {"claims": [claim(rng.choice(others))], "press": {"claims": [claim(liar_key, truth=False)]}}
+                    main = mains.pop()
+                    st = {"claims": [claim(main)], "press": {"claims": [claim(liar_key, truth=False)]}}
                 else:
                     st = {"claims": [claim(liar_key, truth=False)]}
             else:
-                st = {"claims": [claim(rng.choice(keys if rng.random() < 0.3 and False else others))]}
-                if band != "easy" and rng.random() < 0.5:
-                    st["press"] = {"claims": [claim(rng.choice(others))]}
+                main = mains.pop()
+                st = {"claims": [claim(main)]}
+                if pressed and rng.random() < 0.5:
+                    free = [k for k in others if k != main and k not in press_keys]
+                    if free:
+                        pk = rng.choice(free)
+                        press_keys.append(pk)
+                        st["press"] = {"claims": [claim(pk)]}
             statements.append(st)
-        # the evidence: one piece shows the liar's key, the rest show other keys truthfully (they agree with what is said: near misses)
-        evidence = [{"facts": [claim(liar_key)]}]
-        for j in range(m - 1):
-            facts = [claim(rng.choice(others))]
-            if band == "hard" and rng.random() < 0.5:
-                extra = claim(rng.choice(others))
-                if extra["key"] != facts[0]["key"]:
-                    facts.append(extra)
-            evidence.append({"facts": facts})
+        # the evidence: one piece shows the liar's key, the rest show other keys truthfully (they agree with what is said: near misses);
+        # no key is shown twice
+        evid_keys = rng.sample(others, m - 1)
+        evidence = [{"facts": [claim(liar_key)]}] + [{"facts": [claim(k)]} for k in evid_keys]
+        if band == "hard":
+            spare = [k for k in others if k not in evid_keys]
+            for e in evidence[1:]:
+                if spare and rng.random() < 0.5:
+                    e["facts"].append(claim(spare.pop(rng.randrange(len(spare)))))
         rng.shuffle(evidence)
         for i, s in enumerate(statements):
             s["id"] = "t%d" % (i + 1)
@@ -266,6 +319,8 @@ def generate_testimony(size=None, seed=0, band="medium", max_tries=200):
             "statements": statements, "evidence": evidence,
             "solution": {"statement": liar_id, "evidence": witness, "press": pressed},
         }
+        if repeats(p):
+            continue
         found = clashes(p)
         if len(found) != 1 or found[0]["statement"] != liar_id or found[0]["evidence"] != witness:
             continue

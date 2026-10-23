@@ -29,6 +29,42 @@ def test_every_band_is_sound():
             assert len(found) == 1 and found[0]["statement"] == p["solution"]["statement"] and found[0]["evidence"] == p["solution"]["evidence"]
 
 
+def test_nothing_is_said_twice():
+    """VNO-25: no two statements say the same thing, no two pieces of evidence carry the same fact, a press line adds something. The seeds are
+    the ones from the hub run (933273182, 11 to 66) and a range; the proof still holds for each."""
+    seeds = [933273182, 11, 22, 33, 44, 55, 66] + list(range(1, 101))
+    for band in BANDS:
+        for seed in seeds:
+            p = generate("testimony", None, seed, band)
+            assert T.repeats(p) == [], (band, seed, T.repeats(p))
+            r = solve(p)
+            assert r["unique"] and r["deducible"] and r["band"] == band, (band, seed)
+            texts = [p["text"][s["id"]] for s in p["statements"]]
+            assert len(set(texts)) == len(texts), (band, seed, "two statements read the same")
+            names = [p["names"][e["id"]] for e in p["evidence"]]
+            assert len(set(names)) == len(names)
+            for e in p["evidence"]:
+                assert not p["names"][e["id"]].endswith(" 2"), (band, seed, "two items of one kind")
+            for s in p["statements"]:
+                if s.get("press"):
+                    assert p["text"][s["id"] + ".press"] != "Now that you ask. " + p["text"][s["id"]]
+
+
+def test_repeats_finds_each_kind_of_repeat():
+    p = generate("testimony", None, 3, "medium")
+    assert T.repeats(p) == []
+    q = copy.deepcopy(p)
+    q["statements"][1]["claims"] = copy.deepcopy(q["statements"][0]["claims"])
+    assert any("says what" in r for r in T.repeats(q))
+    q = copy.deepcopy(p)
+    q["evidence"][1]["facts"] = copy.deepcopy(q["evidence"][0]["facts"])
+    assert any("same fact" in r for r in T.repeats(q))
+    q = copy.deepcopy(p)
+    s = next(s for s in q["statements"] if s.get("press"))
+    s["press"]["claims"] = copy.deepcopy(s["claims"])
+    assert any("press line" in r for r in T.repeats(q))
+
+
 def test_press_is_needed_from_medium():
     for seed in range(40):
         assert generate("testimony", None, seed, "easy")["solution"]["press"] is False
