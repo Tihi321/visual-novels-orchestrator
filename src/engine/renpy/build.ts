@@ -5,6 +5,7 @@ import type { Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { emitTheme } from '../themes/emit'
 import { defaultThemesDir, findTheme, listThemes } from '../themes/load'
 import { DEFAULT_THEME, pickTheme } from '../themes/pick'
+import { playedPuzzles } from './puzzles'
 import { emitScripts, voicePath, type LineMapEntry, type VoiceSource } from './emit'
 import { escapeRenpy } from './escape'
 import { ambId, sfxId } from '../vn/ids'
@@ -132,6 +133,12 @@ export async function buildGame(inp: BuildGameInput): Promise<BuildGameResult> {
   fs.mkdirSync(gameDir, { recursive: true })
   copyDir(path.join(templateDir, 'game'), sub)
   for (const d of ['images', 'audio']) fs.mkdirSync(path.join(sub, d), { recursive: true })
+  // The puzzle library (screens and the Python package) only goes into a book that has a puzzle beat.
+  if (playedPuzzles(book).length) {
+    const puzzleLib = path.join(path.dirname(templateDir), 'puzzles', 'game')
+    if (!fs.existsSync(puzzleLib)) throw new Error(`The puzzle library not found at ${puzzleLib}`)
+    fs.cpSync(puzzleLib, sub, { recursive: true, filter: (src) => !src.includes('__pycache__') })
+  }
 
   // 2. Which theme.
   const available = listThemes(themesDir).themes.map((t) => t.theme.name)

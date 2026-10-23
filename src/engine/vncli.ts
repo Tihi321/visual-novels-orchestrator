@@ -45,7 +45,7 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   voice status                           is VibeTTS reachable, and its fixed voices (Kokoro: English, Supertonic: 31 languages)
   comfy status|free                      ComfyUI lanes and engines / free its VRAM
   settings <slug> [--style pixel|illustrated] [--palette name|none] [--music-provider chiptune|comfy|auto] [--chip nes|gb|genesis|snes|pce|auto]
-           [--pixel-provider pixel-studio|vno] [--art-provider comfy|pixel-studio-draw|hand] [--pixel-size 320x180] [--dither none|ordered|floyd] [--outline[=false]] [--tracks n]
+           [--pixel-provider pixel-studio|vno] [--art-provider comfy|pixel-studio-draw|hand|flow] [--flow-model "Nano Banana Pro"] [--pixel-size 320x180] [--dither none|ordered|floyd] [--outline[=false]] [--tracks n]
                                          show or change the look settings of a project
   studios status                         are Pixel Studio and Chiptune Studio reachable (how to start them if not)
   studio open <slug> <assetId> [--wait] [--via launch|mcp] [--timeout seconds]   open an asset in Pixel Studio / Chiptune Studio; a save there makes a new custom, locked version (--wait: until the first save)
@@ -129,6 +129,8 @@ export function settingsPatchFromFlags(p: ParsedCli): ProjectSettingsPatch {
   if (pp !== undefined) art.pixelProvider = pp
   const ap = pick('art-provider', ART_PROVIDERS)
   if (ap !== undefined) art.provider = ap
+  const flowModel = flag(p, 'flow-model')
+  if (flowModel !== undefined) art.flowModel = flowModel === 'auto' ? null : flowModel
   const pixel: NonNullable<ProjectSettingsPatch['art']>['pixel'] = {}
   const size = flag(p, 'pixel-size')
   if (size !== undefined) {

@@ -10,6 +10,7 @@ import { clientTools } from './tools-client'
 import { importTools } from './tools-import'
 import { langTools } from './tools-lang'
 import { planTools } from './tools-plan'
+import { puzzleTools } from './tools-puzzle'
 import { storyTools } from './tools-story'
 
 /**
@@ -131,7 +132,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     def(
       'vno_asset_regen',
-      'Generate a new version of an asset with ComfyUI (optionally with a new prompt, engine or seed), select it, and rebuild. It runs before the older jobs of the pipeline. A regenerated character sheet is made before the sprite jobs already queued for it; the sprites already made from the old sheet come back as staleSprites, and sprites: true makes them again after the sheet (every unlocked, generated sprite of it). An image of a hand-made art project (art.provider hand) is refused: use vno_asset_replace.',
+      'Generate a new version of an asset with ComfyUI, or with Google Flow for an image of a project whose art.provider is flow (optionally with a new prompt, engine or seed), select it, and rebuild. It runs before the older jobs of the pipeline. A regenerated character sheet is made before the sprite jobs already queued for it; the sprites already made from the old sheet come back as staleSprites, and sprites: true makes them again after the sheet (every unlocked, generated sprite of it). An image of a hand-made art project (art.provider hand) is refused: use vno_asset_replace.',
       z.object({ slug, id: z.string(), prompt: z.string().optional(), engine: z.string().optional(), seed: z.number().int().optional(), sprites: z.boolean().optional().describe('A sheet: also make its sprites again, after the sheet'), wait }),
       async (a) => {
         const r = await svc.regenerateAsset(a.slug, a.id, { prompt: a.prompt, engine: a.engine, seed: a.seed, sprites: a.sprites })
@@ -173,17 +174,18 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     def('vno_get_project', 'One project in full: its settings (theme, art, music, voice), editions, assets, pipeline state, build and lint results.', z.object({ slug }), async (a) => ({ project: { ...(await svc.detail(a.slug)), models: await svc.projectModels(a.slug) } })),
     def(
       'vno_update_settings',
-      'Change the settings of a project: each part is merged into the current one, and the asset list follows. theme: a theme name (vno_themes) or null. art: style (pixel or illustrated), palette, stylePrompt, provider (comfy, pixel-studio-draw, or hand: images are made by you and set with vno_asset_replace, ComfyUI is never called for an image), pixelProvider, pixel {width,height,dither,outline}. music: provider, chip, tracks. voice: provider, englishEngine and the other voice settings (vno_get_project shows them). models: {role: provider/model, ...} the models this project uses for those roles, before the agent and role lists of config/roles.md (the way to have an MCP client do one project: {"art-director": "client/claude-code"}); null for a role clears it. A new art.stylePrompt (or art style) is also written into the prompts that have no image yet (restyle in the answer lists the assets: kept, and generated, which keep the old style until regenerated). A model whose provider has no key (or is down) is saved but not used: the answer has warnings, and vno_status shows models with usable and the reason. null clears an optional field.',
+      'Change the settings of a project: each part is merged into the current one, and the asset list follows. theme: a theme name (vno_themes) or null. art: style (pixel or illustrated), palette, stylePrompt, provider (comfy; pixel-studio-draw; hand: images are made by you and set with vno_asset_replace, ComfyUI is never called for an image; or flow: every image is made by Google Flow through flow-music-mcp, free, with flowModel e.g. "Nano Banana Pro" and flowProject, see docs/mcp-guide.md; Flow runs one image at a time and a project is never mixed with ComfyUI art unless you regenerate one asset with an engine), pixelProvider, pixel {width,height,dither,outline}. music: provider (comfy, chiptune, or flow: Flow Music songs through flow-music-mcp, which SPEND FLOW MUSIC CREDITS: never a default, ask the user first; at most flowMusicMaxSongs songs per project, 4 by default), chip, tracks. voice: provider (vibetts, comfy, or flow: free Gemini/Windows narration through flow-music-mcp, voice ids gemini:<Name>; flowStyles {speakerKey: "gruffly, tired"} is an optional delivery note per speaker), englishEngine and the other voice settings (vno_get_project shows them). sound: sfxEngine ("chiptune": Chiptune Studio makes sound effects with compose_sfx, picking the sound from the key and description; "custom:<comfy workflow>"; null: none, import a file with vno_asset_import) and ambienceEngine (a ComfyUI music engine, the default, or "chiptune" for compose_sfx ambience loops); only sounds with no file yet follow a change. models: {role: provider/model, ...} the models this project uses for those roles, before the agent and role lists of config/roles.md (the way to have an MCP client do one project: {"art-director": "client/claude-code"}); null for a role clears it. A new art.stylePrompt (or art style) is also written into the prompts that have no image yet (restyle in the answer lists the assets: kept, and generated, which keep the old style until regenerated). A model whose provider has no key (or is down) is saved but not used: the answer has warnings, and vno_status shows models with usable and the reason. null clears an optional field.',
       z.object({
         slug,
         theme: z.string().nullable().optional(),
         art: z.record(z.string(), z.unknown()).optional(),
         music: z.record(z.string(), z.unknown()).optional(),
         voice: z.record(z.string(), z.unknown()).optional(),
+        sound: z.object({ sfxEngine: z.string().nullable().optional(), ambienceEngine: z.string().optional() }).optional(),
         models: z.record(z.string(), z.string().nullable()).optional().describe('role -> provider/model, for example {"art-director": "client/claude-code"}; null clears a role')
       }),
       async (a) => {
-        const patch = { ...(a.theme !== undefined ? { theme: a.theme } : {}), ...(a.art ? { art: a.art } : {}), ...(a.music ? { music: a.music } : {}), ...(a.voice ? { voice: a.voice } : {}), ...(a.models ? { models: a.models } : {}) } as ProjectSettingsPatch
+        const patch = { ...(a.theme !== undefined ? { theme: a.theme } : {}), ...(a.art ? { art: a.art } : {}), ...(a.music ? { music: a.music } : {}), ...(a.voice ? { voice: a.voice } : {}), ...(a.sound ? { sound: a.sound } : {}), ...(a.models ? { models: a.models } : {}) } as ProjectSettingsPatch
         const r = await svc.updateSettings(a.slug, patch)
         const rs = r.restyle
         const restyle = rs
@@ -275,7 +277,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     def(
       'vno_voice_set',
-      'Give a speaker (a character key, or narrator) a voice for one edition language, and make a preview clip. Kokoro voices read English only; supertonic:F1..F5 / supertonic:M1..M5 read any language. Ids are in vno_voice_status.',
+      'Give a speaker (a character key, or narrator) a voice for one edition language, and make a preview clip. Kokoro voices read English only; supertonic:F1..F5 / supertonic:M1..M5 read any language. Ids are in vno_voice_status. With voice.provider flow the ids are gemini:<Name> (any language, e.g. gemini:Charon) or windows:<Voice Name> (its culture only); flow_voices of flow-music-mcp lists them.',
       z.object({ slug, speakerKey: z.string().describe('A character key or narrator'), lang, voice: z.string().describe('A voice id, for example af_heart or supertonic:F2') }),
       async (a) => ({ preview: await svc.setVoice(a.slug, a.speakerKey, a.lang, a.voice) })
     ),
@@ -345,6 +347,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     // ---- story: make and edit a visual novel without a book folder ----
     ...storyTools(svc, def),
+    ...puzzleTools(svc, def),
 
     // ---- plans, music, cues, library ----
     ...planTools(svc, def, opts),

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { BUILTIN_LANGUAGES, LEGACY_LANGS } from './languages'
+import { editionPuzzleSchema, puzzleEntrySchema } from './puzzle'
 
 /**
  * The VN data contract: the book structure (`vn.json`), editions (`editions/<lang>.json`), the per-project settings
@@ -69,8 +70,19 @@ export const narrationBeatSchema = z.object({
   ...beatCues
 })
 
-export const vnBeatSchema = z.discriminatedUnion('type', [castBeatSchema, lineBeatSchema, narrationBeatSchema])
+/** A puzzle the player solves here (a key of the book's `puzzles`). The story goes on when it is solved (or given up, or failed: see the puzzle's `onFail`). */
+export const puzzleBeatSchema = z.object({
+  id: z.string(),
+  type: z.literal('puzzle'),
+  puzzle: z.string(),
+  ...beatCues
+})
+
+export const vnBeatSchema = z.discriminatedUnion('type', [castBeatSchema, lineBeatSchema, narrationBeatSchema, puzzleBeatSchema])
 export type VnBeat = z.infer<typeof vnBeatSchema>
+/** A beat with words: a line or a narration (a cast and a puzzle have none). */
+export type TextBeat = Extract<VnBeat, { text: string }>
+export const hasText = (b: VnBeat): b is TextBeat => b.type === 'line' || b.type === 'narration'
 
 // ---- scenes, chapters, book ----
 
@@ -155,6 +167,8 @@ export const vnBookSchema = z.object({
   images: z.array(imageEntrySchema).optional(),
   /** Sound effects and ambiences the story plays (`sfx_<key>`, `amb_<key>`). */
   sounds: z.array(soundEntrySchema).optional(),
+  /** Logic puzzles between story scenes (a `puzzle` beat plays one). */
+  puzzles: z.array(puzzleEntrySchema).optional(),
   coverBrief: z.string().optional(),
   chapters: z.array(vnChapterSchema),
   /** Problems found while importing (a bad branch, an unknown speaker ...). */
@@ -177,15 +191,17 @@ export const editionSchema = z.object({
   /** Character key -> display name. */
   characterNames: z.record(z.string(), z.string()),
   /** Beat id -> text. */
-  beats: z.record(z.string(), z.string())
+  beats: z.record(z.string(), z.string()),
+  /** Puzzle key -> the names and clue texts in this language. */
+  puzzles: z.record(z.string(), editionPuzzleSchema).optional()
 })
 export type Edition = z.infer<typeof editionSchema>
 
 // ---- project settings (project.md frontmatter) ----
 
-export const ART_PROVIDERS = ['comfy', 'pixel-studio-draw', 'hand'] as const
+export const ART_PROVIDERS = ['comfy', 'pixel-studio-draw', 'hand', 'flow'] as const
 export const PIXEL_PROVIDERS = ['vno', 'pixel-studio'] as const
-export const MUSIC_PROVIDERS = ['comfy', 'chiptune'] as const
+export const MUSIC_PROVIDERS = ['comfy', 'chiptune', 'flow'] as const
 /** The chips of Chiptune Studio. */
 export const CHIPS = ['nes', 'gb', 'genesis', 'snes', 'pce'] as const
 export const DITHERS = ['none', 'ordered', 'floyd'] as const
@@ -247,6 +263,10 @@ export const projectSettingsSchema = z.object({
       bgRemoval: z.enum(['birefnet', 'qwen-edit', 'key']).default('birefnet'),
       /** Who makes the sprites: ComfyUI (the default), or `pixel-studio-draw`: an agent draws small pixel sprites in Pixel Studio, or `hand`: every image is made outside VN Studio and set with vno_asset_replace (ComfyUI is never called for an image). Missing: `comfy`. */
       provider: z.enum(ART_PROVIDERS).optional(),
+      /** `flow` only: the image model as Flow's menu shows it (`Nano Banana Pro`). Missing: Flow's newest Nano Banana. */
+      flowModel: z.string().optional(),
+      /** `flow` only: the Flow project the images are made in. Missing: `vno-<slug>`. */
+      flowProject: z.string().optional(),
       /** Who turns an image into pixel art (pixel style only): the built-in sharp quantiser (`vno`) or Pixel Studio. Missing: `vno`. */
       pixelProvider: z.enum(PIXEL_PROVIDERS).optional(),
       /** Pixel art size and look. Missing fields take `PIXEL_DEFAULTS`. */
@@ -268,7 +288,9 @@ export const projectSettingsSchema = z.object({
       enabled: z.boolean().default(false),
       langs: z.array(langSchema).default([]),
       /** Where clips come from: VibeTTS (Kokoro and Supertonic over its local MCP server) or a ComfyUI TTS workflow. */
-      provider: z.enum(['vibetts', 'comfy']).default('vibetts'),
+      provider: z.enum(['vibetts', 'comfy', 'flow']).default('vibetts'),
+      /** `flow` only: a delivery note per speaker (character key or `narrator`) for the Gemini voice, e.g. "gruffly, tired". */
+      flowStyles: z.record(z.string(), z.string()).optional(),
       /** Language -> TTS engine id (ComfyUI custom workflow name), used when `provider` is `comfy`. */
       engines: z.record(z.string(), z.string()).default({}),
       /** Which engine reads English: the Kokoro voices (the default) or the Supertonic ones. Other languages always use Supertonic. Missing: `kokoro`. */
@@ -277,7 +299,11 @@ export const projectSettingsSchema = z.object({
       voices: z.preprocess(legacyVoices, z.record(z.string(), z.record(langSchema, z.string()))).default({})
     })
     .default({ enabled: false, langs: [], provider: 'vibetts', engines: {}, voices: {} }),
-  /** Sound effects and ambiences. There is no sound-effect engine by default: an effect without a file waits for `vno_asset_import`, unless `sfxEngine` is a `custom:<workflow>`. */
+  /**
+   * Sound effects and ambiences. `ambienceEngine` is a ComfyUI music engine (the default) or `chiptune` (Chiptune Studio's `compose_sfx` ambience loops).
+   * There is no sound-effect engine by default: an effect without a file waits for `vno_asset_import`, unless `sfxEngine` is `chiptune`
+   * (Chiptune Studio's `compose_sfx`) or a `custom:<workflow>`.
+   */
   sound: z
     .object({
       ambienceEngine: z.string().default('ace-step-v1-instrumental'),
@@ -310,6 +336,10 @@ export function resolveMusicProvider(settings: Pick<ProjectSettings, 'art' | 'mu
 
 /** The pseudo engine id of a music asset made by Chiptune Studio. */
 export const CHIPTUNE_ENGINE = 'chiptune'
+/** The pseudo engine id of an image made by Google Flow (through flow-music-mcp). */
+export const FLOW_ENGINE = 'flow'
+/** The pseudo engine id of a track made by Flow Music (spends Flow Music credits). */
+export const FLOW_MUSIC_ENGINE = 'flow-music'
 
 // ---- assets (assets.json) ----
 
@@ -328,6 +358,8 @@ export const assetVersionSchema = z.object({
   /** Music from Chiptune Studio: where the loop starts and ends, in seconds. Ren'Py plays `<loop start>file` with it. */
   loopStartSec: z.number().nullable().optional(),
   loopEndSec: z.number().nullable().optional(),
+  /** Made by Google Flow / Flow Music: the Flow media id (images) or song id, so a later image can use it as a reference. */
+  remote: z.object({ provider: z.enum(['flow', 'flow-music']), id: z.string(), project: z.string().optional() }).optional(),
   /** Chiptune Studio's native song file of this version (next to the audio), for "Open in Chiptune Studio". */
   songFile: z.string().optional(),
   /** Pixel Studio art: the PNG at the native pixel size (before the nearest-neighbour scale up), for "Open in Pixel Studio". */

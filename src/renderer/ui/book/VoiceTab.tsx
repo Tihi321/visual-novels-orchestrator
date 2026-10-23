@@ -16,6 +16,7 @@ export function VoiceTab({ slug, detail }: { slug: string; detail: ProjectDetail
   const voice = detail.settings.voice
   const speakers: Speaker[] = [{ key: 'narrator', name: 'Narrator' }, ...detail.book.characters.map((c) => ({ key: c.key, name: c.name }))]
   const vibe = voice.provider === 'vibetts'
+  const flow = voice.provider === 'flow'
   return (
     <div className="stack" data-testid="tab-voice-body">
       <div className="card">
@@ -26,19 +27,80 @@ export function VoiceTab({ slug, detail }: { slug: string; detail: ProjectDetail
         </label>
         <div className="row" style={{ marginTop: 8 }}>
           <label htmlFor="voice-provider">Voice engine</label>
-          <select id="voice-provider" value={voice.provider} disabled={!voice.enabled} onChange={(e) => updateSettings(slug, { voice: { provider: e.target.value as 'vibetts' | 'comfy' } })} data-testid="voice-provider">
+          <select id="voice-provider" value={voice.provider} disabled={!voice.enabled} onChange={(e) => updateSettings(slug, { voice: { provider: e.target.value as 'vibetts' | 'comfy' | 'flow' } })} data-testid="voice-provider">
             <option value="vibetts">VibeTTS (Kokoro / Supertonic)</option>
+            <option value="flow">Google Flow (Gemini voices, free)</option>
             <option value="comfy">ComfyUI workflow</option>
           </select>
         </div>
         <div className="dim" style={{ marginTop: 4 }}>
-          {vibe
+          {flow
+            ? 'Each character has one Gemini voice per edition language (gemini:<Name>), made through flow-music-mcp with a free Google AI Studio key; the language follows the text. Set a voice with vno_voice_set (flow_voices lists them).'
+            : vibe
             ? 'Each character has one fixed voice per edition language (Kokoro reads English, Supertonic reads Croatian and 29 more). VibeTTS must be running with its MCP server on.'
             : 'Voices only exist for languages that have an edition. A character without a reference clip uses the narrator’s.'}
         </div>
       </div>
-      {vibe ? <VibeVoice slug={slug} detail={detail} speakers={speakers} /> : <ComfyVoice slug={slug} detail={detail} speakers={speakers} />}
+      {flow ? <FlowVoice slug={slug} detail={detail} speakers={speakers} /> : vibe ? <VibeVoice slug={slug} detail={detail} speakers={speakers} /> : <ComfyVoice slug={slug} detail={detail} speakers={speakers} />}
     </div>
+  )
+}
+
+// ---- Google Flow (Gemini and Windows voices, through flow-music-mcp) ----
+
+function FlowVoice({ slug, detail, speakers }: { slug: string; detail: ProjectDetail; speakers: Speaker[] }) {
+  const voice = detail.settings.voice
+  const editions = detail.summary.editions
+  const langs: Lang[] = voice.langs.length ? voice.langs : [detail.settings.primaryLang]
+  const step = useVn((s) => s.progress[slug]?.voice ?? detail.summary.pipeline?.steps.voice)
+  const run = voiceProgress(step)
+  const errPlan = useRecentError(slug, 'planVoices')
+  const errGen = useRecentError(slug, 'generateVoice')
+  return (
+    <>
+      <div className="card" data-testid="voice-flow">
+        <h3>Google Flow</h3>
+        <div className="dim">flow-music-mcp must be running (hub.ps1 start flow-music-mcp); its status is on the Generators page. Languages need an edition.</div>
+        <div className="stack" style={{ marginTop: 6 }}>
+          {editions.map((lang) => (
+            <label key={lang} className="inline" data-testid={`voice-lang-${lang}`}>
+              <input type="checkbox" checked={voice.langs.includes(lang)} disabled={!voice.enabled} onChange={(e) => updateSettings(slug, { voice: { langs: toggleLang(voice.langs, lang, e.target.checked, editions) } })} data-testid={`voice-lang-on-${lang}`} />
+              {langName(lang)}
+            </label>
+          ))}
+        </div>
+        <div className="row" style={{ marginTop: 8 }}>
+          <button disabled={!voice.enabled} onClick={() => sendCommand({ type: 'planVoices', slug })} data-testid="voice-plan">
+            Plan voices
+          </button>
+          <button className="primary" disabled={!voice.enabled} onClick={() => sendCommand({ type: 'generateVoice', slug })} data-testid="voice-generate">
+            Generate voice
+          </button>
+        </div>
+        {run && (
+          <div style={{ marginTop: 6 }} data-testid="voice-progress">
+            <div className="dim">{run.text}</div>
+            <ProgressBar fraction={run.fraction} />
+          </div>
+        )}
+        {errPlan && <div className="bad-text">{errPlan}</div>}
+        {errGen && <div className="bad-text">{errGen}</div>}
+      </div>
+      <div className="card" data-testid="voice-speakers">
+        <h3>Voices</h3>
+        {!voice.enabled && <div className="dim">Turn voice on to plan voices.</div>}
+        {voice.enabled && (
+          <div className="stack">
+            {speakers.map((s) => (
+              <div key={s.key} className="row" data-testid={`voice-speaker-${s.key}`}>
+                <b style={{ width: 150 }}>{s.name}</b>
+                <span className="dim">{langs.map((l) => `${l.toUpperCase()}: ${voice.voices[s.key]?.[l] ?? '(not planned)'}`).join('   ')}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
   )
 }
 

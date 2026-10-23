@@ -4,6 +4,8 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
-    testTimeout: 15000
+    testTimeout: 15000,
+    // no test may start a real app: the services are started by VN Studio only when this is not 0
+    env: { VNO_AUTOSTART: '0' }
   }
 })

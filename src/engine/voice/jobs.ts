@@ -11,7 +11,7 @@ import { VibeTtsError } from './vibetts'
 import type { BatchItem, VibeTtsClient, VibeVoiceList } from './vibetts'
 import { sha1, slugVoiceName } from './vocab'
 
-const PLAN_HINT = 'run Plan voices: it assigns a VibeTTS voice per character and language'
+export const PLAN_HINT = 'run Plan voices: it assigns a VibeTTS voice per character and language'
 
 /** One clip in `voice/<lang>/index.json`: the hash of what it was made from, and the file. `speaker` is the voice slot it used. */
 export interface VoiceIndexEntry {
@@ -34,7 +34,7 @@ export async function readVoiceIndexIn(dir: string): Promise<Record<string, Voic
   }
 }
 
-const writeVoiceIndex = (dir: string, index: Record<string, VoiceIndexEntry>): Promise<void> => fs.writeFile(path.join(dir, 'index.json'), JSON.stringify(index, null, 2))
+export const writeVoiceIndex = (dir: string, index: Record<string, VoiceIndexEntry>): Promise<void> => fs.writeFile(path.join(dir, 'index.json'), JSON.stringify(index, null, 2))
 
 interface RunOpts {
   log: (message: string) => void
@@ -67,7 +67,7 @@ export async function invalidateSpeaker(svc: VnService, slug: string, speaker: s
  * `plan` is the voice-director's answer (null when it did not answer: gender and voices come from the bible). A voice that is already
  * mapped and still reads its language is kept unless `overwrite`. The mapping goes to the project's `voice.voices`.
  */
-export async function planVibeVoices(svc: VnService, slug: string, plan: PlanVoices | null, opts: RunOpts & { overwrite?: boolean; listed?: VibeVoiceList }): Promise<string> {
+export async function planVibeVoices(svc: VnService, slug: string, plan: PlanVoices | null, opts: RunOpts & { overwrite?: boolean; listed?: VibeVoiceList; /** Where the voices come from, for the messages. Default VibeTTS. */ source?: string }): Promise<string> {
   const { settings } = await svc.store.loadSettings(slug)
   const book = await svc.store.loadBook(slug)
   const langs = voiceLangsOf(settings)
@@ -83,7 +83,8 @@ export async function planVibeVoices(svc: VnService, slug: string, plan: PlanVoi
     for (const lang of langs) {
       opts.signal?.throwIfAborted()
       const candidates = voicesFor(listed.voices, lang, engine)
-      if (!candidates.length) throw new Error(lang === 'en' ? 'VibeTTS lists no voice that reads English' : `${SUPERTONIC_HINT} (no listed voice reads ${lang})`)
+      const source = opts.source ?? 'VibeTTS'
+      if (!candidates.length) throw new Error(lang === 'en' ? `${source} lists no voice that reads English` : source === 'VibeTTS' ? `${SUPERTONIC_HINT} (no listed voice reads ${lang})` : `${source} has no voice that reads ${lang}: set up the Gemini key in flow-music-mcp (flow_set_key) or install a Windows voice for it`)
       const wishes: VoiceWish[] = []
       const given: string[] = []
       for (const s of subjects) {
@@ -308,7 +309,7 @@ export interface VoicePreview {
  * A sample sentence for a speaker: one of their lines in this language, else a fixed sentence (English and Croatian have one),
  * else any line of the edition, else its title.
  */
-async function sampleText(svc: VnService, slug: string, speakerKey: string, lang: Lang): Promise<string> {
+export async function sampleText(svc: VnService, slug: string, speakerKey: string, lang: Lang): Promise<string> {
   const clip = (text: string): string => (text.length > 180 ? text.slice(0, 180).replace(/\s+\S*$/, '') + '...' : text)
   let any = ''
   let title = ''

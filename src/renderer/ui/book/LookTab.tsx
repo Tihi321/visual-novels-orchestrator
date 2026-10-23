@@ -30,6 +30,7 @@ function Select({ value, options, onChange, testId }: { value: string; options: 
 }
 
 const HAND_OPTION = { id: 'hand', label: 'Hand-made (no ComfyUI)' }
+const FLOW_OPTION = { id: 'flow', label: 'Google Flow (free images, needs flow-music-mcp)' }
 
 function ArtCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
   const art = detail.settings.art
@@ -71,9 +72,9 @@ function ArtCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
           <>
             <label className="dim">Images</label>
             <Select
-              value={resolveArtProvider(art) === 'hand' ? 'hand' : 'comfy'}
-              options={[{ id: 'comfy', label: 'Generated with ComfyUI' }, HAND_OPTION]}
-              onChange={(v) => updateSettings(slug, { art: { provider: v === 'hand' ? 'hand' : null } })}
+              value={resolveArtProvider(art) === 'hand' || resolveArtProvider(art) === 'flow' ? resolveArtProvider(art) : 'comfy'}
+              options={[{ id: 'comfy', label: 'Generated with ComfyUI' }, FLOW_OPTION, HAND_OPTION]}
+              onChange={(v) => updateSettings(slug, { art: { provider: v === 'hand' || v === 'flow' ? v : null } })}
               testId="art-provider"
             />
           </>
@@ -176,9 +177,10 @@ function PixelControls({ slug, detail }: { slug: string; detail: ProjectDetail }
         options={[
           { id: 'comfy', label: 'ComfyUI edit, then converted' },
           { id: 'pixel-studio-draw', label: 'Drawn by an agent in Pixel Studio (small sprites)' },
+          FLOW_OPTION,
           HAND_OPTION
         ]}
-        onChange={(v) => updateSettings(slug, { art: { provider: v === 'comfy' ? null : (v as 'pixel-studio-draw' | 'hand') } })}
+        onChange={(v) => updateSettings(slug, { art: { provider: v === 'comfy' ? null : (v as 'pixel-studio-draw' | 'hand' | 'flow') } })}
         testId="art-provider"
       />
     </>
@@ -207,9 +209,10 @@ function MusicCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
           options={[
             { id: '', label: `Auto (${provider === 'chiptune' ? 'Chiptune Studio' : 'ComfyUI'})` },
             { id: 'comfy', label: 'ComfyUI (ACE-Step)' },
-            { id: 'chiptune', label: 'Chiptune Studio' }
+            { id: 'chiptune', label: 'Chiptune Studio' },
+            { id: 'flow', label: 'Flow Music (spends Flow Music credits)' }
           ]}
-          onChange={(v) => updateSettings(slug, { music: { provider: v === '' ? null : (v as 'comfy' | 'chiptune') } })}
+          onChange={(v) => updateSettings(slug, { music: { provider: v === '' ? null : (v as 'comfy' | 'chiptune' | 'flow') } })}
           testId="music-provider"
         />
         {provider === 'chiptune' ? (
@@ -222,6 +225,10 @@ function MusicCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
               testId="music-chip"
             />
           </>
+        ) : provider === 'flow' ? (
+          <p className="dim" style={{ gridColumn: '1 / -1', margin: 0 }} data-testid="music-flow-note">
+            Each track is a song from Flow Music and spends credits (at most the number set as flowMusicMaxSongs in config/studios.md, 4 by default, per project). Start flow-music-mcp first.
+          </p>
         ) : (
           <>
             <label className="dim">Engine</label>

@@ -21,7 +21,7 @@ import type {
   VnCommand
 } from '../../shared/protocol'
 import { assertKnownLang } from '../../shared/languages'
-import { CHIPTUNE_ENGINE, IMAGE_KINDS, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, hasText, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
 import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
 import { importAssetFile } from '../assets/import'
@@ -38,7 +38,7 @@ import type { ModelRouter } from '../models/router'
 import type { JobFile, JobState, JobStore } from '../queue/jobs'
 import { JOB_STATES } from '../queue/jobs'
 import { androidPreflight as runAndroidPreflight } from '../renpy/android'
-import { run as runRenpyGame, sdkExists } from '../renpy/run'
+import { run as runRenpyGame, sdkExists, sdkPython } from '../renpy/run'
 import { findTheme, listThemes } from '../themes/load'
 import { pickTheme } from '../themes/pick'
 import { themeFontFaces, themePreviewCss } from '../themes/emit'
@@ -67,11 +67,17 @@ import { coverId, sheetId, spriteId, voiceRefId } from './ids'
 import { clientFor, loadVoiceConfig } from '../voice/config'
 import type { VoiceConfig } from '../voice/config'
 import { importVoiceClips, previewVoice, setVoice } from '../voice/jobs'
+import { previewFlowVoice, setFlowVoice } from '../voice/flow'
 import type { VoiceImportResult, VoicePreview } from '../voice/jobs'
 import type { VibeTtsClient } from '../voice/vibetts'
-import { chiptuneClientFor, loadStudiosConfig, pixelClientFor, startHint, studioRepo, studioUrl, STUDIO_NAMES } from '../studios/config'
+import { chiptuneClientFor, flowClientFor, flowStartHint, loadStudiosConfig, pixelClientFor, startHint, studioRepo, studioUrl, STUDIO_NAMES } from '../studios/config'
 import type { StudioId, StudiosConfig } from '../studios/config'
 import type { ChiptuneClient } from '../studios/chiptune'
+import type { FlowClient } from '../studios/flow'
+import { packagesDirOf, solvePuzzle } from '../puzzles/python'
+import type { PuzzleEntry, PuzzleProof } from '../../shared/puzzle'
+import type { PuzzlePython } from '../puzzles/python'
+import type { ServiceStarter } from '../studios/autostart'
 import type { PixelClient } from '../studios/pixel'
 import type { Watch } from '../studios/launch'
 import { openAssetInStudio } from './roundtrip'
@@ -108,6 +114,10 @@ export interface VnDeps {
   pixel?: PixelClient
   /** A Chiptune Studio client (tests pass a fake). Default: one made from `config/studios.md`. */
   chiptune?: ChiptuneClient
+  /** A flow-music-mcp client (tests pass a fake). Default: one made from `config/studios.md`. */
+  flow?: FlowClient
+  /** Starts Pixel Studio, Chiptune Studio and ComfyUI when a job finds them down (tests pass a fake, or none). */
+  starter?: ServiceStarter
   /** The folders that ship with the app. Default: found relative to this code. */
   dirs?: Partial<AppDirs>
 }
@@ -120,6 +130,7 @@ const SLOTS: Slot[] = ['left', 'center', 'right']
 export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings, refs?: string[]): string | null {
   switch (kind) {
     case 'cg':
+      if (settings.art.provider === 'flow') return FLOW_ENGINE
       // a picture with characters is made from their sheets by the edit engine, one without by the generator
       return refs?.length ? settings.art.editor : settings.art.generator
     case 'ambience':
@@ -129,11 +140,11 @@ export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings, r
     case 'background':
     case 'sheet':
     case 'cover':
-      return settings.art.generator
+      return settings.art.provider === 'flow' ? FLOW_ENGINE : settings.art.generator
     case 'sprite':
-      return settings.art.editor
+      return settings.art.provider === 'flow' ? FLOW_ENGINE : settings.art.editor
     case 'music':
-      return resolveMusicProvider(settings) === 'chiptune' ? CHIPTUNE_ENGINE : settings.music.engine
+      return resolveMusicProvider(settings) === 'flow' ? FLOW_MUSIC_ENGINE : resolveMusicProvider(settings) === 'chiptune' ? CHIPTUNE_ENGINE : settings.music.engine
     default:
       return null
   }
@@ -180,10 +191,26 @@ export class VnService {
     return this.deps.getScriptoriumDir?.() ?? path.join(process.env.USERPROFILE ?? process.env.HOME ?? '.', 'Scriptorium')
   }
 
-  async comfy(): Promise<ComfyClient> {
-    const o = this.comfyOverride
-    if (o) return typeof o === 'function' ? o() : o
-    return createComfyClient({ config: await loadComfyConfigFor(this.dataDir), dataDir: this.dataDir })
+  /**
+   * The ComfyUI client. With `autoStart` (job paths only, never a status check) a lane that does not answer at all is started first, when
+   * `config/autostart.md` allows it. A client given to the engine (tests) is used as it is.
+   */
+  async comfy(o: { autoStart?: boolean; log?: (m: string) => void } = {}): Promise<ComfyClient> {
+    const override = this.comfyOverride
+    if (override) return typeof override === 'function' ? override() : override
+    const starter = o.autoStart ? this.deps.starter : undefined
+    return createComfyClient({
+      config: await loadComfyConfigFor(this.dataDir),
+      dataDir: this.dataDir,
+      ...(starter
+        ? {
+            ensureLane: async (lane: string, signal?: AbortSignal) => {
+              const id = await starter.idForUrl(lane)
+              return id ? starter.ensure(id, lane, { signal, log: o.log }) : 'not a service VN Studio starts'
+            }
+          }
+        : {})
+    })
   }
 
   /** Stops the file watchers of the studio round trips (the engine is stopping). */
@@ -224,7 +251,7 @@ export class VnService {
 
   async previewImport(source: string): Promise<ImportPreview> {
     const folder = await this.resolveSource(source)
-    const r = await importBook(folder)
+    const r = await importBook(folder, { prove: await this.importProver() })
     return {
       source,
       path: folder,
@@ -249,7 +276,7 @@ export class VnService {
     if (opts.lang !== undefined) await this.knownLang(opts.lang)
     else await loadLanguageConfig(this.dataDir, (m) => this.log(m))
     const folder = await this.resolveSource(source)
-    const r = await importBook(folder, { lang: opts.lang })
+    const r = await importBook(folder, { lang: opts.lang, prove: await this.importProver() })
     let slug = projectSlug(r.book.slug)
     let existing: ProjectSettings | undefined
     // the same slug from another folder is another book: it gets a number
@@ -697,7 +724,7 @@ export class VnService {
    * Enqueues one job of the VN pipeline (idempotent by id). Returns the id. `priority`: 1 for a request someone made on purpose (an MCP tool,
    * the app), so it runs before the older jobs of the pipeline's own chain (0, the default); dependencies still decide what may start.
    */
-  async enqueue(slug: string, task: VnTask, unit: string, run: number, o: { depends_on?: string[]; body?: object; label?: string; vision?: boolean; requested_by?: string; priority?: number } = {}): Promise<string> {
+  async enqueue(slug: string, task: VnTask, unit: string, run: number, o: { depends_on?: string[]; body?: object; label?: string; vision?: boolean; requested_by?: string; priority?: number; max_attempts?: number } = {}): Promise<string> {
     const id = jobId(slug, task, unit, run)
     await this.deps.jobs.enqueue(
       {
@@ -711,7 +738,8 @@ export class VnService {
         ...(o.label ? { label: o.label } : {}),
         ...(o.vision ? { vision: true } : {}),
         ...(o.requested_by ? { requested_by: o.requested_by } : {}),
-        ...(o.priority ? { priority: o.priority } : {})
+        ...(o.priority ? { priority: o.priority } : {}),
+        ...(o.max_attempts ? { max_attempts: o.max_attempts } : {})
       },
       o.body ? JSON.stringify(o.body) : ''
     )
@@ -864,7 +892,7 @@ export class VnService {
   async setEdition(
     slug: string,
     lang: Lang,
-    patch: Partial<Pick<Edition, 'title' | 'chapterTitles' | 'choiceTexts' | 'endings' | 'characterNames' | 'beats'>> & { replace?: boolean }
+    patch: Partial<Pick<Edition, 'title' | 'chapterTitles' | 'choiceTexts' | 'endings' | 'characterNames' | 'beats'>> & { puzzles?: Record<string, { names?: Record<string, string>; text?: Record<string, string> }>; replace?: boolean }
   ): Promise<{ edition: Edition; missing: { beats: string[]; other: string[] } }> {
     await this.knownLang(lang)
     const r = await this.store.withLock(slug, async () => {
@@ -872,7 +900,7 @@ export class VnService {
       if (lang === settings.primaryLang) throw new Error(`${lang} is the primary language of ${slug}: edit its text with the story tools (vno_beat_update ...)`)
       const book = await this.store.loadBook(slug)
       const textBeats = new Set<string>()
-      for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.type !== 'cast') textBeats.add(b.id)
+      for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (hasText(b)) textBeats.add(b.id)
       const chapters = new Set(book.chapters.map((c) => String(c.n)))
       const choices = new Set(book.chapters.flatMap((c) => c.choices.map((_, i) => `${c.n}:${i}`)))
       const endings = new Set(book.chapters.filter((c) => c.ending).map((c) => String(c.n)))
@@ -888,6 +916,15 @@ export class VnService {
       check('choice', patch.choiceTexts && Object.keys(patch.choiceTexts), choices)
       check('ending of chapter', patch.endings && Object.keys(patch.endings), endings)
       check('character', patch.characterNames && Object.keys(patch.characterNames), chars)
+      for (const [key, words] of Object.entries(patch.puzzles ?? {})) {
+        const pz = book.puzzles?.find((p) => p.key === key)
+        if (!pz) {
+          errors.push(`no puzzle ${key} in ${slug}${book.puzzles?.length ? ` (puzzles: ${book.puzzles.map((p) => p.key).join(', ')})` : ''}`)
+          continue
+        }
+        check(`item of puzzle ${key}`, words.names && Object.keys(words.names), new Set(Object.keys(pz.names)))
+        check(`clue of puzzle ${key}`, words.text && Object.keys(words.text), new Set(Object.keys(pz.text)))
+      }
       if (errors.length) throw new Error(errors.join('; '))
       const cur: Edition = (!patch.replace && (await this.store.loadEdition(slug, lang).catch(() => null))) || { lang, title: book.title, chapterTitles: {}, choiceTexts: {}, endings: {}, characterNames: {}, beats: {} }
       const edition: Edition = {
@@ -899,13 +936,19 @@ export class VnService {
         characterNames: { ...cur.characterNames, ...(patch.characterNames ?? {}) },
         beats: { ...cur.beats, ...(patch.beats ?? {}) }
       }
+      if (cur.puzzles || patch.puzzles) {
+        const merged: Record<string, { names: Record<string, string>; text: Record<string, string> }> = { ...(cur.puzzles ?? {}) }
+        for (const [key, words] of Object.entries(patch.puzzles ?? {})) merged[key] = { names: { ...(merged[key]?.names ?? {}), ...(words.names ?? {}) }, text: { ...(merged[key]?.text ?? {}), ...(words.text ?? {}) } }
+        edition.puzzles = merged
+      }
       await this.store.saveEdition(slug, edition)
       if (!settings.editions.includes(lang)) await this.store.saveSettings({ ...settings, editions: [...settings.editions, lang].sort() })
       const other = [
         ...[...chapters].filter((n) => !edition.chapterTitles[Number(n)]).map((n) => `chapter ${n} title`),
         ...[...choices].filter((k) => !edition.choiceTexts[k]).map((k) => `choice ${k}`),
         ...[...endings].filter((n) => !edition.endings[Number(n)]).map((n) => `ending ${n}`),
-        ...[...chars].filter((k) => !edition.characterNames[k]).map((k) => `name of ${k}`)
+        ...[...chars].filter((k) => !edition.characterNames[k]).map((k) => `name of ${k}`),
+        ...(book.puzzles ?? []).flatMap((p) => [...Object.keys(p.names).filter((k) => !edition.puzzles?.[p.key]?.names[k]).map((k) => `puzzle ${p.key} name of ${k}`), ...Object.keys(p.text).filter((k) => !edition.puzzles?.[p.key]?.text[k]).map((k) => `puzzle ${p.key} ${k === 'murder' ? 'murder note' : `clue ${k}`}`)])
       ]
       return { edition, missing: { beats: [...textBeats].filter((id) => !edition.beats[id]?.trim()), other } }
     })
@@ -925,7 +968,7 @@ export class VnService {
       await this.store.saveEdition(slug, ed)
       // the primary text lives in vn.json too: keep the two in step
       if (lang === settings.primaryLang) {
-        for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.id === beatId && b.type !== 'cast') b.text = text
+        for (const c of book.chapters) for (const s of c.scenes) for (const b of s.beats) if (b.id === beatId && hasText(b)) b.text = text
         await this.store.saveBook(slug, book)
       }
       const rep = await this.store.loadAlignReport(slug, lang)
@@ -997,7 +1040,7 @@ export class VnService {
     const dir = this.store.dir(slug)
     const sprites = entry.kind === 'sheet' ? (await this.store.loadAssets(slug)).assets.filter((a) => a.kind === 'sprite' && a.refs?.[0] === id) : []
     const sheetJobs = entry.kind === 'sprite' && entry.refs?.[0] ? (await this.activeGenerateJobs(slug, [entry.refs[0]])).map((j) => j.id) : []
-    const gen = await this.enqueue(slug, this.generateTask(settings, entry), id, run, { body: { force: true, prompt: edits.prompt, engine: edits.engine, seed: edits.seed }, label: `regenerate ${id}`, depends_on: sheetJobs, priority: 1 })
+    const gen = await this.enqueue(slug, this.generateTask(settings, entry), id, run, { body: { force: true, prompt: edits.prompt, engine: edits.engine, seed: edits.seed }, label: `regenerate ${id}`, depends_on: sheetJobs, priority: 1, max_attempts: this.maxAttempts(settings, entry) })
     const ids = [gen]
     const staleSprites: string[] = []
     if (entry.kind === 'sheet') {
@@ -1023,6 +1066,11 @@ export class VnService {
   }
 
   /** The job that makes an asset: sprites of a `pixel-studio-draw` book are drawn by an agent (needs a model), the rest are generated. */
+  /** A song from Flow Music is never retried by itself: a failed take may already have spent credits. Null: the factory's default. */
+  maxAttempts(settings: ProjectSettings, entry: Pick<AssetEntry, 'kind'>): number | undefined {
+    return entry.kind === 'music' && resolveMusicProvider(settings) === 'flow' ? 1 : undefined
+  }
+
   generateTask(settings: ProjectSettings, entry: Pick<AssetEntry, 'kind'>): VnTask {
     return entry.kind === 'sprite' && settings.art.style === 'pixel' && resolveArtProvider(settings.art) === 'pixel-studio-draw' ? TASKS.draw : TASKS.generate
   }
@@ -1049,12 +1097,12 @@ export class VnService {
     const { settings } = await this.store.loadSettings(slug)
     const book = await this.store.loadBook(slug)
     const res = (await loadRenpyConfig(this.dataDir)).resolution
-    const studios = await this.studios()
+    const studios = await this.studios({ autoStart: true, log: this.deps.log })
     const ctx = {
       book,
       settings,
       projectDir: this.store.dir(slug),
-      comfy: await this.comfy(),
+      comfy: await this.comfy({ autoStart: true, log: this.deps.log }),
       palettesDir: dataFolders(this.dataDir).palettes,
       pixel: studios.pixel,
       sizes: { background: { w: res.w, h: res.h }, cover: { w: res.w, h: res.h }, spriteHeight: Math.round(res.h * 0.9) }
@@ -1279,14 +1327,36 @@ export class VnService {
   // ---- Pixel Studio and Chiptune Studio ----
 
   /** The studio clients and `config/studios.md` (the clients are the ones the engine was given, else made from the config). */
-  async studios(): Promise<{ pixel: PixelClient; chiptune: ChiptuneClient; config: StudiosConfig }> {
+  async studios(o: { autoStart?: boolean; log?: (m: string) => void } = {}): Promise<{ pixel: PixelClient; chiptune: ChiptuneClient; flow: FlowClient; config: StudiosConfig }> {
     const config = await loadStudiosConfig(this.dataDir)
-    return { pixel: this.deps.pixel ?? pixelClientFor(config), chiptune: this.deps.chiptune ?? chiptuneClientFor(config), config }
+    const starter = o.autoStart ? this.deps.starter : undefined
+    const hook = (id: string, url: string) => (starter ? { ensureUp: (signal?: AbortSignal) => starter.ensure(id, url, { signal, log: o.log }) } : {})
+    return {
+      pixel: this.deps.pixel ?? pixelClientFor(config, hook('pixel-studio', config.pixelStudioUrl)),
+      chiptune: this.deps.chiptune ?? chiptuneClientFor(config, hook('chiptune-studio', config.chiptuneStudioUrl)),
+      flow: this.deps.flow ?? flowClientFor(config),
+      config
+    }
+  }
+
+  /** The Ren'Py SDK's Python and the puzzle library, for the `vno_puzzle_*` tools. */
+  async puzzlePython(): Promise<PuzzlePython> {
+    return { sdkPath: (await loadRenpyConfig(this.dataDir)).sdkPath, packagesDir: packagesDirOf(this.dirs.templates) }
+  }
+
+  /** What an import proves its puzzles with (the puzzle library), or null when the Ren'Py SDK is not there: the puzzles are then left unproved. */
+  private async importProver(): Promise<((p: PuzzleEntry) => Promise<PuzzleProof>) | null> {
+    try {
+      const py = await this.puzzlePython()
+      return sdkPython(py.sdkPath) ? (p) => solvePuzzle(py, p.data) : null
+    } catch {
+      return null
+    }
   }
 
   /** Asks both studios for their tools. Never throws: an unreachable studio is `ok: false` with the message (and how to start it). */
   async studiosStatus(): Promise<StudioStatusView[]> {
-    const { pixel, chiptune, config } = await this.studios()
+    const { pixel, chiptune, flow, config } = await this.studios()
     const probe = async (id: StudioId, client: PixelClient | ChiptuneClient): Promise<StudioStatusView> => {
       const base = { id, name: STUDIO_NAMES[id], url: client.url || studioUrl(config, id), repo: studioRepo(config, id), hint: startHint(config, id) }
       try {
@@ -1296,7 +1366,18 @@ export class VnService {
         return { ...base, ok: false, error: (e as Error).message, tools: 0 }
       }
     }
-    return Promise.all([probe('pixel', pixel), probe('chiptune', chiptune)])
+    const probeFlow = async (): Promise<StudioStatusView> => {
+      const base = { id: 'flow' as const, name: 'flow-music-mcp (Google Flow)', url: flow.url || config.flowUrl, repo: config.flowRepo, hint: flowStartHint(config) }
+      try {
+        const s = await flow.status()
+        if (!s.up) return { ...base, ok: false, error: s.hint ?? base.hint, tools: 0 }
+        if (s.signedIn === false) return { ...base, ok: false, error: s.hint ?? 'Google Flow is not signed in', tools: 0 }
+        return { ...base, ok: true, error: '', tools: 0 }
+      } catch (e) {
+        return { ...base, ok: false, error: (e as Error).message, tools: 0 }
+      }
+    }
+    return Promise.all([probe('pixel', pixel), probe('chiptune', chiptune), probeFlow()])
   }
 
   /** Opens an asset in its studio; each save there makes a new custom, locked version (see `vn/roundtrip.ts`). */
@@ -1339,13 +1420,16 @@ export class VnService {
   }
 
   /** Gives a speaker the voice for one language and makes its preview (a few seconds to load the model on the first call). */
-  setVoice(slug: string, speakerKey: string, lang: Lang, voice: string): Promise<VoicePreview> {
+  async setVoice(slug: string, speakerKey: string, lang: Lang, voice: string): Promise<VoicePreview> {
+    const { settings } = await this.store.loadSettings(slug)
+    if (settings.voice.provider === 'flow') return setFlowVoice(this, slug, speakerKey, lang, voice, { flow: (await this.studios()).flow, format: (await this.vibetts()).config.format })
     return setVoice(this, slug, speakerKey, lang, voice)
   }
 
   /** A short sample of a voice in a language (the project's primary one when `lang` is left out). */
   async previewVoice(slug: string, speakerKey: string, voice: string, lang?: Lang): Promise<VoicePreview> {
     const { settings } = await this.store.loadSettings(slug)
+    if (settings.voice.provider === 'flow') return previewFlowVoice(this, slug, speakerKey, voice, lang ?? settings.primaryLang, { flow: (await this.studios()).flow, style: settings.voice.flowStyles?.[speakerKey], format: (await this.vibetts()).config.format })
     return previewVoice(this, slug, speakerKey, voice, lang ?? settings.primaryLang)
   }
 

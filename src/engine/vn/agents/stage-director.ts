@@ -46,7 +46,9 @@ export function describeChapter(book: VnBook, chapter: VnChapter): Record<string
           ? { id: b.id, type: 'cast', cast: b.cast.map((c) => ({ charKey: c.charKey, name: chars.get(c.charKey) ?? c.charKey })) }
           : b.type === 'line'
             ? { id: b.id, type: 'line', speaker: b.speakerKey ?? b.speakerLabel, expression: b.expression, text: clip(b.text, 60), ...cuesOf(b) }
-            : { id: b.id, type: 'narration', text: clip(b.text, 60), ...cuesOf(b) }
+            : b.type === 'puzzle'
+              ? { id: b.id, type: 'narration', text: '[a puzzle: the player solves it here]' }
+              : { id: b.id, type: 'narration', text: clip(b.text, 60), ...cuesOf(b) }
       )
     }))
   }

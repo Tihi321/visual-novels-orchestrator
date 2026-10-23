@@ -4,6 +4,7 @@ An Electron + TypeScript desktop app that takes a visual-novel book written in [
 
 - A book can be in any of 37 languages (the 31 that VibeTTS Supertonic reads plus Book Translator's; more in `config/languages.md`), and the language is detected. A translated edition (a translated book folder, or text written over MCP) reuses every asset and only replaces the text. There is no machine translation inside VN Studio.
 - A story can also be written straight into VN Studio over MCP (`vno_create_project` and the story tools), with no Scriptorium folder.
+- A story can stop for a logic puzzle (a 3x3 Murdle so far): code makes and proves it, a `puzzle` beat plays it (`vno_puzzle_*` tools, `docs/mcp-guide.md` "Puzzles").
 - Models: local ones (LM Studio, Strata) plus every Scriptorium provider (DeepSeek, Anthropic, Gemini, OpenRouter, other OpenAI-compatible APIs), and the `client` provider (on by default, used only when you pick it): set a role to `client/claude-code` and an MCP client (Claude Code) answers its model calls itself, for free (`vno_get_task` / `vno_submit_task`). Pick the models on the Models page and a model per agent on the Agents page.
 - The engine core (model router, job queue, agents) is a plain copy of Scriptorium's. The plan is in `.claude/tickets/VNO-01-visual-novel-studio-scriptorium-book-ren/plan.md`.
 
@@ -30,8 +31,13 @@ yarn install
 | `yarn test` | Vitest |
 | `yarn typecheck` | `tsc` for the node and web projects |
 | `yarn lint` | ESLint |
+| `npx tsx scripts/puzzle-poc.ts --lint --play` | Builds the puzzle proof of concept (`templates/puzzles/`, a 3x3 Murdle grid) into `.claude/temp/puzzle-poc/`, lints it and opens it; `--selftest` clicks through it with Ren'Py's test runner |
 
 API keys come from environment variables or the Windows credential store (service `vn-studio`), never from files. A key that is not found there is also looked for under the services `scriptorium` and `book-translator`, so the keys of those tools work here; `VNO_SHARED_KEYS=0` turns that off. The Models page says when a key comes from another store. Studio tokens (`PIXEL_STUDIO_MCP_TOKEN`, `CHIPTUNE_STUDIO_MCP_TOKEN`, `VIBETTS_MCP_TOKEN`) are looked up the same way.
+
+A job that needs Pixel Studio, Chiptune Studio or ComfyUI starts it when it is down (from the creative hub's `services.json`; `config/autostart.md`, `VNO_AUTOSTART=0` turns it off). VibeTTS, Scriptorium and Strata are never started.
+
+Google Flow (through the hub's `flow-music-mcp`) can make a project's images (`art.provider: flow`, free), voices and music: see `docs/mcp-guide.md`, "Google Flow".
 
 ## Command line and MCP
 

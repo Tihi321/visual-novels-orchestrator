@@ -19,6 +19,13 @@ export class McpHttpError extends Error {
   }
 }
 
+/** The server forgot our session (it restarted): the client starts a new one and repeats the request once. */
+class SessionGone extends McpHttpError {
+  constructor() {
+    super('the MCP session is gone (the server restarted)', 'protocol')
+  }
+}
+
 export interface McpHttpOptions {
   url: string
   /** The name used in error messages: `VibeTTS`, `Pixel Studio`. */
@@ -32,6 +39,11 @@ export interface McpHttpOptions {
   token?: string | null
   /** The variable that holds the token, named in the message when the app answers 401. */
   tokenVar?: string
+  /**
+   * Called once per call when nothing answers at the URL (kind `unreachable`; never for a timeout, an HTTP error or a tool error). It may start
+   * the service: `true` means it answers now and the call is retried once; a string is the reason it does not, appended to the error.
+   */
+  ensureUp?: (signal?: AbortSignal) => Promise<true | string>
 }
 
 /**
@@ -160,6 +172,11 @@ export function createMcpClient(opts: McpHttpOptions): McpHttpClient {
     const id = nextId++
     const r = await post({ jsonrpc: '2.0', id, method, params }, ms, signal)
     if (r.status === 401) throw new McpHttpError(`${label} rejected the token: set ${opts.tokenVar ?? 'its token variable'} to the token shown in its Settings -> MCP`, 'http')
+    if (r.status === 404 && session && method !== 'initialize') {
+      session = null
+      ready = null
+      throw new SessionGone()
+    }
     if (r.status === 403) throw new McpHttpError(`${label} refused the request (HTTP 403: Host or Origin not allowed)`, 'http')
     if (r.status < 200 || r.status >= 300) throw new McpHttpError(`${label} answered HTTP ${r.status}${r.text ? `: ${r.text.slice(0, 200)}` : ''}`, 'http')
     const msg = parseRpcBody(r.text, r.type, id)
@@ -186,12 +203,28 @@ export function createMcpClient(opts: McpHttpOptions): McpHttpClient {
   }
 
   async function request(method: string, params: object, ms: number, signal?: AbortSignal): Promise<unknown> {
-    await init(signal)
-    try {
-      return await rpc(method, params, ms, signal)
-    } catch (e) {
-      if (e instanceof McpHttpError && e.kind === 'unreachable') ready = null
-      throw e
+    let asked = false
+    let renewed = false
+    for (;;) {
+      try {
+        await init(signal)
+        try {
+          return await rpc(method, params, ms, signal)
+        } catch (e) {
+          if (e instanceof McpHttpError && e.kind === 'unreachable') ready = null
+          throw e
+        }
+      } catch (e) {
+        if (e instanceof SessionGone && !renewed) {
+          renewed = true
+          continue
+        }
+        if (!(e instanceof McpHttpError) || e.kind !== 'unreachable' || !opts.ensureUp || asked) throw e
+        asked = true
+        const up = await opts.ensureUp(signal)
+        if (up !== true) throw new McpHttpError(`${e.message} (auto-start: ${up})`, 'unreachable')
+        ready = null
+      }
     }
   }
 

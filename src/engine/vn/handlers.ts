@@ -6,6 +6,9 @@ import type { BuildResult, PipelineStep } from '../../shared/protocol'
 import { IMAGE_KINDS, isHandArt } from '../../shared/vn'
 import type { AssetEntry, Lang, ProjectSettings } from '../../shared/vn'
 import { fallbackNegative, fallbackPrompt } from '../assets/derive'
+import { runsOnFlow } from '../assets/flow-image'
+import type { FlowOptions } from '../assets/flow-image'
+import { countFlowSongs } from '../studios/flow-music'
 import { generateAsset } from '../assets/generate'
 import type { GenerateOptions } from '../assets/generate'
 import { pickVersion, resolveFile, setCustom } from '../assets/manifest'
@@ -36,6 +39,8 @@ import type { ExistingArt } from './agents/script-analyst'
 import { mergeChapterCues, stageChapter } from './agents/stage-director'
 import { planVoices, speakerOf } from './agents/voice-director'
 import { describeVoices, voiceLangsOf } from '../voice/catalog'
+import { generateFlowClips } from '../voice/flow'
+import { flowAsVibeList } from '../voice/flow-catalog'
 import { generateVibeClips, importedClipsNote, planVibeVoices, readVoiceIndexIn } from '../voice/jobs'
 import type { VoiceIndexEntry } from '../voice/jobs'
 import type { AgentCall } from './agents/common'
@@ -88,6 +93,9 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
   const svc = new VnService(deps)
   const store = svc.store
   const comfySem = new Semaphore(1)
+  /** One Flow job at a time from VN Studio, so a job's timeout measures its own work and not a queue it filled itself. */
+  const flowSem = new Semaphore(1)
+  const flowOptionsOf = (c: StudiosConfig): FlowOptions => ({ quality: c.flowImageQuality, jobTimeoutMs: c.flowJobTimeoutS * 1000, musicTimeoutMs: c.flowMusicTimeoutS * 1000, maxSongs: c.flowMusicMaxSongs })
   const call = (ctx: JobContext): AgentCall => ({ ctx, dataDir: deps.dataDir })
 
   /**
@@ -367,11 +375,11 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     const entry = manifest.assets.find((a) => a.id === id)
     if (!entry) throw new Error(`project ${slug} has no asset "${id}"`)
     const music = await store.readJson<MusicPlan>(slug, 'music.json')
-    const comfy = await svc.comfy()
-    const studios = await svc.studios()
+    const comfy = await svc.comfy({ autoStart: true, log: ctx.log })
+    const studios = await svc.studios({ autoStart: true, log: ctx.log })
     const res = renpy.resolution
     const projectDir = store.dir(slug)
-    const r = await comfySem.run(
+    const r = await (runsOnFlow(entry, settings, o.engine) ? flowSem : comfySem).run(
       () =>
         generateAsset(
           {
@@ -379,6 +387,10 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
             settings,
             projectDir,
             comfy,
+            flow: studios.flow,
+            flowOptions: flowOptionsOf(studios.config),
+            flowSongsMade: countFlowSongs(manifest.assets),
+            resolveRefEntry: (rid) => manifest.assets.find((a) => a.id === rid) ?? null,
             palettesDir: dataFolders(deps.dataDir).palettes,
             pixel: studios.pixel,
             chiptune: studios.chiptune,
@@ -471,6 +483,12 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       .filter((a) => a.kind !== 'voiceRef' && !(hand && IMAGE_KINDS.has(a.kind)) && !orphans.has(a.id) && (!body.ids || body.ids.includes(a.id)))
       .filter((a) => !a.locked && a.source === 'generated' && (body.force || !resolveFile(store.dir(slug), a)))
       .sort((a, b) => (a.kind === 'sheet' ? 0 : 1) - (b.kind === 'sheet' ? 0 : 1))
+    // Flow is checked once, before the fan-out: not running or not signed in fails the step at once with the hint, not every asset one by one
+    if (todo.some((a) => runsOnFlow(a, settings))) {
+      const { flow } = await svc.studios()
+      const s = await flow.status().catch((e: Error) => ({ up: false, signedIn: null, uploadRights: false, hint: e.message }))
+      if (!s.up || s.signedIn === false) throw new Error(`Google Flow is not ready: ${s.hint ?? 'flow-music-mcp does not answer'}`)
+    }
     const waiting = await handWaiting(slug)
     await svc.setStep(slug, 'generate', todo.length ? 'running' : 'done', todo.length ? `${todo.length} asset(s) to generate${waiting}` : `${hand ? 'hand-made art: nothing to generate' : 'every asset already has a file'}${waiting}`, { done: 0, total: todo.length })
     const reviewOn = settings.art.review && deps.router.candidates('art-critic', { visionOnly: true }).length > 0
@@ -483,7 +501,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       const refs = a.kind === 'sprite' || a.kind === 'cg' ? (a.refs ?? []) : []
       const sheets = refs.flatMap((r) => generated.get(r) ?? [])
       const otherSheet = refs.length ? (await svc.activeGenerateJobs(slug, refs)).filter((j) => j.data.round !== run).map((j) => j.id) : []
-      const id = await svc.enqueue(slug, svc.generateTask(settings, a), a.id, run, { depends_on: [...sheets, ...otherSheet], body: { force: !!body.force }, label: `generate ${a.id}`, priority })
+      const id = await svc.enqueue(slug, svc.generateTask(settings, a), a.id, run, { depends_on: [...sheets, ...otherSheet], body: { force: !!body.force }, label: `generate ${a.id}`, priority, max_attempts: svc.maxAttempts(settings, a) })
       generated.set(a.id, id)
       all.push(id)
       if (reviewOn && IMAGE_KINDS.has(a.kind)) all.push(await svc.enqueue(slug, TASKS.review, a.id, run, { depends_on: [id], vision: true, label: `review ${a.id}`, priority }))
@@ -604,16 +622,19 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         const book = await store.loadBook(slug)
         await svc.reconcileAssets(slug)
         const vibe = settings.voice.provider === 'vibetts'
+        const flowVoices = settings.voice.provider === 'flow'
         const folders = dataFolders(deps.dataDir)
         // uploaded reference clips only matter for the ComfyUI provider
-        const library = !vibe && existsSync(folders.voices) ? (await fs.readdir(folders.voices)).filter((f) => /\.(wav|mp3|flac|ogg|opus)$/i.test(f)).sort() : []
+        const library = !vibe && !flowVoices && existsSync(folders.voices) ? (await fs.readdir(folders.voices)).filter((f) => /\.(wav|mp3|flac|ogg|opus)$/i.test(f)).sort() : []
         // VibeTTS first: the model is shown the voices that exist, and an unreachable VibeTTS fails before it is asked
         const listed = vibe ? await (await svc.vibetts()).client.listVoices(ctx.signal) : undefined
-        const voiceList = listed ? describeVoices(listed.voices, voiceLangsOf(settings), settings.voice.englishEngine) : ''
+        // Flow: the free Gemini voices (every language) or the Windows voices of a language's culture; an unreachable flow-music-mcp fails here
+        const flowListed = flowVoices ? flowAsVibeList(await (await svc.studios()).flow.voices(ctx.signal), voiceLangsOf(settings)) : undefined
+        const voiceList = listed || flowListed ? describeVoices((listed ?? flowListed)!.voices, voiceLangsOf(settings), settings.voice.englishEngine) : ''
         const r = await tryAgent(ctx, 'voice-director', () => planVoices(call(ctx), book, library, voiceList))
         let msg: string
-        if (vibe) {
-          msg = await planVibeVoices(svc, slug, r.ok ? r.value : null, { overwrite: body.overwrite, listed, log: (m) => ctx.log(m), signal: ctx.signal })
+        if (vibe || flowVoices) {
+          msg = await planVibeVoices(svc, slug, r.ok ? r.value : null, { overwrite: body.overwrite, listed: listed ?? flowListed, source: vibe ? 'VibeTTS' : 'Google Flow', log: (m) => ctx.log(m), signal: ctx.signal })
         } else {
           const manifest = await store.loadAssets(slug)
           let planned = 0
@@ -661,6 +682,19 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
           throw e
         }
       }
+      if (settings.voice.provider === 'flow') {
+        try {
+          const { flow, config: studiosConfig } = await svc.studios()
+          const voiceConfig = (await svc.vibetts()).config
+          const r = await generateFlowClips(svc, slug, lang, { beatId: only, limit, flow, format: voiceConfig.format, settings: { pauseMs: studiosConfig.flowVoicePauseMs, retries: studiosConfig.flowVoiceRetries }, log: (m) => ctx.log(m), signal: ctx.signal })
+          ctx.log(r.message)
+          await svc.setStep(slug, 'voice', r.status, r.message)
+          return r.message
+        } catch (e) {
+          if (!fatal(ctx, e)) await svc.setStep(slug, 'voice', 'failed', (e as Error).message)
+          throw e
+        }
+      }
       const engine = settings.voice.engines[lang] ?? 'custom:chatterbox-multilingual'
       const name = engine.replace(/^custom:/, '')
       const wf = await loadCustomWorkflow(dataFolders(deps.dataDir).workflows, name)
@@ -692,7 +726,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       }
       const config = await loadComfyConfigFor(deps.dataDir)
       comfySem.setPermits(lanesOf(config).length)
-      const comfy = await svc.comfy()
+      const comfy = await svc.comfy({ autoStart: true, log: ctx.log })
       const dir = voiceDir(slug, lang)
       await fs.mkdir(dir, { recursive: true })
       const index = await readVoiceIndex(slug, lang)

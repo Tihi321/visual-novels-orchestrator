@@ -28,6 +28,8 @@ export interface VibeVoice {
   engine: string
   /** The language codes it reads. */
   languages: string[]
+  /** Known by Google Flow's voice list; VibeTTS voices have it in their id (see `voiceGender`). */
+  gender?: 'female' | 'male'
 }
 
 /** `list_voices`. Supertonic voices are only listed once it is downloaded (`supertonic_installed`). */

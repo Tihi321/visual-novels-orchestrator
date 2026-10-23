@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { hasText } from '../../../shared/vn'
 import type { VnBook } from '../../../shared/vn'
 import type { AlignReport } from '../align'
 import type { AlignFix, AlignNameFix } from '../fixes'
@@ -21,7 +22,7 @@ export const BATCH = 25
 /** The missing beats with their neighbours, and the extra texts of the same chapters. */
 export function describeAlignment(book: VnBook, report: AlignReport, missing: string[]): { missing: Record<string, unknown>[]; extra: Record<string, unknown>[] } {
   const flat = book.chapters.flatMap((c) => c.scenes.flatMap((s) => s.beats.map((b, i) => ({ c: c.n, s, b, i }))))
-  const text = (b: (typeof flat)[number]['b'] | undefined) => (!b || b.type === 'cast' ? '' : clip(b.text, 90))
+  const text = (b: (typeof flat)[number]['b'] | undefined) => (!b || !hasText(b) ? '' : clip(b.text, 90))
   const rows = missing.map((id) => {
     const at = flat.find((x) => x.b.id === id)
     const scene = at?.s

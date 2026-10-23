@@ -1,4 +1,4 @@
-import { CANONICAL_EXPRESSIONS } from '../../shared/vn'
+import { CANONICAL_EXPRESSIONS, hasText } from '../../shared/vn'
 import type { CanonicalExpression, Edition, VnBeat, VnBook, VnScene } from '../../shared/vn'
 import { visualWords } from '../assets/derive'
 import type { AlignReport } from './align'
@@ -53,7 +53,7 @@ export interface DecisionOptions {
   hasFile?: (assetId: string) => boolean
 }
 
-const sceneText = (s: VnScene): string => ` ${normText([s.description, ...s.beats.map((b) => (b.type === 'cast' ? '' : b.text))].join(' '))} `
+const sceneText = (s: VnScene): string => ` ${normText([s.description, ...s.beats.map((b) => (hasText(b) ? b.text : ''))].join(' '))} `
 
 function eachBeatOf(book: VnBook, fn: (beat: VnBeat) => void): void {
   for (const c of book.chapters) for (const s of c.scenes) for (const x of s.beats) fn(x)

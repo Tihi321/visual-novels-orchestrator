@@ -330,6 +330,21 @@ describe('ON SCREEN props and loose names (V7)', () => {
   })
 })
 
+describe('the Aliases sentence of a bible entry', () => {
+  it('fills aliases and is taken out of the looks (and out of the sheet and sprite prompts)', () => {
+    const bible = parseBible('## Characters\n- **Kessler**: A bald man in a grey coat, scarred hands. Aliases: the bald man, Brother Kessler. Voice: low and slow\n- **Mara**: A girl with red braids.\n- **Ivo**: Tall, tired. Nadimci: Stari, Brko.\n\n## Places\n- **Hall**: A hall.\n')
+    const k = bible.characters.find((c) => c.name === 'Kessler')!
+    expect(k.aliases).toEqual(['the bald man', 'Brother Kessler'])
+    expect(k.looks).toBe('A bald man in a grey coat, scarred hands.')
+    expect(k.voice).toBe('low and slow')
+    expect(bible.characters.find((c) => c.name === 'Mara')!.looks).toBe('A girl with red braids.')
+    const ivo = bible.characters.find((c) => c.name === 'Ivo')!
+    expect(ivo.aliases).toEqual(['Stari', 'Brko'])
+    expect(ivo.looks).toBe('Tall, tired.')
+    expect(bible.characters.every((c) => !/aliases|nadimci/i.test(c.looks))).toBe(true)
+  })
+})
+
 describe('media cue lines', () => {
   const bible = parseBible('## Characters\n- **Mara**: A girl.\n\n## Places\n- **Hall**: A hall.\n')
   const parse = (body: string) => parseChapterScript(`SCENE: The hall, night\nA quiet hall.\n${body}\n`, { chapter: 1, bible })
@@ -350,6 +365,17 @@ describe('media cue lines', () => {
     expect(beats[2]).toMatchObject({ text: 'She reads.', image: 'torn_letter', sfx: 'door_creaks' })
     expect(beats.some((b) => b.type === 'line' && /^(CG|SFX|INSERT|AMBIENCE)$/i.test(b.speakerLabel))).toBe(false)
     expect(p.warnings).toEqual([])
+  })
+
+  it('a CG or insert gets the characters whose name or alias is in its cue text (at most 3, in order); none when nobody is named', () => {
+    const b = parseBible('## Characters\n- **Mara**: A girl. Aliases: the red cloak. Voice: soft\n- **Tomas**: A man.\n- **Dr Vey**: A doctor.\n- **Ana**: A cook.\n\n## Places\n- **Hall**: A hall.\n')
+    const p = parseChapterScript('SCENE: The hall, night\nA quiet hall.\nCG: Tomas and the red cloak stand by Dr. Vey and Ana\nMARA: One.\nINSERT: A torn letter signed Ana\nMARA: Two.\nCG: Marathon runners in the street\nMARA: Three.\n', { chapter: 1, bible: b })
+    const key = (name: string) => b.characters.find((c) => c.name === name)!.key
+    expect(p.images).toHaveLength(3)
+    expect(p.images[0]!.characters).toEqual([key('Tomas'), key('Mara'), key('Dr Vey')])
+    expect(p.images[1]!.characters).toEqual([key('Ana')])
+    expect(p.images[1]).toMatchObject({ display: 'insert' })
+    expect(p.images[2]).not.toHaveProperty('characters')
   })
 
   it('CG: none, END CG and AMBIENCE: none clear; Croatian lines work; a reused description keeps one entry', () => {

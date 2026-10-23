@@ -11,9 +11,30 @@ What VN Studio still lacks on its own. Work that needs the other tools or a prod
 
 ## Tasks, in order
 
-None open. New work gets the next free number (VNO-19), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
+Two findings from the hub run (2026-10-22), not planned yet (no plan file; each gets one in `.claude/tickets/VNO-NN-<name>/plan.md` when it is taken up):
+
+- **VNO-20: a lost ComfyUI prompt must not leave a job running.** A generate job stayed `running` after ComfyUI crashed natively and came back with an empty queue; `vno_stop_now` and `vno_resume_all` restarted it. Detect a lost prompt (the prompt id is no longer in the queue or the history) and fail the job or retry it.
+- **VNO-21: check that VNO-08's hr UI strings reach older projects on rebuild.** The `the-clockless-god-3` Croatian build had 46 of 87 screen strings still in English. Check that the Croatian UI strings VNO-08 added are written into a project made before them when it is rebuilt, and fix what is missing.
+
+New work gets the next free number (VNO-22), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
 
 ## Done
 
 - **VNO-17** (2026-10-22): unit tests for media cues and expression sets: story, import, derive, generate, Ren'Py output (snapshots `media-ch01.rpy`, `media-ch02.rpy`), cue precedence and the MCP tools. No bug found.
 - **VNO-18** (2026-10-22): the hand-mode test imports a sprite through `vno_asset_import` in both art styles; the flat-colour `key` cuts it out and ComfyUI is never called. 741 tests pass.
+- **VNO-16** (2026-10-22): a `CG:` or `INSERT:` image from an imported script gets `characters`: the bible characters whose name or alias is in the cue text (at most 3, in text order), so the art director has their looks and sheets. No match leaves it unset.
+- **VNO-19** (2026-10-22): `sound.sfxEngine: "chiptune"` makes sound effects with Chiptune Studio `compose_sfx`, and `sound.ambienceEngine: "chiptune"` makes ambiences as its loops; sounds are matched to its sound names by key and description. Explicit settings only (no default, also not for pixel books). `vno_update_settings` takes `sound`.
+- **VNO-11** (2026-10-22): VN Studio starts Pixel Studio, Chiptune Studio and ComfyUI when a job finds them down (`config/autostart.md`, commands from the hub's `services.json`, `VNO_AUTOSTART=0` turns it off). Never Scriptorium, Strata, VibeTTS or LM Studio; ComfyUI not while Strata answers. Live check from the hub still to do.
+- **VNO-10** (2026-10-22): Google Flow as a provider through flow-music-mcp: `art.provider: flow` (free images, sprites from the sheet as a reference), `voice.provider: flow` (free Gemini and Windows voices), `music.provider: flow` (Flow Music songs, spends credits, capped per project, loop from `music_loop`). Tested with a fake client only; the live run is the hub task HUB-07 phase 4.
+- **VNO-12** (2026-10-22, hub HUB-10 phase 1): puzzle proof of concept in `templates/puzzles/`: a Python library (generator, solver, play helpers; 600 puzzles unique, deducible, minimal and in their band) and a Ren'Py grid screen for a 3x3 Murdle; `scripts/puzzle-poc.ts`; lint clean. Not yet played by the user (`npx tsx scripts/puzzle-poc.ts --play`); the game build, story schema and tools are untouched until VNO-13.
+- **VNO-13** (2026-10-22, hub HUB-10 phase 2): puzzle beats. A `puzzle` beat plays a puzzle of the book (`vno_puzzle_generate`, `vno_puzzle_set`, `vno_puzzle_get`, `vno_puzzle_check_text`, `vno_puzzle_remove`; code makes and proves the puzzle with the SDK's Python, the prose is read back and checked against the clues); the build writes the library and `vno_puzzles_data.rpy` only for such a book; clues found earlier, `onFail` (retry, continue, chapter), translated clues in editions. Lint clean, a Ren'Py test run through the bad-ending path. Not yet played by the user.
+- **VNO-14** (2026-10-22, hub HUB-10 phase 3): more puzzle kinds, one commit each: a bigger Murdle (4x4, a motive, clues about traits, pictures in the headers), Knights and Knaves (proved by an exhaustive check and a deduction without guessing), testimony (an Ace Attorney cross-examination: press, present from the court record, a penalty bar) and Puzzle Baron logic grids (an ordinal category, order clues). Each kind has a generator and solver proof, a Ren'Py screen, tools, a flavour check and a `renpy-integration` case. Not verified: the user has not played one of each kind. Ticket: `.claude/tickets/VNO-14-puzzle-kinds/`.
+- **VNO-15** (2026-10-22, hub HUB-10 phase 4, VN Studio side): puzzle script lines. A Scriptorium book of the format `mystery-puzzle-visual-novel` imports with `CLUE:`, `EVIDENCE:`, `PUZZLE:` and `TESTIMONY:` lines (Croatian keywords too) and `bible/puzzles.md`: each clue is a narration beat the puzzle lists once the story has shown it, each evidence line an insert picture, each testimony block the words of the core's statements; the cores are proved at import and prose that is not the canonical sentence is flagged by chapter until the read-back check passes; a translated folder lines up by clue id. Fixture `tests/fixtures/books/mystery-puzzle/`. Not verified: a book made by Scriptorium itself, and the read-back of the story's own words (the hub's step). Ticket: `.claude/tickets/VNO-15-puzzle-script-lines/`.
+
+## Later (not planned yet)
+
+- Start buttons on the Generators page, and an MCP tool to start a service.
+- VibeTTS auto-start, if the user wants it (it is a tray app with its MCP switch in its own settings).
+- "Open in Pixel Studio / Chiptune Studio" while a headless studio holds the studio's `engine.lock`: the window cannot take the data folder, but the launch already reported success (true with `hub.ps1 start` too).
+- A hard kill of VN Studio leaves the services it started running, even with `stopOnExit: true`.
+- Google Flow follow-ups: a per-speaker voice picker for Flow voices in the Voice tab, batching backgrounds with `flow_agent_images`, editing a finished image with `flow_edit` once flow-music-mcp queues edits, a Flow character per cast member as the sprite reference if likeness drifts.

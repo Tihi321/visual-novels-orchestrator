@@ -1,3 +1,4 @@
+import { hasText } from '../../shared/vn'
 import type { VnBook, VnBeat } from '../../shared/vn'
 
 export interface BeatInfo {
@@ -23,7 +24,7 @@ export function textBeats(book: Pick<VnBook, 'chapters'>): BeatInfo[] {
 }
 
 function beatText(b: VnBeat): string | null {
-  return b.type === 'cast' ? null : b.text
+  return hasText(b) ? b.text : null
 }
 
 export function beatIndex(book: Pick<VnBook, 'chapters'>): Map<string, BeatInfo> {

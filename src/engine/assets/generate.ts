@@ -1,12 +1,12 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
-import { CHIPTUNE_ENGINE, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../shared/vn'
 import type { AssetEntry, AssetManifest, AssetVersion, ProjectSettings, VnBook } from '../../shared/vn'
 import type { ComfyClient, ComfyProgress, ComfyResult } from '../comfy/client'
 import { randomSeed } from '../comfy/graphs'
 import { renameRetry } from '../store/atomic'
-import { fallbackNegative, fallbackPrompt, imageOfAsset, LANDSCAPE, PORTRAIT, SQUARE } from './derive'
+import { fallbackNegative, fallbackPrompt, imageOfAsset, LANDSCAPE, PORTRAIT, SQUARE, soundOfAsset } from './derive'
 import { addVersion, assetDir, getEntry, nextVersionN, replaceEntry, resolveFile, saveManifest } from './manifest'
 import { loadPalette, type Rgb } from './palettes'
 import { fitBackground, keepMainSubject, keyOutFlatBackground, pixelate, prepareSprite, toWebp, transparentShare } from './postprocess'
@@ -15,8 +15,13 @@ import type { ModelReply } from '../studios/draw'
 import { fallbackChipPlan } from '../studios/chip-plan'
 import type { ChipTrackPlan } from '../studios/chip-plan'
 import type { ChiptuneClient } from '../studios/chiptune'
-import { makeChiptuneTrack } from '../studios/music'
+import { pickChipSound } from '../studios/chip-sound'
+import { makeChiptuneSound, makeChiptuneTrack } from '../studios/music'
+import { makeFlowTrack } from '../studios/flow-music'
 import { pixelateWithStudio } from '../studios/pixelate'
+import type { FlowClient } from '../studios/flow'
+import { DEFAULT_FLOW_OPTIONS, flowReferences, makeFlowImage } from './flow-image'
+import type { FlowOptions } from './flow-image'
 import type { PixelClient } from '../studios/pixel'
 
 export interface GenerateOptions {
@@ -78,6 +83,14 @@ export interface GenerateContext {
   now?: () => Date
   /** Pixel Studio, for `pixelProvider: pixel-studio` and `provider: pixel-studio-draw`. Without it the built-in pixelate runs. */
   pixel?: PixelClient
+  /** flow-music-mcp, for image assets of a project whose `art.provider` is `flow` (and music with `music.provider: flow`). */
+  flow?: FlowClient
+  /** Quality, timeouts and the song cap of the Flow calls (`config/studios.md`). Default: `DEFAULT_FLOW_OPTIONS`. */
+  flowOptions?: FlowOptions
+  /** How many Flow Music songs the project has made so far (the cap `flowOptions.maxSongs` counts them). */
+  flowSongsMade?: number
+  /** The manifest entry of a referenced asset (its selected version tells a Flow media id). */
+  resolveRefEntry?: (id: string) => AssetEntry | null
   /** Chiptune Studio, for music assets with the `chiptune` engine. */
   chiptune?: ChiptuneClient
   /** The composer's plan of this track; default: the deterministic plan. */
@@ -339,8 +352,16 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
   // Music follows the project's provider: an unlocked generated track is made by Chiptune Studio or by the configured ComfyUI engine,
   // whatever made its earlier versions. An engine given for this one run, a locked track and a custom file keep theirs.
   if (edited.kind === 'music' && opts.engine === undefined && !edited.locked && edited.source === 'generated') {
-    edited.engine = resolveMusicProvider(ctx.settings) === 'chiptune' ? CHIPTUNE_ENGINE : edited.engine === CHIPTUNE_ENGINE ? ctx.settings.music.engine : edited.engine
+    const provider = resolveMusicProvider(ctx.settings)
+    edited.engine = provider === 'flow' ? FLOW_MUSIC_ENGINE : provider === 'chiptune' ? CHIPTUNE_ENGINE : edited.engine === CHIPTUNE_ENGINE || edited.engine === FLOW_MUSIC_ENGINE ? ctx.settings.music.engine : edited.engine
   }
+  // Images follow the project's art provider the same way: a generated, unlocked image is made by Flow or by the configured ComfyUI engine,
+  // whatever made its earlier versions. An engine given for this run, a locked image and a custom file keep theirs.
+  if (IMAGE_KINDS.has(edited.kind) && opts.engine === undefined && !edited.locked && edited.source === 'generated') {
+    if (resolveArtProvider(ctx.settings.art) === 'flow') edited.engine = FLOW_ENGINE
+    else if (edited.engine === FLOW_ENGINE) edited.engine = edited.kind === 'sprite' || (edited.kind === 'cg' && (edited.refs?.length ?? 0) > 0) ? ctx.settings.art.editor : ctx.settings.art.generator
+  }
+  const viaFlow = IMAGE_KINDS.has(edited.kind) && edited.engine === FLOW_ENGINE
   try {
     progress('start', `${entry.kind} with ${edited.engine}`)
     const pixel = ctx.settings.art.style === 'pixel'
@@ -370,7 +391,56 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     let out: { bytes: Buffer; ext: string }
     let rawOut: { bytes: Buffer; ext: string } | undefined
     let chiptune: Awaited<ReturnType<typeof makeChiptuneTrack>> | undefined
-    switch (edited.kind) {
+    /** Made by Google Flow: the media id, kept on the version so a later image can use it as a reference. */
+    let remote: AssetVersion['remote']
+    /** A sound effect or an ambience made by Chiptune Studio's `compose_sfx`: the sound is picked from the key and the description. */
+    const chipSound = async (kind: 'sfx' | 'ambience', seconds: number | undefined) => {
+      if (!ctx.chiptune) throw new Error('Chiptune Studio is not configured')
+      const sound = soundOfAsset(ctx.book, edited.id)
+      const pick = pickChipSound(kind, sound?.key ?? edited.id.replace(/^[a-z]+_/, ''), `${sound?.description ?? ''} ${edited.prompt}`)
+      progress('comfy', `compose ${pick.sound} with Chiptune Studio`)
+      const track = await makeChiptuneSound(ctx.chiptune, { dir: assetDir(ctx.projectDir, edited.id), n: nextVersionN(edited), kind, sound: pick.sound, chip: ctx.settings.music.chip, seconds, seed: edited.seed ?? undefined, name: `${ctx.book.title} ${edited.id}`, signal: ctx.signal })
+      if (pick.guessed) warn(`no Chiptune Studio sound matches "${sound?.key ?? edited.id}": used ${pick.sound}. Import a file (vno_asset_import) for the real sound`)
+      for (const w of track.warnings) warn(w)
+      return track
+    }
+    switch (viaFlow ? 'flow' : edited.kind) {
+      case 'flow': {
+        if (!ctx.flow) throw new Error('Google Flow (flow-music-mcp) is not configured')
+        let raw: { bytes: Buffer; ext: string }
+        if (edited.kind === 'sprite' && opts.reprocess) {
+          const found = await findRaw(ctx.projectDir, edited)
+          if (!found) throw new Error(`${edited.id} has no raw output to reprocess: generate it first`)
+          raw = found
+        } else {
+          const refs = edited.kind === 'sprite' || edited.kind === 'cg' ? flowReferences(edited, { entryOf: ctx.resolveRefEntry, fileOf: ctx.resolveRef }) : undefined
+          const run = await makeFlowImage(ctx.flow, {
+            entry: edited,
+            prompt,
+            display,
+            project: ctx.settings.art.flowProject ?? `vno-${ctx.settings.slug}`,
+            projectDir: ctx.projectDir,
+            model: ctx.settings.art.flowModel,
+            options: ctx.flowOptions ?? DEFAULT_FLOW_OPTIONS,
+            refs,
+            signal: ctx.signal,
+            progress: (m) => progress('comfy', m)
+          })
+          raw = { bytes: run.bytes, ext: run.ext }
+          remote = run.remote
+          for (const w of run.warnings) warn(w)
+        }
+        if (edited.kind === 'sprite') rawOut = raw
+        if (edited.kind === 'sheet') {
+          out = raw // the identity reference, kept as it came
+        } else {
+          const fin = await finishImage(ctx, edited, raw.bytes, { ...finishOpts, ext: raw.ext })
+          warnings.push(...fin.warnings)
+          native = fin.native
+          out = { bytes: fin.bytes, ext: fin.ext }
+        }
+        break
+      }
       case 'background': {
         const r = await ctx.comfy.generate({ ...base, width: size.w, height: size.h })
         const fin = await finishImage(ctx, edited, r.bytes, finishOpts)
@@ -425,18 +495,39 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
         break
       }
       case 'ambience': {
+        if (edited.engine === CHIPTUNE_ENGINE) {
+          chiptune = await chipSound('ambience', sizes.ambienceSeconds ?? 60)
+          out = { bytes: Buffer.alloc(0), ext: path.extname(chiptune.file).slice(1) }
+          break
+        }
         const r: ComfyResult = await ctx.comfy.generate({ engine: edited.engine, prompt, seed, seconds: sizes.ambienceSeconds ?? 60, format: sizes.musicFormat, onProgress, signal: ctx.signal })
         out = { bytes: r.bytes, ext: r.ext }
         break
       }
       case 'sfx': {
-        // there is no sound-effect engine by default: a custom ComfyUI workflow (sound.sfxEngine) makes it, else the file is imported
+        // there is no sound-effect engine by default: Chiptune Studio (`chiptune`) or a custom ComfyUI workflow (sound.sfxEngine) makes it, else the file is imported
+        if (edited.engine === CHIPTUNE_ENGINE) {
+          chiptune = await chipSound('sfx', undefined)
+          out = { bytes: Buffer.alloc(0), ext: path.extname(chiptune.file).slice(1) }
+          break
+        }
         if (!edited.engine.startsWith('custom:')) return { ok: true, skipped: true, entry, reason: 'no SFX engine: import a file (vno_asset_import)' }
         const r: ComfyResult = await ctx.comfy.generate({ engine: edited.engine, prompt, seed, seconds: sizes.sfxSeconds ?? 5, format: sizes.musicFormat, onProgress, signal: ctx.signal })
         out = { bytes: r.bytes, ext: r.ext }
         break
       }
       case 'music': {
+        if (edited.engine === FLOW_MUSIC_ENGINE) {
+          if (!ctx.flow) throw new Error('Google Flow (flow-music-mcp) is not configured')
+          const options = ctx.flowOptions ?? DEFAULT_FLOW_OPTIONS
+          progress('comfy', 'song from Flow Music (spends credits)')
+          const track = await makeFlowTrack(ctx.flow, { dir: assetDir(ctx.projectDir, edited.id), n: nextVersionN(edited), prompt: /^chiptune:/i.test(prompt) ? fallbackPrompt(edited, ctx.book) : prompt, title: `${ctx.book.title} ${edited.id}`, songsMade: ctx.flowSongsMade ?? 0, maxSongs: options.maxSongs, timeoutMs: options.musicTimeoutMs, signal: ctx.signal })
+          for (const w of track.warnings) warn(w)
+          chiptune = track
+          remote = track.remote
+          out = { bytes: Buffer.alloc(0), ext: path.extname(track.file).slice(1) }
+          break
+        }
         if (edited.engine === CHIPTUNE_ENGINE) {
           if (!ctx.chiptune) throw new Error('Chiptune Studio is not configured')
           progress('comfy', 'compose with Chiptune Studio')
@@ -478,7 +569,8 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
       n,
       file,
       createdAt: (ctx.now?.() ?? new Date()).toISOString(),
-      seed: chiptune ? chiptune.seed : seed,
+      seed: remote ? null : chiptune ? chiptune.seed : seed,
+      ...(remote ? { remote } : {}),
       engine: edited.engine,
       prompt,
       ...(chiptune ? { loopStartSec: chiptune.loopStartSec, loopEndSec: chiptune.loopEndSec, ...(chiptune.songFile ? { songFile: chiptune.songFile } : {}) } : {}),

@@ -406,7 +406,7 @@ export type EngineEvent =
 
 /** One studio app (Pixel Studio, Chiptune Studio) as `studiosStatus` saw it. */
 export interface StudioStatusView {
-  id: 'pixel' | 'chiptune'
+  id: 'pixel' | 'chiptune' | 'flow'
   name: string
   ok: boolean
   url: string
@@ -552,7 +552,9 @@ export interface ProjectSettingsPatch {
   /** Role -> `provider/model` for this project, merged into the current ones; `null` clears a role. */
   models?: Record<string, string | null>
   /** `null` clears an optional field (`palette`, `stylePrompt`, `provider`, `pixelProvider`, `pixel`). `pixel` is merged field by field. */
-  art?: Partial<Omit<ProjectSettings['art'], 'palette' | 'stylePrompt' | 'provider' | 'pixelProvider' | 'pixel'>> & {
+  art?: Partial<Omit<ProjectSettings['art'], 'palette' | 'stylePrompt' | 'provider' | 'pixelProvider' | 'pixel' | 'flowModel' | 'flowProject'>> & {
+    flowModel?: string | null
+    flowProject?: string | null
     palette?: string | null
     stylePrompt?: string | null
     provider?: ProjectSettings['art']['provider'] | null

@@ -54,6 +54,46 @@ export function runRenpy(sdkPath: string, args: string[], opts: { cwd?: string; 
   })
 }
 
+/** The Python that ships with the SDK (3.12, standard library only), for this platform. Null when the SDK has none. */
+export function sdkPython(sdkPath: string): string | null {
+  const rel = process.platform === 'win32' ? ['lib', 'py3-windows-x86_64', 'python.exe'] : process.platform === 'darwin' ? ['lib', 'py3-mac-universal', 'python'] : ['lib', 'py3-linux-x86_64', 'python']
+  const exe = path.join(sdkPath, ...rel)
+  return fs.existsSync(exe) ? exe : null
+}
+
+/** Run the SDK's own Python with these arguments (`input` goes to its stdin). Resolves with the output; rejects when the SDK has no Python. */
+export function runSdkPython(sdkPath: string, args: string[], opts: { cwd?: string; input?: string; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}): Promise<RunResult> {
+  return new Promise((resolve, reject) => {
+    const exe = sdkPython(sdkPath)
+    if (!exe) {
+      reject(new Error(`the Ren'Py SDK at ${sdkPath} has no Python for this platform. Set sdkPath in config/renpy.md.`))
+      return
+    }
+    const child = spawn(exe, args, { cwd: opts.cwd ?? sdkPath, env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', ...opts.env }, windowsHide: true })
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    const timer = opts.timeoutMs
+      ? setTimeout(() => {
+          timedOut = true
+          child.kill()
+        }, opts.timeoutMs)
+      : null
+    child.stdout.on('data', (d: Buffer) => (stdout += d.toString('utf8')))
+    child.stderr.on('data', (d: Buffer) => (stderr += d.toString('utf8')))
+    child.on('error', (e) => {
+      if (timer) clearTimeout(timer)
+      reject(e)
+    })
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer)
+      resolve({ code, stdout, stderr, timedOut })
+    })
+    child.stdin.on('error', () => undefined)
+    child.stdin.end(opts.input ?? '')
+  })
+}
+
 export interface LintResult {
   /** No problems were reported (exit code 0). */
   ok: boolean

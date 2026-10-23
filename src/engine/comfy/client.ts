@@ -377,6 +377,11 @@ export interface ComfyClientOptions {
   dataDir?: string
   /** Overrides the workflow folders. */
   workflowDirs?: string[]
+  /**
+   * Starts the service of a lane when no lane answers at all (never when a lane answers but is busy): `true` when it answers now, else the
+   * reason it does not. Only job paths pass it.
+   */
+  ensureLane?: (lane: string, signal?: AbortSignal) => Promise<true | string>
 }
 
 export const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp'])
@@ -408,10 +413,23 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
   const dirs = opts.workflowDirs ?? (opts.dataDir ? workflowDirs(opts.dataDir) : [])
   let infoCache: ObjectInfo | null = null
 
-  async function chooseLane(): Promise<string> {
+  /** Asks `ensureLane` to start each lane in turn; true when one answers now. The reasons are collected in `why`. */
+  async function startLanes(why: string[], signal?: AbortSignal): Promise<boolean> {
+    if (!opts.ensureLane) return false
+    for (const lane of lanesOf(config)) {
+      const r = await opts.ensureLane(lane, signal)
+      if (r === true) return true
+      why.push(`auto-start ${lane}: ${r}`)
+    }
+    return false
+  }
+
+  async function chooseLane(signal?: AbortSignal): Promise<string> {
     const lanes = lanesOf(config)
     if (config.freeBeforeDispatch) for (const lane of lanes) await freeMemory(lane).catch(() => undefined)
-    const { lane, busy } = await pickLane(config)
+    let { lane, busy } = await pickLane(config)
+    // nothing answers at all (not even a busy lane): the service may be down, and asking it to start is allowed
+    if (!lane && busy.length > 0 && busy.every((b) => b.includes('is unreachable')) && (await startLanes(busy, signal))) ({ lane, busy } = await pickLane(config))
     let chosen = lane
     if (!chosen && config.queuePolicy === 'wait') chosen = (await firstReachableLane(config)) ?? undefined
     if (!chosen) {
@@ -449,7 +467,7 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
     if (req.engine.startsWith('custom:')) return generateCustom(req)
     const engine = ENGINES[req.engine]
     if (!engine) throw new Error(`unknown engine "${req.engine}"`)
-    const lane = await chooseLane()
+    const lane = await chooseLane(req.signal)
     req.onProgress?.({ stage: 'lane', message: lane })
 
     const references: string[] = []
@@ -492,7 +510,7 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
   async function generateCustom(req: ComfyRequest): Promise<ComfyResult> {
     const name = req.engine.slice('custom:'.length)
     const workflow = await loadCustomWorkflow(dirs, name)
-    const lane = await chooseLane()
+    const lane = await chooseLane(req.signal)
     req.onProgress?.({ stage: 'lane', message: lane })
     let reference: string | undefined
     const firstRef = req.references?.[0]
@@ -525,7 +543,8 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
 
   async function getInfo(): Promise<ObjectInfo | null> {
     if (infoCache) return infoCache
-    const lane = await firstReachableLane(config)
+    let lane = await firstReachableLane(config)
+    if (!lane && (await startLanes([]))) lane = await firstReachableLane(config)
     if (!lane) return null
     try {
       infoCache = await objectInfo(lane)
@@ -542,7 +561,7 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
     // The exact file name comes from ComfyUI's own list; a configured name that is not listed falls back to the first.
     const model = wanted && listed.includes(wanted) ? wanted : listed[0]
     if (!info?.RemoveBackground || !model) return null
-    const lane = await chooseLane()
+    const lane = await chooseLane(o.signal)
     const uploaded = await uploadImage(lane, image, { name: `vno_rmbg_${Date.now().toString(36)}.png` })
     const graph = buildRemoveBackground({ image: uploaded.filename, model, filenamePrefix: 'vno_cutout' })
     const { promptId, collected } = await runGraph(lane, graph, o)
