@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -234,6 +234,28 @@ describe('reader', () => {
     expect(soother).toMatchObject({ title: 'The Soother That Fell Into Dragon Land', format: 'kids-choice-visual-story', script: true, stage: 'published', hasChoices: true })
     expect(list.find((b) => b.slug === 'gb')).toMatchObject({ hasChoices: true, stage: 'draft' })
     expect(await listBooks(join(dir, 'nothing'))).toEqual([])
+  })
+
+  it('VNO-35: a title the person fixed in brief.md (such as one ending in "(VN)") is the title; without title_fixed the book.md title stays', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'vno-title-'))
+    try {
+      const make = async (name: string, brief: string | null) => {
+        await cp(join(books, 'linear-en'), join(root, 'books', name), { recursive: true })
+        const md = join(root, 'books', name, 'book.md')
+        await writeFile(md, (await readFile(md, 'utf8')).replace(/^title: .*$/m, 'title: The Lighthouse That Kept Lists'))
+        if (brief !== null) await writeFile(join(root, 'books', name, 'brief.md'), brief)
+      }
+      await make('fixed', '---\nkind: brief\ntitle: The Lighthouse That Kept Lists (VN)\ntitle_fixed: true\n---\n')
+      await make('free', '---\nkind: brief\ntitle: Something Else\ntitle_fixed: false\n---\n')
+      await make('nobrief', null)
+      for (const [name, title] of [['fixed', 'The Lighthouse That Kept Lists (VN)'], ['free', 'The Lighthouse That Kept Lists'], ['nobrief', 'The Lighthouse That Kept Lists']] as const) {
+        expect((await readBookFolder(join(root, 'books', name))).book.title).toBe(title)
+        expect((await listBooks(root)).find((b) => b.path.endsWith(name))!.title).toBe(title)
+      }
+      expect((await importBook(join(root, 'books', 'fixed'))).book.title).toBe('The Lighthouse That Kept Lists (VN)')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('reads a bare folder', async () => {
