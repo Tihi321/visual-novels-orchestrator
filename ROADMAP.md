@@ -11,9 +11,13 @@ What VN Studio still lacks on its own. Work that needs the other tools or a prod
 
 ## Tasks, in order
 
-No open tasks.
+Found by the hub's HUB-15 C3 live check (2026-10-23, `creative-hub/runs/the-trap-room-at-the-lanterna.md`); no plans yet.
 
-New work gets the next free number (VNO-32), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
+- **VNO-36** testimony press lines still repeat other statements. `generate_testimony` (`templates/puzzles/game/python-packages/vno_puzzles/testimony.py`) picks a press key from `others` minus the statement's own key and earlier press keys, but not the other statements' main keys, and `repeats()` checks a press line only against its own statement. Seed 911973614 (medium): t2.press "The colonel left first" = t3, t3.press "The library window was wide open" = t4; `repeats()` returns `[]`. 154 of seeds 1-200 (medium) have a press line equal to another statement. Fix: exclude every statement's key from `free`, and add the cross-statement case to `repeats()` and its tests.
+- **VNO-37** a place loses most of its looks when one list item names a character (VNO-31 only splits at clauses). `withoutCharacterSentences` (`src/engine/assets/derive.ts`) splits at `:`/`;` only, so "Outdoors, a narrow harbour street behind the theatre: wet cobbles, a green wooden stage door under a small lamp, peeling posters for the Great Orsini on the wall, the masts of boats ..." becomes "Outdoors, a narrow harbour street behind the theatre." (the planned `bg_stage_door_*` prompts then invent "a plain stage door", "dark stone walls"). Also drop single comma items, and perhaps keep a name that is not a person in the scene (a poster, a shop sign).
+- **VNO-38** `END CG` as the last line of a scene is reported as "a CG line at the end of a scene has no beat after it in its scene: dropped" (2 warnings in *The Trap Room at the Lanterna* ch4). The scene end clears the picture anyway, so it is harmless; the warning should not fire for `END CG`.
+
+New work gets the next free number (VNO-39), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
 
 ## Done
 
