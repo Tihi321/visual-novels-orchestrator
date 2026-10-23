@@ -162,3 +162,22 @@ describe('stopping, resuming and what is queued (V11)', () => {
     await waitFor(async () => (await env!.engine.jobs.ids('queued')).length > 0, 2000, 'the other project keeps its job')
   })
 })
+
+describe('image jobs of a Flow book run in their own lane (VNO-28)', () => {
+  it('a Flow book enqueues its image jobs in the flow lane, a ComfyUI book without one', async () => {
+    env = await makeVnEnv({ sdk: false })
+    const svc = env.engine.vn
+    const { slug } = await svc.importProject(book('linear-en'))
+    await svc.reconcileAssets(slug)
+    await env.engine.setPaused(true)
+    const bg = (await svc.store.loadAssets(slug)).assets.find((a) => a.kind === 'background')!
+    const laneOf = async (id: string) => (await env!.engine.jobs.read('queued', id))!.data.lane
+
+    const comfy = (await svc.regenerateAsset(slug, bg.id, { rebuild: false })).jobs[0]!
+    expect(await laneOf(comfy)).toBeNull()
+
+    await svc.updateSettings(slug, { art: { provider: 'flow' } })
+    const flow = (await svc.regenerateAsset(slug, bg.id, { rebuild: false })).jobs[0]!
+    expect(await laneOf(flow)).toBe('flow')
+  })
+})

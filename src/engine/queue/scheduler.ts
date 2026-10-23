@@ -377,7 +377,7 @@ export class Scheduler {
       const rt = this.runtimes.get(def.id)
       if (!rt || rt.retiring || def.data.paused) continue
       if (def.data.role !== j.role) continue
-      const load = this.occupying(rt)
+      const load = j.lane ? this.inLane(rt, j.lane) : this.occupying(rt)
       if (load >= def.data.max_parallel) continue
       if (def.data.pin && def.data.pin !== j.book) continue
       options.push({ def, focus: !!j.book && def.data.focus.includes(j.book), hint: j.agent_hint === def.id, load })
@@ -398,7 +398,14 @@ export class Scheduler {
    */
   private occupying(rt: AgentRuntime): number {
     let n = 0
-    for (const rj of rt.running.values()) if (this.d.router.registry.getModel(rj.model)?.provider.kind !== 'client') n++
+    for (const rj of rt.running.values()) if (!rj.job.data.lane && this.d.router.registry.getModel(rj.model)?.provider.kind !== 'client') n++
+    return n
+  }
+
+  /** The jobs of an agent running in a lane (see `JobFrontmatter.lane`): they count against the lane, not against the agent's other jobs. */
+  private inLane(rt: AgentRuntime, lane: string): number {
+    let n = 0
+    for (const rj of rt.running.values()) if (rj.job.data.lane === lane) n++
     return n
   }
 

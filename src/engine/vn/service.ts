@@ -24,6 +24,7 @@ import { assertKnownLang } from '../../shared/languages'
 import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, hasText, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
 import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
+import { runsOnFlow } from '../assets/flow-image'
 import { importAssetFile } from '../assets/import'
 import type { ImportOptions } from '../assets/import'
 import { lock, mergeDerived, pickVersion, resolveFile, setCustom, unlock } from '../assets/manifest'
@@ -724,7 +725,7 @@ export class VnService {
    * Enqueues one job of the VN pipeline (idempotent by id). Returns the id. `priority`: 1 for a request someone made on purpose (an MCP tool,
    * the app), so it runs before the older jobs of the pipeline's own chain (0, the default); dependencies still decide what may start.
    */
-  async enqueue(slug: string, task: VnTask, unit: string, run: number, o: { depends_on?: string[]; body?: object; label?: string; vision?: boolean; requested_by?: string; priority?: number; max_attempts?: number } = {}): Promise<string> {
+  async enqueue(slug: string, task: VnTask, unit: string, run: number, o: { depends_on?: string[]; body?: object; label?: string; vision?: boolean; requested_by?: string; priority?: number; max_attempts?: number; lane?: string } = {}): Promise<string> {
     const id = jobId(slug, task, unit, run)
     await this.deps.jobs.enqueue(
       {
@@ -739,7 +740,8 @@ export class VnService {
         ...(o.vision ? { vision: true } : {}),
         ...(o.requested_by ? { requested_by: o.requested_by } : {}),
         ...(o.priority ? { priority: o.priority } : {}),
-        ...(o.max_attempts ? { max_attempts: o.max_attempts } : {})
+        ...(o.max_attempts ? { max_attempts: o.max_attempts } : {}),
+        ...(o.lane ? { lane: o.lane } : {})
       },
       o.body ? JSON.stringify(o.body) : ''
     )
@@ -1040,7 +1042,7 @@ export class VnService {
     const dir = this.store.dir(slug)
     const sprites = entry.kind === 'sheet' ? (await this.store.loadAssets(slug)).assets.filter((a) => a.kind === 'sprite' && a.refs?.[0] === id) : []
     const sheetJobs = entry.kind === 'sprite' && entry.refs?.[0] ? (await this.activeGenerateJobs(slug, [entry.refs[0]])).map((j) => j.id) : []
-    const gen = await this.enqueue(slug, this.generateTask(settings, entry), id, run, { body: { force: true, prompt: edits.prompt, engine: edits.engine, seed: edits.seed }, label: `regenerate ${id}`, depends_on: sheetJobs, priority: 1, max_attempts: this.maxAttempts(settings, entry) })
+    const gen = await this.enqueue(slug, this.generateTask(settings, entry), id, run, { body: { force: true, prompt: edits.prompt, engine: edits.engine, seed: edits.seed }, label: `regenerate ${id}`, depends_on: sheetJobs, priority: 1, max_attempts: this.maxAttempts(settings, entry), lane: this.generateLane(settings, entry, edits.engine) })
     const ids = [gen]
     const staleSprites: string[] = []
     if (entry.kind === 'sheet') {
@@ -1050,7 +1052,7 @@ export class VnService {
       }
       if (edits.sprites) {
         for (const s of sprites.filter((a) => !a.locked && a.source === 'generated')) {
-          ids.push(await this.enqueue(slug, this.generateTask(settings, s), s.id, run, { body: { force: true }, label: `regenerate ${s.id}`, depends_on: [gen], priority: 1 }))
+          ids.push(await this.enqueue(slug, this.generateTask(settings, s), s.id, run, { body: { force: true }, label: `regenerate ${s.id}`, depends_on: [gen], priority: 1, lane: this.generateLane(settings, s) }))
         }
       } else {
         staleSprites.push(...sprites.filter((s) => resolveFile(dir, s)).map((s) => s.id))
@@ -1069,6 +1071,14 @@ export class VnService {
   /** A song from Flow Music is never retried by itself: a failed take may already have spent credits. Null: the factory's default. */
   maxAttempts(settings: ProjectSettings, entry: Pick<AssetEntry, 'kind'>): number | undefined {
     return entry.kind === 'music' && resolveMusicProvider(settings) === 'flow' ? 1 : undefined
+  }
+
+  /**
+   * The lane of a generate job: Flow work (images, Flow Music) runs in the `flow` lane, so it does not wait behind a ComfyUI book's jobs on the
+   * art director's one slot. ComfyUI and the other jobs keep the agent's slot: ComfyUI shares the GPU with the local models of the agents.
+   */
+  generateLane(settings: ProjectSettings, entry: Pick<AssetEntry, 'kind' | 'locked' | 'source' | 'engine'>, engine?: string): string | undefined {
+    return this.generateTask(settings, entry) === TASKS.generate && runsOnFlow(entry, settings, engine) ? 'flow' : undefined
   }
 
   generateTask(settings: ProjectSettings, entry: Pick<AssetEntry, 'kind'>): VnTask {
