@@ -1,5 +1,14 @@
 # VNO-20 and VNO-21 changelog
 
+## 2026-10-23 (last): VNO-28, Flow jobs in their own lane
+
+Same branch `VNO-20-23_fixes`. Committed, not pushed.
+
+- **VNO-28** (cbc19d2 + docs commit): a job can name a `lane` (`src/shared/schemas.ts`, default null). A laned job takes no slot of its agent; it waits only for running jobs of the same lane (up to the agent's `max_parallel`, 1 by default). `scheduler.ts` counts laned jobs per lane (`inLane`) and no longer counts them in `occupying`. `generateLane` (`src/engine/vn/service.ts`) gives `flow` to Flow images and Flow Music (one flow-music-mcp queue); the fan-out, `regenerateAsset` and the sprite re-make pass it. ComfyUI jobs stay on the art director's slot on purpose: they share the GPU with local model calls. Pixel Studio draw jobs are never laned.
+- Why not `locks` or a new role: locks do not free the agent slot; a new role needs new seed agents that existing data folders lack.
+- Tests: `tests/scheduler.test.ts` "lanes" (a flow job beside an unlaned job; two unlaned one at a time; two flow one at a time), `tests/vn-queue.test.ts` (a Flow book's regenerate job has `lane: flow`, a ComfyUI book's none). Full `yarn test` twice 920/920, `yarn typecheck`, `yarn lint` clean.
+- Found by the hub's productions on 2026-10-23: `the-winter-garden-clock` (Flow) waited behind `the-lighthouse-that-kept-lists-vn` (ComfyUI). Limitation: jobs queued before the change have no lane. Not run live with two books.
+
 ## 2026-10-23 (later still): VNO-25 to VNO-27, found by the hub's puzzle production
 
 Same branch `VNO-20-23_fixes`. Committed, not pushed. Evidence: the hub's `runs/the-winter-garden-clock.md` "Found" and `.claude/temp/hub10-p5/`.
