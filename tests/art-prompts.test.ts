@@ -1,9 +1,9 @@
 import path from 'node:path'
 import sharp from 'sharp'
 import { describe, expect, it } from 'vitest'
-import { defaultStylePrompt, fallbackNegative, fallbackPrompt, resolveStylePrompt, visualLooks } from '../src/engine/assets/derive'
+import { defaultStylePrompt, fallbackNegative, fallbackPrompt, resolveStylePrompt, visualLooks, withoutCharacterSentences } from '../src/engine/assets/derive'
 import { keepMainSubject } from '../src/engine/assets/postprocess'
-import { ensureFraming } from '../src/engine/vn/agents/art-director'
+import { describeAsset, ensureFraming } from '../src/engine/vn/agents/art-director'
 import { importBook } from '../src/engine/vn/import'
 import { projectSettingsSchema } from '../src/shared/vn'
 
@@ -56,6 +56,22 @@ describe('art prompts', () => {
     expect(ensureFraming('sheet', 'sheet_petra', 'a girl in a yellow raincoat')).toContain('one full-body figure only')
     expect(ensureFraming('background', 'bg_x', 'a cave')).toContain('no people')
     expect(ensureFraming('sprite', 'sprite_petra_sad', 'same character, sad')).toContain('sad facial expression')
+  })
+
+  it('a place description with a character name in it keeps the rest of the place (VNO-31)', async () => {
+    const { book } = await soother()
+    const people = { characters: [{ key: 'moreau', name: 'Moreau' }, { key: 'ines', name: 'Inès' }] } as never
+    // one long sentence whose head names a character as part of the place ("the Moreau house", "Inès's atelier")
+    const salon = 'Indoors, a long salon in the Moreau house: cream panelled walls covered with clocks, a crystal chandelier, rows of gold chairs; tall windows onto a snowy courtyard. Warm golden light.'
+    expect(withoutCharacterSentences(salon, people)).toBe('cream panelled walls covered with clocks, a crystal chandelier, rows of gold chairs; tall windows onto a snowy courtyard. Warm golden light.')
+    const atelier = "Indoors, Inès's restoration atelier on a top floor: a big slanted skylight with night sky, easels, a worktable of brushes; plaster walls, warm lamplight."
+    expect(withoutCharacterSentences(atelier, people)).toBe('a big slanted skylight with night sky, easels, a worktable of brushes; plaster walls, warm lamplight.')
+    // a sentence about a person and no colon is still left out whole, and a clause naming one is cut
+    expect(withoutCharacterSentences('A tall hall. Moreau stands at the lectern, gloved. Snow at the windows.', people)).toBe('A tall hall. Snow at the windows.')
+    expect(withoutCharacterSentences('A cellar: Inès sits on a crate; barrels along the wall.', people)).toBe('A cellar: barrels along the wall.')
+    // the art-director's task carries the place's looks
+    const b = { ...book, characters: [...book.characters, { ...book.characters[0]!, key: 'moreau', name: 'Moreau' }], places: [{ key: 'salon', name: 'Salon', looks: salon }], chapters: [{ ...book.chapters[0]!, scenes: [{ ...book.chapters[0]!.scenes[0]!, backgroundId: 'bg_salon_any', placeKey: 'salon', description: '' }] }] }
+    expect(describeAsset(b, { id: 'bg_salon_any', kind: 'background' }).placeLooks).toContain('cream panelled walls')
   })
 
   it('keepMainSubject drops stray islands and a second figure but keeps pieces next to the figure', async () => {

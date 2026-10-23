@@ -189,7 +189,12 @@ export function visualLooks(text: string | undefined): string {
     .replace(/\.$/, '')
 }
 
-/** The sentences that do not mention a character of the book (an empty background must not describe who is in it). */
+/**
+ * What can be drawn in an empty place: the sentences that do not mention a character of the book (an empty background must not
+ * describe who is in it). A sentence that names one is not thrown away whole when a colon or semicolon splits it: a place description is
+ * often one long sentence, "a salon in the Moreau house: panelled walls, a chandelier; warm light", where the name is only in its head
+ * ("Moreau house", "Ines's atelier") and the rest is the place. Only the clauses with a name go.
+ */
 export function withoutCharacterSentences(text: string | undefined, book: Pick<VnBook, 'characters'>): string {
   if (!text) return ''
   const words = new Set<string>()
@@ -197,9 +202,17 @@ export function withoutCharacterSentences(text: string | undefined, book: Pick<V
     for (const w of normText(c.name).split(' ')) if (w.length > 2) words.add(w)
     words.add(c.key)
   }
-  return sentences(text)
-    .filter((s) => !normText(s).split(' ').some((w) => words.has(w)))
-    .join(' ')
+  const named = (s: string): boolean => normText(s).split(' ').some((w) => words.has(w))
+  const out: string[] = []
+  for (const sentence of sentences(text)) {
+    if (!named(sentence)) {
+      out.push(sentence)
+      continue
+    }
+    const kept = sentence.split(/(?<=[:;])\s+/).filter((clause) => !named(clause))
+    if (kept.length) out.push(kept.join(' ').replace(/[:;,]\s*$/, '').replace(/([^.!?])$/, '$1.'))
+  }
+  return out.join(' ')
 }
 
 /** The framing words that keep an image model to one figure, or to an empty place. */
