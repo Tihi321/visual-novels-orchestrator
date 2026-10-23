@@ -19,6 +19,14 @@ Source: `ROADMAP.md` "Tasks, in order" (VNO-20, VNO-21). Confirm each cause in t
 ## Added 2026-10-23, second round (hub HUB-07 run, same branch)
 
 - [x] **VNO-24 (ed752bb): stop the voice step on a daily Gemini quota.** In `hub07-flow-test` the Croatian voice job got HTTP 429 from Gemini TTS (through flow-music-mcp `flow_narrate`) with Google's text "Please retry in 21h21m47.5s" (the free tier's daily quota). VN Studio still ran its 10/30/90 s retries (`flowVoiceRetries`) on each of the 6 remaining clips, then failed each. Fix: parse the retry time from the error text (`retry in 21h21m47.5s`, `retry in 45s`, and Google's `retryDelay` if present); when it is longer than the remaining retry schedule, stop at once: fail that clip and the remaining clips of the job without calling Flow again, with one message that says the daily quota is used up and when it resets (now + retry time, local time). Short retry times keep today's behaviour. Clips already made are kept (the index is saved after every clip, as now). Tests with a fake Flow client: a short retry time still retries; a long one stops after the first clip and calls nothing more.
+## Added 2026-10-23, third round (hub HUB-10 phase 5 production, same branch)
+
+Found while making the puzzles of `the-winter-garden-clock` (hub run log `C:\projects\Personal\creative-hub\runs\the-winter-garden-clock.md`, "Found"; generator outputs in `C:\projects\Personal\creative-hub\.claude\temp\hub10-p5\`: `testimony1.json`, `t_11.json` to `t_66.json`, `k_11.json` to `k_66.json`).
+
+- [ ] **VNO-25: testimony puzzles repeat themselves.** Every seed tried with `vno_puzzle_generate {kind: "testimony"}` (933273182 and 11 to 66) gave a core where two statements say the same thing (e.g. t3 = t5), or two evidence items carry the same fact (e1 "key log" and e4 "key log 2"), or a press line only repeats its statement. Fix the generator so statements are distinct, evidence facts are distinct, and a press line adds information; reject (and re-roll) a core that breaks it; the proof must still hold. Tests over a range of seeds.
+- [ ] **VNO-26: a Knights and Knaves speaker can have no statement.** Seed 517353379 (3 speakers) left one speaker without a statement. Every speaker must say something (or the puzzle must be explicit that silence is a clue, which it is not now); re-roll otherwise. Test over a range of seeds.
+- [ ] **VNO-27: document Knights and Knaves (and testimony) clue ids.** Scriptorium writes `CLUE:` lines `intro` and `t1`..`t3` for Knights and Knaves and spreads them from chapter 1; VN Studio's import accepts this, but `docs/mcp-guide.md` (and the puzzle part of the protocol docs) describe only Murdle clue ids. Document the ids per kind and how a chapter may spread them.
+
 
 ## Result (2026-10-23)
 
