@@ -1,3 +1,5 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { emitScripts } from '../src/engine/renpy/emit'
 import { defaultCues } from '../src/engine/renpy/stage'
@@ -111,6 +113,17 @@ describe('fillStub', () => {
     expect(report.stringsKept).toEqual(['Not in any table'])
   })
 
+  it('an older project whose strings block is only partly translated gets every built-in Croatian string on rebuild', () => {
+    const { ctx } = ctxFor()
+    const table = uiStrings('hr')!
+    const entries = Object.entries(table)
+    // Older-style stub: the first third translated by an earlier build, the rest still English.
+    const lines = ['translate croatian strings:', '']
+    entries.forEach(([src], i) => lines.push(`    old "${src}"`, `    new "${i < entries.length / 3 ? table[src] : src}"`, ''))
+    const out = fillStub(lines.join('\n'), ctx, newReport())
+    for (const [src, dst] of entries) expect(out, src).toContain(`    old "${src}"\n    new "${dst}"`)
+  })
+
   it('does not write a voice statement when voice is off', () => {
     const { ctx } = ctxFor()
     expect(fillStub(STUB, ctx, newReport())).not.toMatch(/voice/)
@@ -191,6 +204,16 @@ describe('buildStringTable', () => {
     const missing: string[] = []
     buildStringTable(book, {}, hr, missing)
     expect(missing).toEqual(expect.arrayContaining(['chapter 1 choice 0', 'chapter 2 ending']))
+  })
+
+  it('the Croatian table covers every translatable string of the template screens except the language-neutral ones', () => {
+    const NEUTRAL = new Set(['Enter', 'Ctrl', 'Tab', 'Page Up', 'Page Down', 'Test', '<', '>', '{#auto_page}A', '{#quick_page}Q', '{#file_time}%A, %B %d %Y, %H:%M', 'ending text' /* a placeholder the build replaces */])
+    const source = fs.readFileSync(path.resolve(__dirname, '../templates/renpy/game/screens.rpy'), 'utf8')
+    const hr = uiStrings('hr')!
+    const missing = [...source.matchAll(/\b_\("((?:[^"\\]|\\.)*)"\)/g)]
+      .map((m) => m[1]!)
+      .filter((s) => !NEUTRAL.has(s) && !/\[/.test(s) && !(s in hr))
+    expect([...new Set(missing)]).toEqual([])
   })
 
   it('the UI table covers the strings the template adds', () => {
