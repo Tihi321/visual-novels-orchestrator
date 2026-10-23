@@ -249,6 +249,22 @@ function lookupChar(book: VnBook, key: string) {
   return book.characters.find((c) => c.key === key)
 }
 
+const POSITIONS: string[][] = [[], [], ['on the left', 'on the right'], ['on the left', 'in the middle', 'on the right']]
+
+/**
+ * What keeps a picture of two or three people from merging them: the number of different people, each one named with their looks and a place
+ * in the picture (left to right, in the order of their sheets, which are the reference images in the same order), and a ban on repeating a
+ * face. Empty for fewer than two characters of the book. The model can still fail to keep them apart: this is a prompt, not a guarantee.
+ */
+export function peopleClause(book: Pick<VnBook, 'characters'>, keys: string[]): string {
+  const people = keys.slice(0, 3).flatMap((k) => book.characters.find((c) => c.key === k) ?? [])
+  if (people.length < 2) return ''
+  const where = POSITIONS[people.length]!
+  const named = people.map((c, i) => `${where[i]}: ${c.name}${visualLooks(c.looks) ? ` (${visualLooks(c.looks).slice(0, 160).replace(/[.\s]+$/, '')})` : ''}`).join('; ')
+  const order = people.map((c, i) => `image ${i + 1} is ${c.name}`).join(', ')
+  return `${people.length === 2 ? 'two' : 'three'} different people, each with their own face, hair and clothes, none repeated: ${named} (unless the picture says otherwise). Reference images: ${order}; keep each person as in their own reference image`
+}
+
 /** Splits a sprite id `sprite_<charKey>_<expression>` (the expression has no underscore). */
 function splitSpriteId(id: string): { charKey: string; expression: string } {
   const rest = id.replace(/^sprite_/, '')
@@ -297,7 +313,8 @@ export function fallbackPrompt(asset: Pick<AssetEntry, 'id' | 'kind'>, book: VnB
       if (img.display === 'insert') return [style, img.description, INSERT_FRAMING].filter(Boolean).join(', ')
       const scene = sceneShowing(book, img.key)
       const place = scene?.placeKey ? book.places.find((p) => p.key === scene.placeKey) : undefined
-      const people = (img.characters ?? []).map((k) => visualLooks(lookupChar(book, k)?.looks)).filter(Boolean)
+      const clause = peopleClause(book, img.characters ?? [])
+      const people = clause ? [clause] : (img.characters ?? []).map((k) => visualLooks(lookupChar(book, k)?.looks)).filter(Boolean)
       return [style, img.description, ...people, withoutCharacterSentences(place?.looks, book), 'cinematic illustration, full-bleed artwork filling the whole frame, no border, no frame, no text'].filter(Boolean).join(', ')
     }
     case 'ambience': {

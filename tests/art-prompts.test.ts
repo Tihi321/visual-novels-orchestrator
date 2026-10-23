@@ -1,13 +1,65 @@
 import path from 'node:path'
 import sharp from 'sharp'
 import { describe, expect, it } from 'vitest'
-import { defaultStylePrompt, fallbackNegative, fallbackPrompt, resolveStylePrompt, visualLooks, withoutCharacterSentences } from '../src/engine/assets/derive'
+import { defaultStylePrompt, fallbackNegative, fallbackPrompt, peopleClause, resolveStylePrompt, visualLooks, withoutCharacterSentences } from '../src/engine/assets/derive'
 import { keepMainSubject } from '../src/engine/assets/postprocess'
 import { describeAsset, ensureFraming } from '../src/engine/vn/agents/art-director'
 import { importBook } from '../src/engine/vn/import'
 import { projectSettingsSchema } from '../src/shared/vn'
 
 const soother = () => importBook(path.resolve(__dirname, 'fixtures/books/soother'))
+
+describe('a CG with two or three characters names each person (VNO-34)', () => {
+  const book = {
+    characters: [
+      { key: 'mara', name: 'Mara', looks: 'A girl of fourteen with red braids and a huge yellow raincoat.' },
+      { key: 'ivka', name: 'Ivka', looks: 'An old woman with a grey bun and an orange life jacket.' },
+      { key: 'dino', name: 'Dino', looks: 'A stocky man in a collared jacket.' }
+    ],
+    images: [
+      { key: 'two', description: 'Mara reading the sheet aloud, Ivka very still beside her', display: 'full', characters: ['mara', 'ivka'] },
+      { key: 'three', description: 'the three walk the causeway', display: 'full', characters: ['mara', 'ivka', 'dino'] },
+      { key: 'one', description: 'Mara at the rail', display: 'full', characters: ['mara'] },
+      { key: 'sheet', description: 'a sheet headed FOR IVKA', display: 'insert', characters: ['mara', 'ivka'] }
+    ],
+    format: 'novel',
+    style: '',
+    places: [],
+    chapters: []
+  } as never
+
+  it('the clause says how many different people, who is where, and which reference image is whom, in the order of the characters', () => {
+    const c = peopleClause(book, ['mara', 'ivka'])
+    expect(c).toMatch(/^two different people/)
+    expect(c).toContain('on the left: Mara (A girl of fourteen with red braids')
+    expect(c).toContain('on the right: Ivka (An old woman')
+    expect(c).toContain('image 1 is Mara, image 2 is Ivka')
+    expect(c.indexOf('Mara')).toBeLessThan(c.indexOf('Ivka'))
+    const three = peopleClause(book, ['mara', 'ivka', 'dino'])
+    expect(three).toMatch(/^three different people/)
+    expect(three).toContain('in the middle: Ivka')
+    expect(three).toContain('on the right: Dino')
+    expect(three).toContain('image 3 is Dino')
+    expect(peopleClause(book, ['mara'])).toBe('')
+    expect(peopleClause(book, [])).toBe('')
+  })
+
+  it('an agent prompt for a CG with two characters gets the clause once; one character, an insert and a prompt that has it are left alone', () => {
+    const a = ensureFraming('cg', 'cg_two', 'Mara reading, Ivka beside her', book)
+    expect(a).toContain('two different people')
+    expect(a).toContain('image 2 is Ivka')
+    expect(ensureFraming('cg', 'cg_two', a, book)).toBe(a)
+    expect(ensureFraming('cg', 'cg_one', 'Mara at the rail', book)).toBe('Mara at the rail')
+    expect(ensureFraming('cg', 'cg_sheet', 'a sheet, close-up', book)).toBe('a sheet, close-up')
+  })
+
+  it('the fallback prompt of a CG with several characters has the clause instead of the bare looks', () => {
+    const p = fallbackPrompt({ id: 'cg_three', kind: 'cg' }, book)
+    expect(p).toContain('three different people')
+    expect(p).toContain('on the left: Mara')
+    expect(fallbackPrompt({ id: 'cg_one', kind: 'cg' }, book)).not.toContain('different people')
+  })
+})
 
 describe('art prompts', () => {
   it('keeps only the visual sentences of a bible entry', async () => {

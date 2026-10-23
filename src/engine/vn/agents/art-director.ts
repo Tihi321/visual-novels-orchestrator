@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { AssetEntry, ProjectSettings, VnBook } from '../../../shared/vn'
-import { BACKGROUND_FRAMING, fallbackNegative, imageOfAsset, INSERT_FRAMING, resolveStylePrompt, styleForKind, SHEET_FRAMING, spriteFraming, visualLooks, withoutCharacterSentences } from '../../assets/derive'
+import { BACKGROUND_FRAMING, fallbackNegative, imageOfAsset, INSERT_FRAMING, peopleClause, resolveStylePrompt, styleForKind, SHEET_FRAMING, spriteFraming, visualLooks, withoutCharacterSentences } from '../../assets/derive'
 import { asJson, askJson, batches, clip } from './common'
 import type { AgentCall } from './common'
 
@@ -92,8 +92,13 @@ export function describeAsset(book: VnBook, entry: Pick<AssetEntry, 'id' | 'kind
 }
 
 /** Adds the framing words that keep the model to one figure (sheet, sprite) or an empty place (background), when the agent left them out. */
-export function ensureFraming(kind: AssetEntry['kind'], id: string, prompt: string, book?: Pick<VnBook, 'images'>): string {
+export function ensureFraming(kind: AssetEntry['kind'], id: string, prompt: string, book?: Pick<VnBook, 'images'> & Partial<Pick<VnBook, 'characters'>>): string {
   const lower = prompt.toLowerCase()
+  if (kind === 'cg' && book?.characters) {
+    const img = imageOfAsset(book, id)
+    const clause = img?.display === 'insert' ? '' : peopleClause({ characters: book.characters }, img?.characters ?? [])
+    if (clause && !lower.includes('different people')) return `${prompt}, ${clause}`
+  }
   if (kind === 'cg' && book && imageOfAsset(book, id)?.display === 'insert' && !lower.includes('close-up')) return `${prompt}, ${INSERT_FRAMING}`
   if (kind === 'sheet' && !lower.includes('one full-body figure only')) return `${prompt}, ${SHEET_FRAMING}`
   if (kind === 'background' && !lower.includes('no people')) return `${prompt}, ${BACKGROUND_FRAMING}`
