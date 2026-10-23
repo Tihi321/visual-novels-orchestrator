@@ -367,15 +367,34 @@ describe('media cue lines', () => {
     expect(p.warnings).toEqual([])
   })
 
-  it('a CG or insert gets the characters whose name or alias is in its cue text (at most 3, in order); none when nobody is named', () => {
+  it('a CG gets the characters whose name or alias is in its cue text (at most 3, in order); none when nobody is named; an insert never does', () => {
     const b = parseBible('## Characters\n- **Mara**: A girl. Aliases: the red cloak. Voice: soft\n- **Tomas**: A man.\n- **Dr Vey**: A doctor.\n- **Ana**: A cook.\n\n## Places\n- **Hall**: A hall.\n')
     const p = parseChapterScript('SCENE: The hall, night\nA quiet hall.\nCG: Tomas and the red cloak stand by Dr. Vey and Ana\nMARA: One.\nINSERT: A torn letter signed Ana\nMARA: Two.\nCG: Marathon runners in the street\nMARA: Three.\n', { chapter: 1, bible: b })
     const key = (name: string) => b.characters.find((c) => c.name === name)!.key
     expect(p.images).toHaveLength(3)
     expect(p.images[0]!.characters).toEqual([key('Tomas'), key('Mara'), key('Dr Vey')])
-    expect(p.images[1]!.characters).toEqual([key('Ana')])
     expect(p.images[1]).toMatchObject({ display: 'insert' })
+    expect(p.images[1]).not.toHaveProperty('characters')
     expect(p.images[2]).not.toHaveProperty('characters')
+  })
+
+  it('VNO-32: a name in a possessive that names a place or thing, or in a heading on a document, does not put the character in the CG', () => {
+    const b = parseBible('## Characters\n- **Mara**: A girl.\n- **Ivka**: A woman.\n- **Dino**: A man.\n\n## Places\n- **Hall**: A hall.\n')
+    const chars = (text: string) => parseChapterScript('SCENE: The hall, night\nA quiet hall.\nCG: ' + text + '\nMARA: One.\n', { chapter: 1, bible: b }).images[0]!.characters ?? []
+    const key = (name: string) => b.characters.find((c) => c.name === name)!.key
+    expect(chars("Mara and Dino in a dark alley looking up at a lit window behind Ivka's shop")).toEqual([key('Mara'), key('Dino')])
+    expect(chars('Dino filling Mara’s doorway')).toEqual([key('Dino')])
+    expect(chars("Mara holds Ivka's hand in the doorway")).toEqual([key('Mara'), key('Ivka')])
+    expect(chars('Mara reading a sheet headed FOR IVKA. ONE APOLOGY, IN PARTS.')).toEqual([key('Mara')])
+    expect(chars('Dino holds a sheet signed IVKA')).toEqual([key('Dino')])
+    expect(chars('Mara reads the card that says "For Dino" aloud')).toEqual([key('Mara')])
+    expect(chars("Ivka at Ivka's shop")).toEqual([key('Ivka')])
+  })
+
+  it('VNO-32: an INSERT never gets characters from its text', () => {
+    const b = parseBible('## Characters\n- **Mara**: A girl.\n- **Ivka**: A woman.\n\n## Places\n- **Hall**: A hall.\n')
+    const p = parseChapterScript('SCENE: The hall, night\nA quiet hall.\nINSERT: a teleprinter sheet headed FOR IVKA, signed Mara\nMARA: One.\n', { chapter: 1, bible: b })
+    expect(p.images).toEqual([{ key: expect.any(String), description: expect.any(String), display: 'insert' }])
   })
 
   it('CG: none, END CG and AMBIENCE: none clear; Croatian lines work; a reused description keeps one entry', () => {

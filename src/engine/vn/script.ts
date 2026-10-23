@@ -169,9 +169,28 @@ export function matchCharacterDetail(label: string, chars: BibleCharacter[], o: 
 /** The most characters a CG or insert gets from its cue text (the art director draws from their sheets). */
 export const MAX_CUE_CHARACTERS = 3
 
-/** The bible characters whose name or alias appears, as whole words, in a cue text, in the order they appear; at most `MAX_CUE_CHARACTERS`. */
+/** Words after a possessive name that are part of the person (Ivka's hand): the name then puts her in the picture. */
+const BODY_WORDS = new Set(['hand', 'hands', 'face', 'hair', 'eyes', 'eye', 'shoulder', 'shoulders', 'back', 'arm', 'arms', 'fingers', 'finger', 'head', 'feet', 'foot', 'legs', 'lap', 'mouth', 'braids', 'braid', 'silhouette', 'shadow', 'reflection', 'profile', 'gaze', 'smile', 'voice', 'figure'])
+
+/**
+ * The cue text without what only names a character: a name in a possessive that names a place or thing (`Ivka's shop`, not `Ivka's hand`), and
+ * a name in text written on a document: a run of two or more all-caps words (`FOR IVKA`), one all-caps word after headed / signed / titled /
+ * reads / marked / addressed, and anything in quotation marks.
+ */
+export function withoutNamesOnThings(text: string): string {
+  return text
+    .replace(/["“][^"”]*["”]/gu, ' ')
+    .replace(/(?<!\p{L})(?:headed|signed|titled|labelled|labeled|marked|addressed(?: to)?|reads?|stamped)\s+\p{Lu}{2,}(?!\p{L})/gu, ' ')
+    .replace(/(?<!\p{L})\p{Lu}{2,}(?:[\s,.:;!?-]+\p{Lu}{2,})+(?!\p{L})/gu, ' ')
+    .replace(/(\p{L}+)['’]s\s+(\p{L}+)/gu, (all, _name: string, next: string) => (BODY_WORDS.has(next.toLowerCase()) ? all : ' '))
+}
+
+/**
+ * The bible characters whose name or alias appears, as whole words, in a cue text, in the order they appear; at most `MAX_CUE_CHARACTERS`.
+ * A name in a possessive that names a place or thing, or in text written on a document, does not count (see `withoutNamesOnThings`).
+ */
 export function charactersInText(text: string, chars: BibleCharacter[]): string[] {
-  const hay = ` ${normText(text)} `
+  const hay = ` ${normText(withoutNamesOnThings(text))} `
   const found: { key: string; at: number }[] = []
   for (const c of chars) {
     let at = -1
@@ -435,7 +454,8 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
         else {
           const key = cueKey(text)
           if (!images.has(key)) {
-            const characters = charactersInText(text, bible.characters)
+            // an insert is an object close-up: it never gets characters from its text
+            const characters = kind === 'INSERT' ? [] : charactersInText(text, bible.characters)
             images.set(key, { key, description: text, display: kind === 'INSERT' ? 'insert' : 'full', ...(characters.length ? { characters } : {}) })
           }
           pending.image = key
