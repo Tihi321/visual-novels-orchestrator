@@ -2,10 +2,10 @@
 
 What VN Studio still lacks on its own. Work that needs the other tools or a production run (live checks, Flow as a provider, starting the studios, puzzle visual novels) is planned in the creative hub (`C:\projects\Personal\creative-hub\ROADMAP.md`, tickets `HUB-NN` in its `.claude/tickets/`). Each item here is a ticket with a plan in `.claude/tickets/VNO-NN-<name>/plan.md`, done in the order below. Finished work is in `.claude/tickets/` (VNO-04 story tools and languages, VNO-05 client provider, VNO-06 end-screen restart, VNO-07 hand-drawn art, VNO-08 the hub roadmap fixes). Work on a ticket branch (`VNO-NN_<what>`) cut from `master`.
 
-## Where it stands (2026-10-23, branch `VNO-20-21_fixes` on master 2f22db1)
+## Where it stands (2026-10-23, branch `VNO-20-23_fixes` on master 2f22db1)
 
 - **Merged:** VNO-04 to VNO-19 (VNO-10 to VNO-19 in PR #11). VNO-08 closed every VN Studio item of the hub roadmap. `renpy lint` was clean on all 9 integration cases (Ren'Py 8.5.3) at VNO-08.
-- **On branch `VNO-20-21_fixes` (not merged):** VNO-20 to VNO-23, the findings of the hub runs; 913 tests pass, typecheck and lint clean.
+- **On branch `VNO-20-23_fixes` (not merged):** VNO-20 to VNO-24, the findings of the hub runs; 913 tests pass, typecheck and lint clean.
 - **Verified live:** two *Clockless God* VNs (linear and with choices) built from Scriptorium scripts and played by the user; a pixel-art book with Claude as the client for the model roles; story tools with German, English and Arabic editions.
 - **Hub tasks that change or use this repo:** HUB-03 (VNO-08 live check), HUB-06 (CG characters at import, `VNO-16`), HUB-07 (Flow provider, `VNO-10`), HUB-08 (start the studios, `VNO-11`), HUB-10 (puzzle visual novels, `VNO-12` to `VNO-15`). Those numbers are reserved; this roadmap's tickets start at VNO-17.
 
@@ -13,11 +13,12 @@ What VN Studio still lacks on its own. Work that needs the other tools or a prod
 
 No open tasks.
 
-New work gets the next free number (VNO-22), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
+New work gets the next free number (VNO-25), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
 
 ## Done
 
 - **VNO-20** (2026-10-23): a ComfyUI prompt that is in neither `/queue` nor `/history` while the job waits (ComfyUI crashed and restarted) is submitted once more, then the job fails with a clear error instead of staying `running`; ComfyUI unreachable for more than `unreachableTimeoutMs` (default 300 s, `config/comfy.md`) fails the wait. Fake-client tests only; a live ComfyUI crash was not run.
+- **VNO-24** (2026-10-23): a Gemini 429 whose retry time (`retry in 21h21m47.5s`, `retry in 45s`, `retryDelay`) is longer than the retry schedule and 5 minutes is a daily quota: that clip and the remaining clips of the job fail at once without more Flow calls, with one message that gives the reset time. Shorter retry times retry as before; clips already made are kept.
 - **VNO-22** (2026-10-23): `flow_status` with `chrome_running: false` is an unknown sign-in (`signedIn: null`, no hint), no longer "signed out"; flow-music-mcp opens Chrome on the first real call, so the generate pre-check goes on. A real sign-out still fails fast.
 - **VNO-23** (2026-10-23): `seed/config/studios.md` had a form feed in `flowRepo` (`C:\projects\Personal<FF>low-music-mcp`); fixed. No other seed file had control characters. A test checks the seed files; unedited data copies are refreshed by the seed hashes at the next start (tested). A data copy that was edited stays as it is.
 - **VNO-21** (2026-10-23): not a stale-project bug: a rebuild already refills the strings from the built-in table. The 46 English strings of the *Clockless God* build are Ren'Py's stock help and sync screen strings, which the 49-string table never had. The Croatian table now has the translatable ones (33 more); other languages still lack them, the language-neutral ones (Enter, Ctrl, Tab, Page Up/Down, Test, page letters, date format) stay as they are. A rebuild in the app is still to do.
