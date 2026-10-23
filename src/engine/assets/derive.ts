@@ -106,6 +106,9 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
   const imageEntries = pictures.flatMap((k) => book.images?.find((i) => i.key === k) ?? [])
   for (const img of imageEntries) for (const c of (img.characters ?? []).slice(0, 3)) if (book.characters.some((x) => x.key === c)) note(appearing, c)
 
+  // every listed sound has an asset, also one no beat plays (the stage director may cue it, and a person may add one with `vno_sound_set`)
+  for (const snd of book.sounds ?? []) note(snd.kind === 'sfx' ? effects : ambiences, snd.key)
+
   const art = settings.art
   // a Flow project makes every image with Flow, whatever the ComfyUI engines are
   const gen = art.provider === 'flow' ? FLOW_ENGINE : art.generator

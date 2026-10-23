@@ -43,6 +43,17 @@ describe('media cues', () => {
     expect(ids).toContain('amb_rain')
   })
 
+  it('VNO-33: every listed sound has an asset, also one no beat plays', () => {
+    const { book } = withCues()
+    const { book: b2 } = applyStoryOps(book, [
+      { op: 'sound.set', key: 'padlock', kind: 'sfx', description: 'a padlock snapping open' },
+      { op: 'sound.set', key: 'wind', kind: 'ambience', description: 'wind' }
+    ])
+    const assets = deriveAssets(b2, settings())
+    expect(assets.map((a) => a.id)).toEqual(expect.arrayContaining(['sfx_door', 'sfx_padlock', 'amb_rain', 'amb_wind']))
+    expect(assets.filter((a) => a.id === 'sfx_door')).toHaveLength(1)
+  })
+
   it('emits the picture, the sound and the ambience', () => {
     const { book } = withCues()
     const cues = defaultCues(book, { musicIds: ['music_01', 'music_02'] })

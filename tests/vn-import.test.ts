@@ -408,9 +408,19 @@ describe('media cue lines', () => {
     expect(p.sounds).toEqual([{ key: 'zvono_zvoni', kind: 'sfx', description: 'Zvono zvoni' }])
   })
 
-  it('a cue with no beat after it in its scene is dropped with a warning', () => {
-    const p = parse('MARA: Hello.\nSFX: A door creaks')
-    expect(p.scenes[0]!.beats.every((b) => !('sfx' in b))).toBe(true)
-    expect(p.warnings).toEqual([expect.stringMatching(/a SFX line .* has no beat after it in its scene: dropped/)])
+  it('a CG or ambience with no beat after it in its scene is dropped with a warning', () => {
+    const p = parse('MARA: Hello.\nCG: A torn letter\nAMBIENCE: Wind')
+    expect(p.scenes[0]!.beats.every((b) => !('image' in b) && !('ambience' in b))).toBe(true)
+    expect(p.warnings).toEqual([expect.stringMatching(/a CG and AMBIENCE line .* has no beat after it in its scene: dropped/)])
+  })
+
+  it('VNO-33: a trailing SFX goes on the last beat of its scene, so its sound has a cue; when that beat has a sound already it is dropped with a warning', () => {
+    const p = parse('MARA: Hello.\nSFX: A door creaks\n---\nSCENE: The yard, day\nMARA: Bye.\nSFX: Rain\n')
+    expect(p.scenes[0]!.beats.at(-1)).toMatchObject({ sfx: 'door_creaks' })
+    expect(p.scenes[1]!.beats.at(-1)).toMatchObject({ sfx: 'rain' })
+    expect(p.warnings).toEqual([])
+    const q = parse('SFX: A bell\nMARA: Hello.\nSFX: A door creaks')
+    expect(q.scenes[0]!.beats.at(-1)).toMatchObject({ sfx: 'bell' })
+    expect(q.warnings).toEqual([expect.stringMatching(/a SFX line .* has no beat after it in its scene: dropped/)])
   })
 })

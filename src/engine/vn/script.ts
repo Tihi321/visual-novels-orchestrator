@@ -370,8 +370,16 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
   /** Cues read since the last beat: they go on the next beat of the scene. */
   let pending: { image?: string | null; sfx?: string; ambience?: string | null } = {}
 
-  /** A cue with no beat after it in its scene is dropped, with a warning. */
+  /**
+   * A cue with no beat after it in its scene: a sound effect goes on the scene's last beat (when that beat has none of its own), so the sound
+   * is not left in the catalogue with no cue; the other cues are dropped, with a warning.
+   */
   const dropPending = (where: string) => {
+    const last = drafts[drafts.length - 1]?.beats.at(-1)
+    if (pending.sfx && last && !(last.body as { sfx?: string }).sfx) {
+      Object.assign(last.body, { sfx: pending.sfx })
+      delete pending.sfx
+    }
     if (Object.keys(pending).length) warnings.push(`chapter ${chapter}: a ${Object.keys(pending).map((k) => (k === 'image' ? 'CG' : k === 'sfx' ? 'SFX' : 'AMBIENCE')).join(' and ')} line ${where} has no beat after it in its scene: dropped`)
     pending = {}
   }
