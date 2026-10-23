@@ -202,7 +202,8 @@ def read_back(p, names=None):
             return {"type": t, "c": conv(c["c"])}
         return {"type": t, "a": conv(c["a"]), "b": conv(c["b"])}
 
-    return [{"id": s["id"], "speaker": nm[s["speaker"]], "claim": conv(s["claim"])} for s in p["statements"]]
+    out = [{"id": s["id"], "speaker": nm[s["speaker"]], "claim": conv(s["claim"])} for s in p["statements"]]
+    return out + [{"id": "intro", "truthTellers": "knights", "liars": "knaves"}]  # the intro's rule, in the canonical words
 
 
 def test_flavour_check_passes_a_faithful_read_back_and_catches_changes():
@@ -234,6 +235,39 @@ def test_flavour_check_passes_a_faithful_read_back_and_catches_changes():
     thin[p["statements"][0]["id"]] = "Somebody said something."
     assert "which the prose does not contain" in check_text(p, rb, thin)["problems"][0]["problem"]
     assert "unknown claim type" in check_text(p, [dict(rb[0], claim={"type": "wizard"})] + rb[1:], p["text"])["problems"][0]["problem"]
+
+
+def test_flavour_check_reads_the_intro_back():
+    p = generate("knights", 4, 5, "hard")
+    rb = read_back(p)
+    t = p["text"]
+    assert check_text(p, rb, t)["ok"]
+
+    def failed(rb2, text):
+        got = check_text(p, rb2, text)
+        assert not got["ok"] and got["differing"] == ["intro"], got
+        return got["problems"][0]["problem"]
+
+    # no rule at all, or one without its words
+    assert "no rule for the intro" in failed([r for r in rb if r["id"] != "intro"], t)
+    assert "needs the words" in failed(rb[:-1] + [{"id": "intro", "truthTellers": "knights"}], t)
+    # the prose gets the rule wrong: knaves tell the truth
+    wrong = dict(t, intro="On this island knaves always tell the truth and knights always lie. Who is a knight and who is a knave?")
+    assert "knights always tell the truth" in failed(rb[:-1] + [{"id": "intro", "truthTellers": "knaves", "liars": "knights"}], wrong)
+    # words the intro does not contain; the same words for both
+    assert "does not contain" in failed(rb[:-1] + [{"id": "intro", "truthTellers": "paladins", "liars": "knaves"}], t)
+    assert "same words" in failed(rb[:-1] + [{"id": "intro", "truthTellers": "knights", "liars": "knights"}], t)
+    # the story's own words: the intro and the statements must agree about who is who
+    h = hand(HAND, HAND_SOLUTION)
+    nm = h["names"]
+    story = dict(h["text"], intro="Those sworn to the Struck Hour always tell the truth; those sworn to the Stopped Hour always lie.")
+    story["t1"] = '%s says: "%s is sworn to the Stopped Hour."' % (nm["k1"], nm["k2"])  # a knave claim
+    story["t2"] = '%s says: "%s is sworn to the Struck Hour."' % (nm["k2"], nm["k3"])  # a knight claim
+    good = read_back(h)[:-1] + [{"id": "intro", "truthTellers": "Struck Hour", "liars": "Stopped Hour"}]
+    assert check_text(h, good, story)["ok"]
+    swapped = good[:-1] + [{"id": "intro", "truthTellers": "Stopped Hour", "liars": "Struck Hour"}]
+    got = check_text(h, swapped, story)
+    assert not got["ok"] and got["differing"] == ["t1", "t2"] and "disagree" in got["problems"][0]["problem"], got
 
 
 def test_flavour_check_a_claim_that_means_the_same_in_another_form_passes():

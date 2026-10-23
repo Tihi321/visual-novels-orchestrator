@@ -453,6 +453,32 @@ def _claim_names(rc, out, groups=None):
     return out
 
 
+def _check_intro(r, intro, bad):
+    """The reader's statement of the intro's rule, `{id: "intro", truthTellers, liars}`: the words of the prose for those who always tell
+    the truth and for those who always lie. Returns (truthTellers, liars) when sound, else None after reporting the problem with `bad`."""
+    it = {"id": "intro"}
+    if r is None:
+        bad(it, 'the reader gave no rule for the intro: answer {"id": "intro", "truthTellers": ..., "liars": ...}')
+        return None
+    tt, li = r.get("truthTellers"), r.get("liars")
+    if not isinstance(tt, str) or not isinstance(li, str) or not _norm(tt) or not _norm(li):
+        bad(it, "the intro rule needs the words of the prose for those who always tell the truth (truthTellers) and for those who always lie (liars)")
+        return None
+    prose = _norm(intro)
+    gone = [w for w in (tt, li) if _norm(w) not in prose]
+    if gone:
+        bad(it, "the reader named %s, which the intro does not contain" % ", ".join(repr(w) for w in gone))
+        return None
+    if _norm(tt) == _norm(li):
+        bad(it, "the intro rule gives the same words to those who tell the truth and those who lie")
+        return None
+    words_tt, words_li = _norm(tt).split(), _norm(li).split()
+    if any(w.startswith("knave") for w in words_tt) or any(w.startswith("knight") for w in words_li):
+        bad(it, "the intro says that knaves tell the truth or that knights lie: knights always tell the truth and knaves always lie")
+        return None
+    return tt, li
+
+
 def check_knights_text(p, read_back, text=None):
     """{ok, problems, differing}: the reader's statements `{id, speaker, claim}` (names) must mean the same claims as the originals, in every
     assignment; then they must still give one solution that can be found without guessing."""
@@ -467,6 +493,13 @@ def check_knights_text(p, read_back, text=None):
     def bad(s, problem):
         problems.append({"clue": s["id"], "problem": problem})
         differing.append(s["id"])
+
+    # the intro: the rule the reader states back (who always tells the truth, who always lies), in the words of the prose. Only when the
+    # prose of the intro is given (text); a puzzle read without prose has no intro to check.
+    rule = None
+    intro = (text or {}).get("intro")
+    if intro:
+        rule = _check_intro(by_id.get("intro"), intro, bad)
 
     for s in p["statements"]:
         r = by_id.get(s["id"])
@@ -494,6 +527,13 @@ def check_knights_text(p, read_back, text=None):
             missing = [n for n in direct + ([] if says_us else groups) if not appears(n)]
             if missing:
                 bad(s, "the reader named %s, which the prose does not contain" % ", ".join(repr(n) for n in missing))
+                continue
+        if rule and isinstance(r.get("claim"), dict) and r["claim"].get("type") in ("knight", "knave"):
+            prose = _norm(text[s["id"]]) if text and s["id"] in text else ""
+            truth, lie = _norm(rule[0]) in prose, _norm(rule[1]) in prose
+            expect = "knight" if truth and not lie else "knave" if lie and not truth else None
+            if expect and r["claim"]["type"] != expect:
+                bad(s, "the statement uses the intro's words for %s, but the reader read a %s: the intro and the statements disagree about who tells the truth" % ("those who tell the truth" if expect == "knight" else "those who lie", r["claim"]["type"]))
                 continue
         if sid != s["speaker"]:
             bad(s, "the prose is said by someone else than the statement says")

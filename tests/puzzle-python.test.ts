@@ -310,7 +310,16 @@ describe.skipIf(!sdkPython(sdkPath))('Knights and Knaves through the bridge and 
           return { type: c.type, a: conv(c.a), b: conv(c.b) }
       }
     }
-    const rb = core.statements.map((s) => ({ id: s.id, speaker: nm[s.speaker]!, claim: conv(s.claim) }))
+    expect(got.readBackTask).toContain('intro: ') // VNO-29: the intro is read back too
+    expect(got.readBackTask).toContain('"truthTellers"')
+    const rule = { id: 'intro', truthTellers: 'knights', liars: 'knaves' }
+    const rb = [...core.statements.map((s) => ({ id: s.id, speaker: nm[s.speaker]!, claim: conv(s.claim) })), rule]
+    expect(await call('vno_puzzle_check_text', { slug, key: 'island', readBack: rb })).toMatchObject({ ok: true, textChecked: true })
+    const noRule = await call('vno_puzzle_check_text', { slug, key: 'island', readBack: rb.slice(0, -1) })
+    expect(noRule.ok).toBe(false)
+    expect(noRule.differing).toEqual(['intro'])
+    const swappedRule = await call('vno_puzzle_check_text', { slug, key: 'island', readBack: [...rb.slice(0, -1), { id: 'intro', truthTellers: 'knaves', liars: 'knights' }] })
+    expect(swappedRule.differing).toEqual(['intro'])
     expect(await call('vno_puzzle_check_text', { slug, key: 'island', readBack: rb })).toMatchObject({ ok: true, textChecked: true })
     const bad = rb.map((s, i) => (i === 0 ? { ...s, speaker: nm[core.speakers.find((k) => k !== core.statements[0]!.speaker)!]! } : s))
     const failed = await call('vno_puzzle_check_text', { slug, key: 'island', readBack: bad })
