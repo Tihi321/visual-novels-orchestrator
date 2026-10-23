@@ -23,10 +23,13 @@ Source: `ROADMAP.md` "Tasks, in order" (VNO-20, VNO-21). Confirm each cause in t
 
 Found while making the puzzles of `the-winter-garden-clock` (hub run log `C:\projects\Personal\creative-hub\runs\the-winter-garden-clock.md`, "Found"; generator outputs in `C:\projects\Personal\creative-hub\.claude\temp\hub10-p5\`: `testimony1.json`, `t_11.json` to `t_66.json`, `k_11.json` to `k_66.json`).
 
-- [ ] **VNO-25: testimony puzzles repeat themselves.** Every seed tried with `vno_puzzle_generate {kind: "testimony"}` (933273182 and 11 to 66) gave a core where two statements say the same thing (e.g. t3 = t5), or two evidence items carry the same fact (e1 "key log" and e4 "key log 2"), or a press line only repeats its statement. Fix the generator so statements are distinct, evidence facts are distinct, and a press line adds information; reject (and re-roll) a core that breaks it; the proof must still hold. Tests over a range of seeds.
-- [ ] **VNO-26: a Knights and Knaves speaker can have no statement.** Seed 517353379 (3 speakers) left one speaker without a statement. Every speaker must say something (or the puzzle must be explicit that silence is a clue, which it is not now); re-roll otherwise. Test over a range of seeds.
-- [ ] **VNO-27: document Knights and Knaves (and testimony) clue ids.** Scriptorium writes `CLUE:` lines `intro` and `t1`..`t3` for Knights and Knaves and spreads them from chapter 1; VN Studio's import accepts this, but `docs/mcp-guide.md` (and the puzzle part of the protocol docs) describe only Murdle clue ids. Document the ids per kind and how a chapter may spread them.
+- [x] **VNO-25 (2630bd7): testimony puzzles repeat themselves.** Every seed tried with `vno_puzzle_generate {kind: "testimony"}` (933273182 and 11 to 66) gave a core where two statements say the same thing (e.g. t3 = t5), or two evidence items carry the same fact (e1 "key log" and e4 "key log 2"), or a press line only repeats its statement. Fix the generator so statements are distinct, evidence facts are distinct, and a press line adds information; reject (and re-roll) a core that breaks it; the proof must still hold. Tests over a range of seeds.
+- [x] **VNO-26 (bf7f6de): a Knights and Knaves speaker can have no statement.** Seed 517353379 (3 speakers) left one speaker without a statement. Every speaker must say something (or the puzzle must be explicit that silence is a clue, which it is not now); re-roll otherwise. Test over a range of seeds.
+- [x] **VNO-27 (9201770): document Knights and Knaves (and testimony) clue ids.** Scriptorium writes `CLUE:` lines `intro` and `t1`..`t3` for Knights and Knaves and spreads them from chapter 1; VN Studio's import accepts this, but `docs/mcp-guide.md` (and the puzzle part of the protocol docs) describe only Murdle clue ids. Document the ids per kind and how a chapter may spread them.
 
+- VNO-25 done: `repeats()` in `testimony.py`; the generator picks distinct keys per statement, per press line and per evidence item and re-rolls on any repeat; `window` and `shoes` added to the vocabulary (8 keys; 6 statements of the hard band need 6 distinct keys besides the liar's). Reproduced first: `repeats()` on the old `t_11` to `t_66` cores found the repeats. Fixture `testimony-medium-4.json` regenerated; `renpy-puzzle-emit.test.ts` took the solution from the fixture instead of a hard-coded `t5`/`e1`. Tests: `test_nothing_is_said_twice` (107 seeds per band), `test_repeats_finds_each_kind_of_repeat`.
+- VNO-26 done: reproduced (3 speakers, seed 517353379, k3 silent in all bands; 1101 of 1331 sampled puzzles had a silent speaker). Fix in `generate_knights`. The "every statement is needed" proof test now allows a speaker's only statement. Test `test_every_speaker_has_a_statement`.
+- VNO-27 done: docs only. Deviation: the plan said "spreads them from chapter 1"; the import gives Knights and Knaves `CLUE:` ids the story's words only (no `clueAt`, all statements show from the start), documented as such. `t1.press` cannot be a `CLUE:` id (the id pattern has no dot).
 
 ## Result (2026-10-23)
 
@@ -39,6 +42,8 @@ Found while making the puzzles of `the-winter-garden-clock` (hub run log `C:\pro
 - After VNO-22/23: `yarn test` 913 passed, `yarn typecheck` and `yarn lint` exit 0.
 
 - VNO-24 done as planned: `parseRetryDelayMs` and the quota stop in `src/engine/voice/flow.ts`; "longer" means more than the whole retry schedule and at least 5 minutes (`QUOTA_MIN_MS`). Tests in `tests/voice-flow-jobs.test.ts` (parsing, short time still retries, long time stops after one call, clips made before are kept).
+
+- After VNO-25 to VNO-27: `yarn test` 916 passed (68 files), `yarn typecheck` and `yarn lint` exit 0; the Python puzzle tests (testimony 14, knights 13, library 26 and logic) pass with the SDK's Python 3.12.7. Not run: `renpy lint` on a new integration case (no Ren'Py output changed), Python 3.13.
 
 ## Verification
 

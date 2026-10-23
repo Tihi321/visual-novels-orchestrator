@@ -5,7 +5,7 @@ What VN Studio still lacks on its own. Work that needs the other tools or a prod
 ## Where it stands (2026-10-23, branch `VNO-20-23_fixes` on master 2f22db1)
 
 - **Merged:** VNO-04 to VNO-19 (VNO-10 to VNO-19 in PR #11). VNO-08 closed every VN Studio item of the hub roadmap. `renpy lint` was clean on all 9 integration cases (Ren'Py 8.5.3) at VNO-08.
-- **On branch `VNO-20-23_fixes` (not merged):** VNO-20 to VNO-24, the findings of the hub runs; 913 tests pass, typecheck and lint clean.
+- **On branch `VNO-20-23_fixes` (not merged):** VNO-20 to VNO-27, the findings of the hub runs; 916 tests pass, typecheck and lint clean.
 - **Verified live:** two *Clockless God* VNs (linear and with choices) built from Scriptorium scripts and played by the user; a pixel-art book with Claude as the client for the model roles; story tools with German, English and Arabic editions.
 - **Hub tasks that change or use this repo:** HUB-03 (VNO-08 live check), HUB-06 (CG characters at import, `VNO-16`), HUB-07 (Flow provider, `VNO-10`), HUB-08 (start the studios, `VNO-11`), HUB-10 (puzzle visual novels, `VNO-12` to `VNO-15`). Those numbers are reserved; this roadmap's tickets start at VNO-17.
 
@@ -16,6 +16,10 @@ No open tasks.
 New work gets the next free number (VNO-25), a plan in `.claude/tickets/VNO-NN-<name>/plan.md` and a row here; when it is done, its changelog sits next to its plan and its row moves to "Done" below.
 
 ## Done
+
+- **VNO-25** (2026-10-23): testimony puzzles no longer repeat themselves. Each statement is about its own key, a press line adds a key of its own, and no key is shown by two pieces of evidence (so no "key log 2"); `repeats()` in `testimony.py` rejects and re-rolls a core that breaks this. Two more keys in the built-in vocabulary (`window`, `shoes`) so the hard band has enough. Seeds 933273182 and 11 to 66 reproduced the repeats; tests over 107 seeds per band plus the 200-seed proofs.
+- **VNO-26** (2026-10-23): every Knights and Knaves speaker has a statement (seed 517353379, 3 speakers, left one silent; 1101 of 1331 sampled puzzles had a silent speaker). A silent speaker gets a true statement before minimising, and minimising keeps each speaker's last statement.
+- **VNO-27** (2026-10-23): `docs/mcp-guide.md` (import) lists the `CLUE:` ids per kind (Murdle and logic `c1`.. with `murder` or `intro`, Knights and Knaves `intro` and `t1`.., a testimony's `e1`.. and `intro`) and how a chapter may spread them; one line in `docs/protocol.md`.
 
 - **VNO-20** (2026-10-23): a ComfyUI prompt that is in neither `/queue` nor `/history` while the job waits (ComfyUI crashed and restarted) is submitted once more, then the job fails with a clear error instead of staying `running`; ComfyUI unreachable for more than `unreachableTimeoutMs` (default 300 s, `config/comfy.md`) fails the wait. Fake-client tests only; a live ComfyUI crash was not run.
 - **VNO-24** (2026-10-23): a Gemini 429 whose retry time (`retry in 21h21m47.5s`, `retry in 45s`, `retryDelay`) is longer than the retry schedule and 5 minutes is a daily quota: that clip and the remaining clips of the job fail at once without more Flow calls, with one message that gives the reset time. Shorter retry times retry as before; clips already made are kept.
