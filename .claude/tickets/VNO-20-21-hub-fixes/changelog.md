@@ -1,5 +1,22 @@
 # VNO-20 and VNO-21 changelog
 
+## 2026-10-23 (sixth round): VNO-32 to VNO-35, found by the hub's `the-lighthouse-that-kept-lists-vn` production
+
+Same branch `VNO-20-23_fixes`. Committed, not pushed. Evidence: the hub's `runs/the-lighthouse-that-kept-lists-vn.md` "Found" and the project in VN Studio's data folder (read only).
+
+| Ticket | Commit | Files | What changed |
+|---|---|---|---|
+| VNO-32 | b453f23 | `src/engine/vn/script.ts`, `docs/mcp-guide.md`, `tests/vn-import.test.ts` | `withoutNamesOnThings` removes, before the names are matched, a possessive that names a place or thing ("Ivka's shop"; a body word such as hand or hair keeps it), runs of two or more all-caps words ("FOR IVKA"), one all-caps word after headed/signed/titled/reads and quoted text. An `INSERT:` gets no characters from its text. Tests: each shape, the insert, and the old test now expects none for an insert. |
+| VNO-33 | 8524f34 | `src/engine/vn/script.ts`, `src/engine/assets/derive.ts`, `docs/mcp-guide.md`, `tests/vn-import.test.ts`, `tests/vn-media-cues.test.ts` | A trailing `SFX:` goes on the scene's last beat when that beat has no sfx (else dropped with the warning); the drop test now uses `CG:` and `AMBIENCE:`. `deriveAssets` notes every listed sound, so a sound no beat plays still has `sfx_<key>` or `amb_<key>` (`vno_sound_set` also gets an asset). |
+| VNO-34 | 714de04 | `src/engine/assets/derive.ts`, `src/engine/vn/agents/art-director.ts`, `docs/mcp-guide.md`, `tests/art-prompts.test.ts` | `peopleClause`: "two/three different people, each with their own face, hair and clothes, none repeated: on the left: Mara (looks); ...; Reference images: image 1 is Mara, ...". `ensureFraming` adds it to a CG prompt with two or more characters of the book (once; never to an insert) and `fallbackPrompt` uses it instead of the bare looks. The characters keep the order of the references. |
+| VNO-35 | ab0ed2f | `src/engine/vn/reader.ts`, `tests/vn-import.test.ts` | `titleOf`: `brief.md` `title_fixed: true` wins over `book.md`'s title, in `readBookFolder` and `listBooks`. Tests: fixed, not fixed, no brief; `importBook` gets the title with "(VN)". |
+
+Deviations: VNO-35 is not a strip by the importer: the Scriptorium adaptation's `book.md` has the title without "(VN)", only `brief.md` (`title: ... (VN)`, `title_fixed: true`) has it, and the importer never read the brief. VNO-32 also changed the old VNO-16 test: an insert no longer gets characters. VNO-33 chose to keep the cue (the plan's better option), only for `SFX:`.
+
+Not guaranteed: VNO-34 is wording and reference order; a model can still merge two people (redraw with another seed, or one character per CG). If a reference sheet has no file, Flow and ComfyUI skip it and "image n" no longer matches the order. VNO-33: the sound plays on the last beat of the scene, a little before the end of the text. Jobs and projects made before keep their prompts and their asset lists until the plan is re-run. Not run: a rebuild of `the-lighthouse-that-kept-lists-vn`, `renpy lint` (a trailing SFX now emits one `play sound` on a last beat, as any beat with an sfx does).
+
+Verification: full `yarn test` twice 930/930 (68 files), `yarn typecheck` and `yarn lint` clean (run after the last commit). Puzzle Python tests not run: no puzzle code changed.
+
 ## 2026-10-23 (fifth round): VNO-29 to VNO-31, found by the hub's `the-winter-garden-clock` production
 
 Same branch `VNO-20-23_fixes`. Committed, not pushed. Evidence: the hub's `runs/the-winter-garden-clock.md` "Found" and `.claude/temp/hub10-p5/`.
