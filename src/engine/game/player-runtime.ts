@@ -126,7 +126,7 @@ ${extraCss}
       <div id="vno-screen-history" class="vno-screen vno-hidden">
         <div class="vno-screen-panel">
           <div class="vno-screen-header">
-            <h2>History</h2>
+            <h2 id="vno-history-title">History</h2>
             <button class="vno-screen-close">&times;</button>
           </div>
           <div id="vno-history-list" class="vno-screen-body vno-history-list"></div>
@@ -161,48 +161,48 @@ ${extraCss}
       <div id="vno-screen-prefs" class="vno-screen vno-hidden">
         <div class="vno-screen-panel">
           <div class="vno-screen-header">
-            <h2>Preferences</h2>
+            <h2 id="vno-prefs-title">Preferences</h2>
             <button class="vno-screen-close">&times;</button>
           </div>
           <div class="vno-screen-body vno-prefs-body">
             <div class="vno-pref-group">
-              <label>Display</label>
+              <label id="vno-pref-label-display">Display</label>
               <div class="vno-pref-control">
                 <button id="vno-pref-fullscreen" class="vno-button">Toggle Fullscreen</button>
               </div>
             </div>
             <div class="vno-pref-group">
-              <label>Language</label>
+              <label id="vno-pref-label-language">Language</label>
               <div class="vno-pref-control">
                 <select id="vno-pref-language" class="vno-select"></select>
               </div>
             </div>
             <div class="vno-pref-group">
-              <label>Text Speed</label>
+              <label id="vno-pref-label-text-speed">Text Speed</label>
               <div class="vno-pref-control">
                 <input id="vno-pref-text-speed" type="range" min="1" max="100" value="50">
               </div>
             </div>
             <div class="vno-pref-group">
-              <label>Auto-Forward Delay</label>
+              <label id="vno-pref-label-auto-delay">Auto-Forward Delay</label>
               <div class="vno-pref-control">
                 <input id="vno-pref-auto-delay" type="range" min="1" max="10" value="4">
               </div>
             </div>
             <div class="vno-pref-group">
-              <label>Music Volume</label>
+              <label id="vno-pref-label-vol-music">Music Volume</label>
               <div class="vno-pref-control">
                 <input id="vno-pref-vol-music" type="range" min="0" max="100" value="80">
               </div>
             </div>
             <div class="vno-pref-group">
-              <label>Sound Effects Volume</label>
+              <label id="vno-pref-label-vol-sfx">Sound Effects Volume</label>
               <div class="vno-pref-control">
                 <input id="vno-pref-vol-sfx" type="range" min="0" max="100" value="80">
               </div>
             </div>
             <div class="vno-pref-group">
-              <label>Voice Volume</label>
+              <label id="vno-pref-label-vol-voice">Voice Volume</label>
               <div class="vno-pref-control">
                 <input id="vno-pref-vol-voice" type="range" min="0" max="100" value="90">
               </div>
@@ -215,14 +215,20 @@ ${extraCss}
       <div id="vno-screen-about" class="vno-screen vno-hidden">
         <div class="vno-screen-panel">
           <div class="vno-screen-header">
-            <h2>About</h2>
+            <h2 id="vno-about-title">About</h2>
             <button class="vno-screen-close">&times;</button>
           </div>
           <div class="vno-screen-body">
-            <h3>${escapeHtml(title)}</h3>
+            <h3 id="vno-about-book-title">${escapeHtml(title)}</h3>
             <p>Powered by Visual Novels Orchestrator HTML5 Game Engine.</p>
           </div>
         </div>
+      </div>
+
+      <!-- Persistent Stage Language Switcher (accessible on every screen) -->
+      <div id="vno-lang-bar" class="vno-lang-bar" title="Language">
+        <label for="vno-stage-language" id="vno-lang-bar-label" class="vno-lang-bar-label">&#127760;</label>
+        <select id="vno-stage-language" class="vno-lang-select" aria-label="Language"></select>
       </div>
 
       <!-- Audio Elements -->
@@ -870,6 +876,51 @@ body.vno-body {
   z-index: 60;
 }
 
+/* Persistent Stage Language Bar */
+.vno-lang-bar {
+  position: absolute;
+  top: 20px;
+  right: 28px;
+  z-index: 200;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(16, 18, 28, 0.85);
+  border: 1px solid var(--vno-color-idle, #555);
+  border-radius: 6px;
+  padding: 6px 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+
+[dir="rtl"] .vno-lang-bar {
+  right: auto;
+  left: 28px;
+}
+
+.vno-lang-bar-label {
+  font-size: 20px;
+  line-height: 1;
+  color: var(--vno-color-accent, #fff);
+  cursor: pointer;
+}
+
+.vno-lang-select {
+  background: transparent;
+  color: var(--vno-color-text, #fff);
+  border: none;
+  font-family: var(--vno-font-interface, sans-serif);
+  font-size: 20px;
+  cursor: pointer;
+  outline: none;
+  padding-right: 4px;
+}
+
+.vno-lang-select option {
+  background: #181824;
+  color: #fff;
+}
+
 .vno-hidden {
   display: none !important;
 }
@@ -895,6 +946,11 @@ export function generatePlayerJs(): string {
   let autoTimer = null;
   let isTyping = false;
   let currentFullText = '';
+
+  let activeChoices = null;
+  let activeEndingMsg = null;
+  let activePuzzle = null;
+  let activeSaveScreen = { page: 1, isSaving: false };
 
   let settings = {
     textSpeed: 50,
@@ -967,6 +1023,9 @@ export function generatePlayerJs(): string {
     dom.screenPrefs = document.getElementById('vno-screen-prefs');
     dom.screenHistory = document.getElementById('vno-screen-history');
     dom.screenAbout = document.getElementById('vno-screen-about');
+    dom.langBar = document.getElementById('vno-lang-bar');
+    dom.stageLanguage = document.getElementById('vno-stage-language');
+    dom.prefLanguage = document.getElementById('vno-pref-language');
     dom.audioMusic = document.getElementById('vno-audio-music');
     dom.audioAmbience = document.getElementById('vno-audio-ambience');
     dom.audioSfx = document.getElementById('vno-audio-sfx');
@@ -974,11 +1033,13 @@ export function generatePlayerJs(): string {
   }
 
   function setupVirtualStage() {
+    if (!dom.stage) return;
     dom.stage.style.width = '1920px';
     dom.stage.style.height = '1080px';
   }
 
   function handleResize() {
+    if (!dom.stage) return;
     const ww = window.innerWidth;
     const wh = window.innerHeight;
     const scale = Math.min(ww / 1920, wh / 1080);
@@ -987,27 +1048,29 @@ export function generatePlayerJs(): string {
     dom.stage.style.top = ((wh - 1080 * scale) / 2) + 'px';
   }
 
+  function populateLanguageSelect(selectEl) {
+    if (!selectEl || !gameData || !gameData.languages) return;
+    selectEl.innerHTML = '';
+    gameData.languages.forEach(l => {
+      const opt = document.createElement('option');
+      opt.value = l.code;
+      opt.textContent = l.nativeName && l.nativeName !== l.name ? (l.nativeName + ' (' + l.name + ')') : (l.nativeName || l.name || l.code);
+      if (l.code === currentLang) opt.selected = true;
+      selectEl.appendChild(opt);
+    });
+  }
+
   function loadGameData(data) {
     gameData = data;
     currentLang = gameData.primaryLang || 'en';
     currentEdition = gameData.editions ? gameData.editions[currentLang] : null;
 
-    applyLanguageTypography();
-    applyAudioVolumes();
+    populateLanguageSelect(dom.stageLanguage);
+    populateLanguageSelect(dom.prefLanguage);
 
-    // Populate language switcher in preferences
-    const langSelect = document.getElementById('vno-pref-language');
-    if (langSelect && gameData.languages) {
-      langSelect.innerHTML = '';
-      gameData.languages.forEach(l => {
-        const opt = document.createElement('option');
-        opt.value = l.code;
-        opt.textContent = l.nativeName + ' (' + l.name + ')';
-        if (l.code === currentLang) opt.selected = true;
-        langSelect.appendChild(opt);
-      });
-      langSelect.addEventListener('change', (e) => switchLanguage(e.target.value));
-    }
+    applyLanguageTypography();
+    updateUiStrings();
+    applyAudioVolumes();
 
     // Play Main Menu Music if available
     if (gameData.audio && gameData.audio.music && gameData.audio.music.music_01) {
@@ -1019,14 +1082,135 @@ export function generatePlayerJs(): string {
     if (!gameData || !gameData.editions || !gameData.editions[langCode]) return;
     currentLang = langCode;
     currentEdition = gameData.editions[langCode];
+
+    if (dom.stageLanguage && dom.stageLanguage.value !== langCode) {
+      dom.stageLanguage.value = langCode;
+    }
+    if (dom.prefLanguage && dom.prefLanguage.value !== langCode) {
+      dom.prefLanguage.value = langCode;
+    }
+
     applyLanguageTypography();
-    updateCurrentDialogueDisplay();
+    updateUiStrings();
+    refreshActiveScreens();
   }
 
   function applyLanguageTypography() {
-    const isRtl = gameData.rtlLangs && gameData.rtlLangs.includes(currentLang);
+    if (!gameData) return;
+    const isRtl = Boolean(
+      (gameData.rtlLangs && gameData.rtlLangs.includes(currentLang)) ||
+      (gameData.languages && gameData.languages.some(l => l.code === currentLang && l.rtl))
+    );
     document.documentElement.setAttribute('dir', isRtl ? 'rtl' : 'ltr');
     document.documentElement.setAttribute('lang', currentLang);
+
+    const langEntry = gameData.languages ? gameData.languages.find(l => l.code === currentLang) : null;
+    const fontFamily = (langEntry && langEntry.fontFamily) || 'var(--vno-font-text, sans-serif)';
+    if (dom.stage) dom.stage.style.fontFamily = fontFamily;
+    if (dom.dialogueText) dom.dialogueText.style.fontFamily = fontFamily;
+  }
+
+  function ui(key, fallback) {
+    if (currentEdition && currentEdition.ui && currentEdition.ui[key]) {
+      return currentEdition.ui[key];
+    }
+    return fallback !== undefined ? fallback : key;
+  }
+
+  function setElemText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+
+  function updateUiStrings() {
+    if (!gameData) return;
+    const bookTitle = (currentEdition && currentEdition.title) || gameData.title || 'Visual Novel';
+    document.title = bookTitle;
+    setElemText('vno-mm-title', bookTitle);
+    setElemText('vno-about-book-title', bookTitle);
+
+    // Main Menu
+    setElemText('vno-mm-start', ui('Start', 'Start'));
+    setElemText('vno-mm-load', ui('Load', 'Load'));
+    setElemText('vno-mm-prefs', ui('Preferences', 'Preferences'));
+    setElemText('vno-mm-about', ui('About', 'About'));
+
+    // Quick Menu
+    setElemText('vno-qm-back', ui('Back', 'Back'));
+    setElemText('vno-qm-history', ui('History', 'History'));
+    setElemText('vno-qm-skip', ui('Skip', 'Skip'));
+    setElemText('vno-qm-auto', ui('Auto', 'Auto'));
+    setElemText('vno-qm-save', ui('Save', 'Save'));
+    setElemText('vno-qm-qsave', ui('Q.Save', 'Q.Save'));
+    setElemText('vno-qm-qload', ui('Q.Load', 'Q.Load'));
+    setElemText('vno-qm-prefs', ui('Prefs', 'Prefs'));
+    setElemText('vno-qm-menu', ui('Menu', 'Menu'));
+
+    // Ending Buttons
+    setElemText('vno-btn-restart', ui('Start again', 'Restart'));
+    setElemText('vno-btn-ending-menu', ui('Main Menu', 'Main Menu'));
+
+    // Modal Headers & Preferences Labels
+    setElemText('vno-history-title', ui('History', 'History'));
+    setElemText('vno-prefs-title', ui('Preferences', 'Preferences'));
+    setElemText('vno-about-title', ui('About', 'About'));
+    setElemText('vno-pref-label-display', ui('Display', 'Display'));
+    setElemText('vno-pref-fullscreen', ui('Fullscreen', 'Toggle Fullscreen'));
+    setElemText('vno-pref-label-language', ui('Language', 'Language'));
+    setElemText('vno-pref-label-text-speed', ui('Text Speed', 'Text Speed'));
+    setElemText('vno-pref-label-auto-delay', ui('Auto-Forward Time', 'Auto-Forward Delay'));
+    setElemText('vno-pref-label-vol-music', ui('Music Volume', 'Music Volume'));
+    setElemText('vno-pref-label-vol-sfx', ui('Sound Volume', 'Sound Effects Volume'));
+    setElemText('vno-pref-label-vol-voice', ui('Voice Volume', 'Voice Volume'));
+
+    // Stage Language Bar tooltip & aria-label
+    const langLabel = ui('Language', 'Language');
+    if (dom.langBar) dom.langBar.title = langLabel;
+    if (dom.stageLanguage) dom.stageLanguage.setAttribute('aria-label', langLabel);
+  }
+
+  function refreshActiveScreens() {
+    if (!gameData) return;
+
+    // 1. Active Dialogue / Narration Beat
+    updateCurrentDialogueDisplay();
+
+    // 2. Chapter Title Card
+    if (dom.chapterCard && !dom.chapterCard.classList.contains('vno-hidden')) {
+      const ch = gameData.chapters[currentChapterIdx];
+      dom.chapterCardText.textContent = getLocalizedChapterTitle(currentChapterIdx, ch ? ch.title : '');
+    }
+
+    // 3. Branching Choices Overlay
+    if (dom.choiceOverlay && !dom.choiceOverlay.classList.contains('vno-hidden') && activeChoices) {
+      showChoices(activeChoices);
+    }
+
+    // 4. Ending Card
+    if (dom.endingCard && !dom.endingCard.classList.contains('vno-hidden')) {
+      const ch = gameData.chapters[currentChapterIdx];
+      const localizedEnding =
+        (currentEdition && currentEdition.endings && ch && currentEdition.endings[ch.number]) ||
+        activeEndingMsg ||
+        ui('The End', 'The End');
+      dom.endingCardText.textContent = localizedEnding;
+    }
+
+    // 5. Interactive Puzzle Overlay
+    if (dom.puzzleOverlay && !dom.puzzleOverlay.classList.contains('vno-hidden') && activePuzzle) {
+      renderBuiltinPuzzle(activePuzzle.pz, activePuzzle.onFail, activePuzzle.struckClues);
+    }
+
+    // 6. History Screen
+    if (dom.screenHistory && !dom.screenHistory.classList.contains('vno-hidden')) {
+      renderHistoryList();
+    }
+
+    // 7. Save / Load Screen
+    if (dom.screenSave && !dom.screenSave.classList.contains('vno-hidden') && activeSaveScreen) {
+      setElemText('vno-save-screen-title', activeSaveScreen.isSaving ? ui('Save', 'Save Game') : ui('Load', 'Load Game'));
+      renderSaveSlots(activeSaveScreen.page, activeSaveScreen.isSaving);
+    }
   }
 
   function applyAudioVolumes() {
@@ -1037,6 +1221,19 @@ export function generatePlayerJs(): string {
   }
 
   function bindUiEvents() {
+    // Stop propagation on persistent stage language bar so dropdown interaction never advances stage or dismisses cards
+    if (dom.langBar) {
+      ['click', 'mousedown', 'mouseup', 'touchstart', 'keydown'].forEach(evt => {
+        dom.langBar.addEventListener(evt, (e) => e.stopPropagation());
+      });
+    }
+    if (dom.stageLanguage) {
+      dom.stageLanguage.addEventListener('change', (e) => switchLanguage(e.target.value));
+    }
+    if (dom.prefLanguage) {
+      dom.prefLanguage.addEventListener('change', (e) => switchLanguage(e.target.value));
+    }
+
     // Stage Advance on Click
     dom.textboxContainer.addEventListener('click', onAdvanceClick);
 
@@ -1086,6 +1283,7 @@ export function generatePlayerJs(): string {
 
   function bindKeyboardShortcuts() {
     window.addEventListener('keydown', (e) => {
+      if (e.target && (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT')) return;
       if (dom.mainMenu && !dom.mainMenu.classList.contains('vno-hidden')) return;
       if (e.code === 'Space' || e.code === 'Enter') {
         e.preventDefault();
@@ -1115,6 +1313,12 @@ export function generatePlayerJs(): string {
   function startGame() {
     closeAllScreens();
     dom.mainMenu.classList.add('vno-hidden');
+    dom.endingCard.classList.add('vno-hidden');
+    dom.choiceOverlay.classList.add('vno-hidden');
+    dom.puzzleOverlay.classList.add('vno-hidden');
+    activeChoices = null;
+    activeEndingMsg = null;
+    activePuzzle = null;
     currentChapterIdx = 0;
     currentSceneIdx = 0;
     currentBeatIdx = -1;
@@ -1130,9 +1334,13 @@ export function generatePlayerJs(): string {
     dom.endingCard.classList.add('vno-hidden');
     dom.choiceOverlay.classList.add('vno-hidden');
     dom.puzzleOverlay.classList.add('vno-hidden');
+    dom.chapterCard.classList.add('vno-hidden');
+    activeChoices = null;
+    activeEndingMsg = null;
+    activePuzzle = null;
     dom.mainMenu.classList.remove('vno-hidden');
     stopVoice();
-    if (gameData.audio && gameData.audio.music && gameData.audio.music.music_01) {
+    if (gameData && gameData.audio && gameData.audio.music && gameData.audio.music.music_01) {
       playMusic('music_01');
     }
   }
@@ -1212,7 +1420,9 @@ export function generatePlayerJs(): string {
   function advance() {
     clearTimeout(autoTimer);
     const ch = gameData.chapters[currentChapterIdx];
+    if (!ch) return;
     const sc = ch.scenes[currentSceneIdx];
+    if (!sc) return;
 
     currentBeatIdx++;
     if (currentBeatIdx >= sc.beats.length) {
@@ -1270,7 +1480,7 @@ export function generatePlayerJs(): string {
     dom.textboxContainer.classList.remove('vno-hidden');
     if (beat.type === 'line') {
       const char = beat.speaker ? gameData.characters[beat.speaker] : null;
-      const displayName = getLocalizedCharacterName(beat.speaker, beat.speakerLabel);
+      const displayName = getLocalizedCharacterName(beat, beat.speakerLabel);
       dom.speakerName.textContent = displayName;
       dom.namebox.classList.remove('vno-hidden');
       if (char && char.color) {
@@ -1284,13 +1494,18 @@ export function generatePlayerJs(): string {
     playVoiceForBeat(beat.id);
 
     // Render dialogue text
-    const text = getLocalizedBeatText(beat.id, beat.text);
-    startTypewriter(text);
+    const rawText = getLocalizedBeatText(beat.id, beat.text);
+    const htmlText = formatBeatHtml(rawText);
+    startTypewriter(htmlText);
 
-    // Save to dialogue history
+    // Save structured entry to dialogue history so it re-localizes when language switches
     dialogueHistory.push({
-      speaker: beat.type === 'line' ? dom.speakerName.textContent : '',
-      text: text
+      beatId: beat.id,
+      type: beat.type,
+      speaker: beat.speaker || null,
+      speakerAliasKey: beat.speakerAliasKey || null,
+      speakerLabel: beat.speakerLabel || '',
+      fallbackText: beat.text || ''
     });
   }
 
@@ -1393,15 +1608,19 @@ export function generatePlayerJs(): string {
   }
 
   function showChoices(choices) {
+    activeChoices = choices;
     dom.choiceContainer.innerHTML = '';
+    const ch = gameData.chapters[currentChapterIdx];
+    const chNum = ch ? ch.number : (currentChapterIdx + 1);
     choices.forEach((c, i) => {
       const btn = document.createElement('button');
       btn.className = 'vno-choice-btn';
-      const key = currentChapterIdx + 1 + ':' + i;
+      const key = chNum + ':' + i;
       btn.textContent = (currentEdition && currentEdition.choices && currentEdition.choices[key]) || c.text;
       btn.addEventListener('click', () => {
+        activeChoices = null;
         dom.choiceOverlay.classList.add('vno-hidden');
-        const targetIdx = gameData.chapters.findIndex(ch => ch.number === c.targetChapterId);
+        const targetIdx = gameData.chapters.findIndex(item => item.number === c.targetChapterId);
         if (targetIdx >= 0) playChapter(targetIdx);
         else returnToMainMenu();
       });
@@ -1411,7 +1630,13 @@ export function generatePlayerJs(): string {
   }
 
   function showEnding(msg) {
-    dom.endingCardText.textContent = msg || 'The End';
+    activeEndingMsg = msg || '';
+    const ch = gameData.chapters[currentChapterIdx];
+    const localizedEnding =
+      (currentEdition && currentEdition.endings && ch && currentEdition.endings[ch.number]) ||
+      msg ||
+      ui('The End', 'The End');
+    dom.endingCardText.textContent = localizedEnding;
     dom.endingCard.classList.remove('vno-hidden');
   }
 
@@ -1433,8 +1658,15 @@ export function generatePlayerJs(): string {
     renderBuiltinPuzzle(pz, onFail);
   }
 
-  function renderBuiltinPuzzle(pz, onFail) {
-    dom.puzzleTitle.textContent = pz.title || (pz.kind.toUpperCase() + ' PUZZLE');
+  function renderBuiltinPuzzle(pz, onFail, existingStruckClues) {
+    const struckClues = existingStruckClues || (activePuzzle && activePuzzle.pz === pz ? activePuzzle.struckClues : new Set());
+    activePuzzle = { pz: pz, onFail: onFail, struckClues: struckClues };
+
+    const edPz = currentEdition && currentEdition.puzzles ? currentEdition.puzzles[pz.key] : null;
+    const pzText = Object.assign({}, pz.text || {}, (edPz && edPz.text) || {});
+    const pzNames = Object.assign({}, pz.names || {}, (edPz && edPz.names) || {});
+
+    dom.puzzleTitle.textContent = (edPz && edPz.title) || pz.title || (pz.kind.toUpperCase() + ' PUZZLE');
     dom.puzzleOverlay.classList.remove('vno-hidden');
     dom.puzzleOverlay.setAttribute('data-puzzle-kind', pz.kind);
     dom.puzzleBody.innerHTML = '';
@@ -1444,46 +1676,114 @@ export function generatePlayerJs(): string {
     const rightCol = document.createElement('div');
     rightCol.className = 'vno-puzzle-right-col';
 
-    // Clues / Statements
+    // Intro / Murder note if present
+    const introNote = pzText.murder || pzText.intro;
+    if (introNote) {
+      const introEl = document.createElement('div');
+      introEl.className = 'vno-puzzle-intro';
+      introEl.textContent = introNote;
+      leftCol.appendChild(introEl);
+    }
+
+    // Clues / Statements / Evidence / Questions
     const cluesTitle = document.createElement('h3');
-    cluesTitle.textContent = 'Clues';
+    cluesTitle.textContent = ui('Clues', 'Clues');
     leftCol.appendChild(cluesTitle);
 
-    if (pz.data && pz.data.clues) {
-      pz.data.clues.forEach(c => {
-        const item = document.createElement('div');
-        item.className = 'vno-clue-item';
-        item.textContent = pz.text[c.id] || ('Clue ' + c.id);
-        item.onclick = () => item.classList.toggle('struck');
-        leftCol.appendChild(item);
+    const addClueRow = (clueId, fallbackText) => {
+      const item = document.createElement('div');
+      item.className = 'vno-clue-item' + (struckClues.has(clueId) ? ' struck' : '');
+      item.setAttribute('data-clue-id', clueId);
+      item.textContent = pzText[clueId] || fallbackText || ('Clue ' + clueId);
+      item.onclick = () => {
+        if (struckClues.has(clueId)) {
+          struckClues.delete(clueId);
+          item.classList.remove('struck');
+        } else {
+          struckClues.add(clueId);
+          item.classList.add('struck');
+        }
+      };
+      leftCol.appendChild(item);
+    };
+
+    if (pz.data && Array.isArray(pz.data.clues)) {
+      pz.data.clues.forEach(c => addClueRow(c.id, c.text));
+    } else if (pz.data && Array.isArray(pz.data.statements)) {
+      pz.data.statements.forEach(s => {
+        const speakerName = s.speaker ? (pzNames[s.speaker] || s.speaker) : '';
+        const stmtText = pzText[s.id] || s.text || ('Statement ' + s.id);
+        addClueRow(s.id, speakerName ? (speakerName + ': ' + stmtText) : stmtText);
       });
+    } else if (pz.data && Array.isArray(pz.data.questions)) {
+      pz.data.questions.forEach(q => addClueRow(q.id, q.prompt || q.text));
+    } else {
+      Object.keys(pzText).forEach(k => {
+        if (k !== 'murder' && k !== 'intro') {
+          addClueRow(k, pzText[k]);
+        }
+      });
+    }
+
+    if (pz.data && Array.isArray(pz.data.evidence)) {
+      pz.data.evidence.forEach(ev => {
+        const evName = pzNames[ev.id] || ev.id;
+        const evText = pzText[ev.id] || '';
+        addClueRow(ev.id, evName && evText ? (evName + ' — ' + evText) : (evText || evName));
+      });
+    }
+
+    // Render item names summary in right column so localized names are visible
+    const nameKeys = Object.keys(pzNames);
+    if (nameKeys.length > 0) {
+      const namesList = document.createElement('div');
+      namesList.className = 'vno-puzzle-names';
+      nameKeys.forEach(k => {
+        const badge = document.createElement('span');
+        badge.className = 'vno-puzzle-name-item';
+        badge.setAttribute('data-item-id', k);
+        badge.textContent = pzNames[k];
+        namesList.appendChild(badge);
+      });
+      rightCol.appendChild(namesList);
     }
 
     // Accuse / Submit Button
     const btnSubmit = document.createElement('button');
+    btnSubmit.id = 'vno-puzzle-btn-submit';
     btnSubmit.className = 'vno-button';
     btnSubmit.style.marginTop = '20px';
-    btnSubmit.textContent = pz.kind === 'murdle' ? 'Accuse' : 'Submit';
+    btnSubmit.textContent = pz.kind === 'murdle' ? ui('Accuse', 'Accuse') : ui('Submit', 'Submit');
     btnSubmit.onclick = () => {
       onPuzzleSolved();
     };
     leftCol.appendChild(btnSubmit);
 
+    // Header buttons
+    const btnHint = document.getElementById('vno-puzzle-btn-hint');
+    if (btnHint) btnHint.textContent = ui('Hint', 'Hint');
+
     // Give Up button
-    document.getElementById('vno-puzzle-btn-giveup').onclick = () => {
-      onPuzzleFailed(onFail);
-    };
+    const btnGiveUp = document.getElementById('vno-puzzle-btn-giveup');
+    if (btnGiveUp) {
+      btnGiveUp.textContent = ui('Give Up', 'Give Up');
+      btnGiveUp.onclick = () => {
+        onPuzzleFailed(onFail);
+      };
+    }
 
     dom.puzzleBody.appendChild(leftCol);
     dom.puzzleBody.appendChild(rightCol);
   }
 
   function onPuzzleSolved() {
+    activePuzzle = null;
     dom.puzzleOverlay.classList.add('vno-hidden');
     advance();
   }
 
   function onPuzzleFailed(onFail) {
+    activePuzzle = null;
     dom.puzzleOverlay.classList.add('vno-hidden');
     if (onFail && onFail.mode === 'chapter' && onFail.to) {
       const targetIdx = gameData.chapters.findIndex(c => c.number === onFail.to);
@@ -1539,14 +1839,43 @@ export function generatePlayerJs(): string {
     if (dom.audioVoice) dom.audioVoice.pause();
   }
 
-  // Localization Helpers
+  // Localization & Formatting Helpers
+  function formatBeatHtml(text) {
+    if (!text) return '';
+    let s = String(text)
+      .replace(/\\[\\[/g, '[')
+      .replace(/\\{\\{/g, '{')
+      .replace(/\\\\"/g, '"')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    s = s.replace(/\\{b\\}([\\s\\S]*?)\\{\\/b\\}/g, '<strong>$1</strong>');
+    s = s.replace(/\\{i\\}([\\s\\S]*?)\\{\\/i\\}/g, '<em>$1</em>');
+    s = s.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+    s = s.replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+    s = s.replace(/\\r?\\n/g, '<br/>');
+    return s;
+  }
+
   function getLocalizedChapterTitle(chIdx, def) {
     const n = gameData.chapters[chIdx]?.number;
     return (currentEdition && currentEdition.chapterTitles && currentEdition.chapterTitles[n]) || def;
   }
 
-  function getLocalizedCharacterName(charKey, def) {
-    return (currentEdition && currentEdition.characterNames && currentEdition.characterNames[charKey]) || def || charKey;
+  function getLocalizedCharacterName(beatOrKey, def) {
+    const names = currentEdition && currentEdition.characterNames ? currentEdition.characterNames : null;
+    if (beatOrKey && typeof beatOrKey === 'object') {
+      if (beatOrKey.speakerAliasKey && names && names[beatOrKey.speakerAliasKey]) {
+        return names[beatOrKey.speakerAliasKey];
+      }
+      if (beatOrKey.speaker && names && names[beatOrKey.speaker]) {
+        return names[beatOrKey.speaker];
+      }
+      return def || beatOrKey.speakerLabel || beatOrKey.speaker || '';
+    }
+    const charKey = beatOrKey;
+    return (names && charKey && names[charKey]) || def || charKey || '';
   }
 
   function getLocalizedBeatText(beatId, def) {
@@ -1554,14 +1883,24 @@ export function generatePlayerJs(): string {
   }
 
   function updateCurrentDialogueDisplay() {
+    if (!gameData) return;
     const ch = gameData.chapters[currentChapterIdx];
     if (!ch) return;
     const sc = ch.scenes[currentSceneIdx];
     if (!sc || currentBeatIdx < 0 || !sc.beats[currentBeatIdx]) return;
     const b = sc.beats[currentBeatIdx];
-    dom.dialogueText.innerHTML = getLocalizedBeatText(b.id, b.text);
+    if (b.type !== 'line' && b.type !== 'narration') return;
+
+    const htmlText = formatBeatHtml(getLocalizedBeatText(b.id, b.text));
+    if (isTyping) {
+      clearInterval(typewriterTimer);
+      isTyping = false;
+      if (dom.indicator) dom.indicator.classList.remove('vno-hidden');
+    }
+    currentFullText = htmlText;
+    dom.dialogueText.innerHTML = htmlText;
     if (b.type === 'line') {
-      dom.speakerName.textContent = getLocalizedCharacterName(b.speaker, b.speakerLabel);
+      dom.speakerName.textContent = getLocalizedCharacterName(b, b.speakerLabel);
     }
   }
 
@@ -1640,14 +1979,18 @@ export function generatePlayerJs(): string {
   }
 
   function openSaveScreen(isSaving) {
-    document.getElementById('vno-save-screen-title').textContent = isSaving ? 'Save Game' : 'Load Game';
+    activeSaveScreen = { page: 1, isSaving: isSaving };
+    document.getElementById('vno-save-screen-title').textContent = isSaving ? ui('Save', 'Save Game') : ui('Load', 'Load Game');
     renderSaveSlots(1, isSaving);
     openScreen(dom.screenSave);
   }
 
   function renderSaveSlots(page, isSaving) {
+    activeSaveScreen = { page: page, isSaving: isSaving };
     const grid = document.getElementById('vno-save-slots-grid');
+    if (!grid) return;
     grid.innerHTML = '';
+    const emptyLabel = ui('empty slot', 'Empty');
     for (let i = 1; i <= 6; i++) {
       const slotId = page + '_' + i;
       const key = (gameData.saveDir || 'vno-save') + '_' + slotId;
@@ -1658,7 +2001,7 @@ export function generatePlayerJs(): string {
         const item = JSON.parse(raw);
         card.innerHTML = '<h4>Slot ' + slotId + '</h4><p>' + new Date(item.timestamp).toLocaleString() + '</p><p>' + item.text + '...</p>';
       } else {
-        card.innerHTML = '<h4>Slot ' + slotId + '</h4><p>Empty</p>';
+        card.innerHTML = '<h4>Slot ' + slotId + '</h4><p>' + emptyLabel + '</p>';
       }
       card.onclick = () => {
         if (isSaving) {
@@ -1672,16 +2015,33 @@ export function generatePlayerJs(): string {
     }
   }
 
-  function openHistoryScreen() {
+  function renderHistoryList() {
     const list = document.getElementById('vno-history-list');
+    if (!list) return;
     list.innerHTML = '';
+    if (dialogueHistory.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'vno-history-empty';
+      empty.textContent = ui('The dialogue history is empty.', 'The dialogue history is empty.');
+      list.appendChild(empty);
+      return;
+    }
     dialogueHistory.forEach(d => {
       const row = document.createElement('div');
+      row.className = 'vno-history-item';
       row.style.marginBottom = '16px';
-      if (d.speaker) row.innerHTML = '<strong>' + d.speaker + ':</strong> ' + d.text;
-      else row.innerHTML = d.text;
+      const htmlText = d.beatId ? formatBeatHtml(getLocalizedBeatText(d.beatId, d.fallbackText)) : (d.text || '');
+      const speakerName = d.type === 'line'
+        ? getLocalizedCharacterName(d, d.speakerLabel)
+        : (d.speaker && !d.beatId ? d.speaker : '');
+      if (speakerName) row.innerHTML = '<strong>' + speakerName + ':</strong> ' + htmlText;
+      else row.innerHTML = htmlText;
       list.appendChild(row);
     });
+  }
+
+  function openHistoryScreen() {
+    renderHistoryList();
     openScreen(dom.screenHistory);
   }
 
@@ -1723,6 +2083,10 @@ export function generatePlayerJs(): string {
         lang: currentLang
       };
     },
+    getLanguages: function() {
+      return gameData && gameData.languages ? gameData.languages : [];
+    },
+    switchLanguage: switchLanguage,
     loadGameData: loadGameData,
     advance: advance
   };

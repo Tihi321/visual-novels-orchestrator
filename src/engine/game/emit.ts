@@ -492,6 +492,7 @@ export interface GameDataSceneBeat {
   id: string
   type: 'line' | 'narration' | 'cast' | 'puzzle'
   speaker?: string | null
+  speakerAliasKey?: string
   speakerLabel?: string
   text?: string
   html?: string
@@ -592,7 +593,7 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
 
   // 1. Languages
   const editionLangs = (inp.editions ?? []).map((e) => e.lang)
-  const allLangs = [book.primaryLang, ...editionLangs.filter((l) => l !== book.primaryLang)]
+  const allLangs = [book.primaryLang, ...editionLangs.filter((l, i) => l !== book.primaryLang && editionLangs.indexOf(l) === i)]
   const rtl = rtlLanguages(book.primaryLang, allLangs)
 
   const languages: GameDataLanguage[] = allLangs.map((code) => {
@@ -679,11 +680,18 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
         const beatPlan = stagePlan.beats[b.id]
         const pz = b.type === 'puzzle' ? book.puzzles?.find((p) => p.key === b.puzzle) : undefined
         const failTarget = pz?.onFail?.mode === 'chapter' && pz.onFail.to ? chapterLabel(pz.onFail.to) : undefined
+        let speakerAliasKey: string | undefined
+        if (b.type === 'line' && b.speakerKey && knownChars.has(b.speakerKey)) {
+          const char = book.characters.find((c) => c.key === b.speakerKey)!
+          const aliasIdx = aliasIndex(char, b.speakerLabel)
+          if (aliasIdx > 0) speakerAliasKey = `${b.speakerKey}#${aliasIdx}`
+        }
 
         return {
           id: b.id,
           type: b.type,
           speaker: b.type === 'line' ? b.speakerKey : undefined,
+          speakerAliasKey,
           speakerLabel: b.type === 'line' ? b.speakerLabel : undefined,
           text: hasText(b) ? b.text : undefined,
           html: hasText(b) ? renderHtmlEmphasis(b.text) : undefined,
