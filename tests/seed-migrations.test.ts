@@ -61,7 +61,7 @@ describe('seed migrations', () => {
     // the client entry comes from the seed, so it already has antigravity
     expect(providers[1]).toMatchObject({ kind: 'client', models: [{ id: 'claude-code', context: 200000 }, { id: 'antigravity', vision: true, context: 1000000 }] })
     expect(providers[2]).toMatchObject({ id: 'acp', kind: 'openai-compat', enabled: false, local: true, base_url: 'http://127.0.0.1:7461/v1', concurrency: 2, json_schema: false, discover: true, models: [] })
-    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1'])
+    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1', 'settings-fallbacks-v1'])
   })
 
   it('gives a client model without context 200000 and never changes one that has a value', async () => {
@@ -87,7 +87,7 @@ describe('seed migrations', () => {
     const res = await initDataFolder(data, seedDir)
     expect(res.migrated).toEqual([])
     expect(await readFile(file(), 'utf8')).toBe(bad)
-    expect((await loadSeedState(data)).migrations).toEqual([])
+    expect((await loadSeedState(data)).migrations).toEqual(['settings-fallbacks-v1'])
   })
 
   it('an untouched file is updated by the seed refresh, and the migrations change nothing', async () => {
@@ -106,7 +106,7 @@ describe('seed migrations', () => {
     expect(res.updated).toContain('config/providers.md')
     expect(res.migrated).toEqual([])
     expect(await readFile(file(), 'utf8')).toBe(seedText)
-    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1'])
+    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1', 'settings-fallbacks-v1'])
   })
 
   it('adds acp and the antigravity client model once, and does not bring them back when you delete them', async () => {
@@ -122,4 +122,31 @@ describe('seed migrations', () => {
     expect((await initDataFolder(data, seedDir)).migrated).toEqual([])
     expect((await providersOf()).map((p) => p.id)).toEqual(['lmstudio', 'client'])
   })
-})
+  it('migrates legacy group_defaults and model_order in settings.md to fallbacks and fallback_shared', async () => {
+    await initDataFolder(data, seedDir)
+    const oldSettings = `---
+kind: settings
+default_paid_model: deepseek/deepseek-flash
+group_defaults:
+  strata: strata/qwen3.8-flash-next
+  lmstudio: lmstudio/my-local-model
+model_order:
+  - lmstudio
+  - strata
+---
+`
+    const settingsPath = path.join(data, 'config', 'settings.md')
+    await writeFile(settingsPath, oldSettings)
+    const state = JSON.parse(await readFile(path.join(data, SEED_HASHES_FILE), 'utf8')) as { migrations: string[] }
+    state.migrations = state.migrations.filter((m) => m !== 'settings-fallbacks-v1')
+    await writeFile(path.join(data, SEED_HASHES_FILE), JSON.stringify(state))
+
+    const res = await initDataFolder(data, seedDir)
+    expect(res.migrated).toContain('settings-fallbacks-v1')
+    const updated = await readFile(settingsPath, 'utf8')
+    expect(updated).toContain('fallbacks:')
+    expect(updated).toContain('fallback_shared: true')
+    expect(updated).not.toContain('group_defaults:')
+    expect(updated).not.toContain('model_order:')
+  })
+});

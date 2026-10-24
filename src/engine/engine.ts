@@ -175,6 +175,7 @@ export class Engine {
     await this.loadSettings()
     await loadLanguageConfig(this.opts.dataDir, (m) => this.log(`languages: ${m}`))
     await this.registry.load()
+    this.warnAliases()
     for (const p of this.registry.providers.values()) if (p.keyFrom) this.log(`provider ${p.id}: key from ${p.keyFrom}`)
     void this.discoverModels()
     // providers with `concurrency: auto` (Strata) follow the slot count their server reports: asked now and every few seconds,
@@ -416,12 +417,23 @@ export class Engine {
         for (const ref of [...hidden]) if (ref.startsWith(`${id}/`)) hidden.delete(ref)
         delete limits[id]
       })
-      // settings.md: its group default and its place in the fallback order
-      const s = this.settings
-      if (id in s.group_defaults || s.model_order.includes(id)) {
-        const { [id]: _gone, ...rest } = s.group_defaults
-        await this.writeSettings({ group_defaults: rest, model_order: s.model_order.filter((g) => g !== id) })
+      // settings.md: fallback rows of that provider
+      const sFile = this.settingsFile()
+      try {
+        const doc = await readMd(sFile)
+        const rows = Array.isArray(doc.data.fallbacks) ? doc.data.fallbacks : []
+        const left = rows.filter((r) => typeof r === 'string' && !r.startsWith(id + '/'))
+        if (left.length !== rows.length || doc.data.group_defaults || doc.data.model_order) {
+          const next = { ...doc.data }
+          if (left.length > 0) next.fallbacks = left
+          delete next.group_defaults
+          delete next.model_order
+          await writeMd(sFile, next, doc.body)
+        }
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') this.log('removeCustomProvider: settings.md: ' + (err as Error).message)
       }
+      this.warnAliases()
       this.log(`models: removed custom provider ${id}`)
       this.emit({ type: 'provider.saved', ok: true, id, removed: true })
       this.emit({ type: 'secrets.updated', secretsSet: this.secretsSet(), keyNames: this.allowedSecrets() })
@@ -570,6 +582,7 @@ export class Engine {
         const name = path.basename(e.rel, '.md')
         if (name === 'providers' || name === 'roles' || name === 'models') {
           await this.registry.load()
+          this.warnAliases()
           if (name !== 'providers') this.scheduler.changeModel() // running jobs follow a changed role list
           this.emit(await this.snapshot()) // the pickers show the models and role defaults
           if (name === 'providers') void this.discoverModels()
@@ -581,7 +594,8 @@ export class Engine {
           if (before !== this.factory.paused) this.emit({ type: 'factory.paused', paused: this.factory.paused })
         } else if (name === 'settings') {
           await this.loadSettings()
-          await this.registry.load() // the role aliases and the LM Studio context may have changed
+          await this.registry.load() // the fallback list and the LM Studio context may have changed
+          this.warnAliases()
           this.scheduler.changeModel() // running jobs follow changed default models or their order
           this.emit(await this.snapshot())
         }
@@ -598,18 +612,31 @@ export class Engine {
     return path.join(this.dataDir, 'config', 'settings.md')
   }
 
+  /** Aliases already reported, so a reload that changes nothing stays quiet. */
+  private aliasWarned = new Set<string>()
+
+  /** Logs once each alias of roles.md that names no row of the fallback list (its model is skipped like an unknown one). */
+  private warnAliases(): void {
+    const now = new Set(this.registry.unresolvedAliases())
+    for (const a of now) if (!this.aliasWarned.has(a)) this.log('roles.md: "' + a + '" names no row in the fallback list')
+    this.aliasWarned = now
+  }
+
   async loadSettings(): Promise<void> {
     try {
       this.settings = parseMdWith(await fs.readFile(this.settingsFile(), 'utf8'), settingsSchema, this.settingsFile()).data
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') this.log(`config/settings.md: ${(err as Error).message}`)
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') this.log('config/settings.md: ' + (err as Error).message)
     }
     this.registry.setDefaults(modelDefaultsOf(this.settings))
+    this.warnAliases()
   }
 
   settingsSummary(): SettingsSummary {
     const s = this.settings
     return {
+      fallbacks: s.fallbacks,
+      fallbackShared: s.fallback_shared,
       groupDefaults: groupDefaultsOf(s),
       modelOrder: s.model_order,
       lmstudioParallel: s.lmstudio_parallel,
@@ -636,12 +663,15 @@ export class Engine {
     } catch {
       doc = { data: { kind: 'settings' } as Record<string, unknown>, body: '' }
     }
-    // the settings of before group_defaults are folded into it and not written again
-    const { default_paid_model: oldPaid, default_strata_model: oldStrata, default_lmstudio_model: oldLm, ...rest } = doc.data
+    // older settings keys are removed once fallbacks is saved
+    const { default_paid_model: _oldPaid, default_strata_model: _oldStrata, default_lmstudio_model: _oldLm, group_defaults: _gd, model_order: _mo, ...rest } = doc.data
     const next: Record<string, unknown> = { ...rest, kind: 'settings', ...fields }
-    if ((oldPaid || oldStrata || oldLm) && !('group_defaults' in fields)) {
-      const own = (rest.group_defaults ?? {}) as Record<string, string>
-      next.group_defaults = { ...(oldPaid ? { paid: String(oldPaid) } : {}), ...(oldStrata ? { strata: String(oldStrata) } : {}), ...(oldLm ? { lmstudio: String(oldLm) } : {}), ...own }
+    if ('fallbacks' in fields) {
+      delete next.group_defaults
+      delete next.model_order
+      delete next.default_paid_model
+      delete next.default_strata_model
+      delete next.default_lmstudio_model
     }
     await writeMd(file, next, doc.body)
     await this.loadSettings()
@@ -769,16 +799,33 @@ export class Engine {
       }
       case 'saveSettings': {
         const s = this.settings
-        const defaults = { ...groupDefaultsOf(s) }
-        for (const [g, m] of Object.entries(cmd.groupDefaults ?? {})) if (typeof m === 'string' && m.trim()) defaults[g] = m.trim()
+        let fallbacks: string[] | undefined
+        if (cmd.fallbacks) {
+          const rows = [...new Set(cmd.fallbacks.map((r) => r.trim()).filter((r) => r.includes('/')))]
+          if (rows.length > 0) fallbacks = rows
+        } else if (cmd.groupDefaults) {
+          const prev = [...s.fallbacks]
+          for (const [g, m] of Object.entries(cmd.groupDefaults)) {
+            if (typeof m === 'string' && m.trim().includes('/')) {
+              const trimmed = m.trim()
+              const idx = prev.findIndex((r) => this.registry.kindOf(r) === g || r.startsWith(g + '/'))
+              if (idx >= 0) prev[idx] = trimmed
+              else prev.unshift(trimmed)
+            }
+          }
+          fallbacks = [...new Set(prev)]
+        }
+        const shared = cmd.fallbackShared ?? (cmd.modelOrder ? cmd.modelOrder.length > 0 : s.fallback_shared)
         await this.writeSettings({
-          group_defaults: defaults,
-          model_order: cmd.modelOrder ? [...new Set(cmd.modelOrder.filter((g) => typeof g === 'string' && g.trim() !== '').map((g) => g.trim()))] : s.model_order,
+          fallbacks: fallbacks ?? s.fallbacks,
+          fallback_shared: shared,
+          ...(cmd.modelOrder ? { model_order: cmd.modelOrder } : {}),
           lmstudio_parallel: Math.min(16, Math.max(1, Math.round(cmd.lmstudioParallel ?? s.lmstudio_parallel) || 1)),
           lmstudio_context: Math.max(2048, Math.round(cmd.lmstudioContext ?? s.lmstudio_context) || 32768),
           lmstudio_ttl_minutes: Math.max(1, Math.round(cmd.lmstudioTtlMinutes ?? s.lmstudio_ttl_minutes) || 60),
           scriptoriumData: cmd.scriptoriumData?.trim() || s.scriptoriumData
         })
+        this.warnAliases()
         return
       }
       case 'detectModels':

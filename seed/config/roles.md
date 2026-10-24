@@ -22,7 +22,7 @@ roles:
 
 The default models for each role, as an ordered list of `provider/model` or an alias. The first model is the default. If it fails, is rate-limited or is over budget, the next one is tried. An agent's own `model` field (in `agents/<agent>.md`) goes in front of this list.
 
-The aliases `paid`, `strata` and `lmstudio` stand for the default models in `config/settings.md` (also on the app's Models page). Change a default there and every role that uses the alias follows. The id of any other provider works as an alias too (`acp`, or a provider you added with Add provider, such as `acp-home`): it stands for that provider's default in `group_defaults`, else its first ticked model.
+The aliases `paid`, `strata` and `lmstudio` stand for the first row of that kind in `config/settings.md` (also on the app's Models page). A kind can repeat: `paid-2` stands for the second API row, `lmstudio-2` for the second LM Studio row. The id of any other provider works as an alias too (`client`, `acp`, or a provider you added with Add provider, such as `acp-home`). Change a row there and every role that uses the alias follows.
 
 The VN Studio roles:
 - `director`: plans each book's job graph and decides what to redo after failures or edits.
@@ -34,4 +34,4 @@ The VN Studio roles:
 - `edition-aligner`: aligns a translated edition to the primary structure, beat by beat.
 - `voice-director`: picks a voice for each character and tags lines with emotion (only when voice is on).
 
-Changing a default here applies at once: a running job asks its current request again on the new model. `model_order` in `config/settings.md` (the Models page) can sort every list here by group (API, Strata, LM Studio, and one group per other provider) instead. The engine rewrites this file when you change a role default in the UI, so comments in the YAML are not kept. The text below the frontmatter is.
+Changing a default here applies at once: a running job asks its current request again on the new model. `fallback_shared` in `config/settings.md` (the Models page's "One fallback order for every role") gives every role the fallback rows top to bottom instead. The engine rewrites this file when you change a role default in the UI, so comments in the YAML are not kept. The text below the frontmatter is.

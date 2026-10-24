@@ -35,6 +35,8 @@ export interface ModelSummary {
   model: string
   family: string
   local: boolean
+  /** The kind a fallback row with this model has: `paid` for an API model, otherwise its provider's id (`strata`, `lmstudio`, `client` ...). */
+  kind: string
   /** The fallback group it belongs to (`paid`, `strata`, `lmstudio`, or a provider id), see `ModelGroup`. Missing for the client provider. */
   group?: string
   /** True when the provider is switched on and usable (has a key, or is local). */
@@ -132,10 +134,14 @@ export interface AgentSummary {
 }
 
 export interface SettingsSummary {
-  /** `provider/model` behind each role alias, per group: `paid`, `strata`, `lmstudio` and the id of every other provider group (`group_defaults` in settings.md). */
-  groupDefaults: Record<string, string>
-  /** `model_order` in settings.md: the groups (`paid`, `strata`, `lmstudio`, a provider id) in the order every role tries them. Empty: each role's own order. */
-  modelOrder: ModelGroup[]
+  /** `fallbacks` in settings.md: `provider/model` refs, first row first. A kind name (`paid`, `strata` ...) stands for the first row of that kind, `<kind>-<n>` for the n-th. */
+  fallbacks: string[]
+  /** `fallback_shared`: every role tries the rows top to bottom. False: each role keeps its own list from roles.md. */
+  fallbackShared: boolean
+  /** `provider/model` behind each role alias, per group: kept for compatibility */
+  groupDefaults?: Record<string, string>
+  /** `model_order` in settings.md: kept for compatibility */
+  modelOrder?: ModelGroup[]
   /** How the engine loads LM Studio models: requests at once, context window, idle minutes before unloading. */
   lmstudioParallel: number
   lmstudioContext: number
