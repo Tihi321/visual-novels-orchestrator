@@ -28,6 +28,11 @@ export function PipelineTab({ slug, detail }: { slug: string; detail: ProjectDet
           <button onClick={() => sendCommand({ type: 'runPipeline', slug, from: suggestedStart(rows), force })} title="Starts at the first step that did not finish" data-testid="run-resume">
             Continue from {suggestedStart(rows)}
           </button>
+          {(running || jobs.running + jobs.queued > 0) && (
+            <button onClick={() => sendCommand({ type: 'stopPipeline', slug })} data-testid="stop-pipeline" title="Abort running jobs and clear the queue for this project">
+              Stop pipeline
+            </button>
+          )}
           <label className="inline" title="Plan the prompts and generate again for assets that have a file (locked and custom ones are never touched)">
             <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
             Force (plan and generate again)

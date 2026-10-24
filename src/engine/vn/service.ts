@@ -16,6 +16,9 @@ import type {
   ProjectSettingsPatch,
   ProjectSummary,
   RenpyConfigView,
+  SceneCuesView,
+  SceneTransitionView,
+  StageSlotView,
   StepStatus,
   ThemeInfo,
   VnCommand
@@ -23,7 +26,7 @@ import type {
 import { assertKnownLang } from '../../shared/languages'
 import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, hasText, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
 import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
-import { deriveAssets, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
+import { deriveAssets, fallbackPrompt as derivedFallbackPrompt, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
 import { runsOnFlow } from '../assets/flow-image'
 import { importAssetFile } from '../assets/import'
 import type { ImportOptions } from '../assets/import'
@@ -36,6 +39,8 @@ import { ENGINES } from '../comfy/graphs'
 import { buildInventory, freeAllLanes } from '../comfy/inventory'
 import type { ModelRegistry } from '../models/registry'
 import type { ModelRouter } from '../models/router'
+import type { ChatMessage } from '../models/types'
+import { cleanProse } from '../pipeline/llm'
 import type { JobFile, JobState, JobStore } from '../queue/jobs'
 import { JOB_STATES } from '../queue/jobs'
 import { run as runGame } from '../game/run'
@@ -106,6 +111,8 @@ export interface VnDeps {
   getScriptoriumDir?: () => string
   /** Wakes the scheduler after jobs were enqueued. */
   kick?: () => void
+  /** Aborts running jobs of a book in the scheduler and returns how many were aborted. */
+  stopBook?: (slug: string, reason?: 'stopped' | 'stop') => number
   /** A ComfyUI client (tests pass a fake). Default: one made from `config/comfy.md`. */
   comfy?: ComfyClient | (() => ComfyClient | Promise<ComfyClient>)
   /** A VibeTTS client (tests pass a fake). Default: one made from `config/voice.md`. */
@@ -526,8 +533,40 @@ export class VnService {
       build: await this.store.readJson<BuildResult>(slug, 'build.json'),
       lint: await this.store.readJson<BuildResult>(slug, 'lint.json'),
       resolvedTheme: pickTheme(book, settings, themes),
-      jobs: await this.jobCounts(slug)
+      jobs: await this.jobCounts(slug),
+      cues: await this.loadSceneCues(slug)
     }
+  }
+
+  /** Reads `cues.json` and shapes it by scene ID (`SceneCuesView`) for the Scenes tab. */
+  async loadSceneCues(slug: string): Promise<Record<string, SceneCuesView>> {
+    const raw = await this.store.readJson<StageCues>(slug, 'cues.json').catch(() => null)
+    const book = await this.store.loadBook(slug).catch(() => null)
+    const out: Record<string, SceneCuesView> = {}
+    if (!raw && !book) return out
+    const base = raw ?? (book ? defaultCues(book) : null)
+    if (!base) return out
+    for (const [sceneId, sc] of Object.entries(base.scenes ?? {})) {
+      const inlineCasts = (sc as unknown as { casts?: Record<string, Record<string, StageSlotView>> }).casts ?? {}
+      out[sceneId] = {
+        ...(sc.transition ? { transition: sc.transition } : {}),
+        ...(sc.pause !== undefined ? { pause: sc.pause } : {}),
+        casts: { ...inlineCasts }
+      }
+    }
+    if (book) {
+      for (const ch of book.chapters) {
+        for (const scene of ch.scenes) {
+          out[scene.id] ??= { casts: {} }
+          for (const beat of scene.beats) {
+            if (beat.type === 'cast' && base.casts?.[beat.id]) {
+              out[scene.id]!.casts[beat.id] = { ...base.casts[beat.id] }
+            }
+          }
+        }
+      }
+    }
+    return out
   }
 
   async jobCounts(slug: string): Promise<JobCounts> {
@@ -652,7 +691,7 @@ export class VnService {
    * Drops the queue: deletes the queued jobs of a project (or of every project) and marks the pipeline steps that were queued or running as
    * skipped, so a later resume has nothing old to start again. Running jobs are not touched (stop them first: `vno_stop_now`).
    */
-  async clearQueue(slug: string | null): Promise<{ dropped: number; projects: string[] }> {
+  async clearQueue(slug: string | null, reason = 'dropped (vno_stop_now)'): Promise<{ dropped: number; projects: string[] }> {
     if (slug) assertSlug(slug)
     const ids = (await this.deps.jobs.ids('queued')).filter((id) => !slug || id.startsWith(`${slug}--`))
     for (const id of ids) await fs.rm(this.deps.jobs.file('queued', id), { force: true })
@@ -664,7 +703,7 @@ export class VnService {
       let changed = false
       for (const [step, v] of Object.entries(st.steps) as [PipelineStep, StepStatus][]) {
         if (v.status !== 'queued' && v.status !== 'running') continue
-        await this.setStep(s, step, 'skipped', 'dropped (vno_stop_now)')
+        await this.setStep(s, step, 'skipped', reason)
         changed = true
       }
       if (changed) touched.push(s)
@@ -761,6 +800,32 @@ export class VnService {
     const job = await this.enqueue(slug, TASKS.pipeline, 'all', run, { body: { from: start, force: !!opts.force }, label: `pipeline from ${start}` })
     await this.setStep(slug, start, 'queued', `run ${run} queued from ${start}`, { reset: { run, from: start } })
     return { run, job, from: start }
+  }
+
+  /** Aborts running jobs of `slug`, drops its queued jobs, marks active pipeline steps skipped, and refreshes the UI. */
+  async stopPipeline(slug: string): Promise<{ stoppedRunning: number; droppedQueued: number }> {
+    assertSlug(slug)
+    if (!(await this.store.exists(slug))) throw new Error(`no project "${slug}"`)
+    const cq = this.deps.registry.clientQueue
+    for (const t of cq.list()) {
+      if (t.book === slug) cq.cancel(t.id)
+    }
+    const { dropped: d1 } = await this.clearQueue(slug, 'stopped')
+    const stoppedRunning = this.deps.stopBook?.(slug, 'stopped') ?? 0
+    if (stoppedRunning > 0) {
+      await new Promise((r) => setTimeout(r, 50))
+      for (let i = 0; i < 8; i++) {
+        const stillRunning = (await this.deps.jobs.ids('running')).some((id) => id.startsWith(`${slug}--`))
+        if (!stillRunning) break
+        await new Promise((r) => setTimeout(r, 25))
+      }
+    }
+    const { dropped: d2 } = await this.clearQueue(slug, 'stopped')
+    const droppedQueued = d1 + d2
+    this.log(`stopped pipeline of ${slug}: ${stoppedRunning} running job(s) aborted, ${droppedQueued} queued job(s) dropped`)
+    this.emit({ type: 'project.loaded', slug, project: await this.detail(slug) })
+    await this.emitProject(slug)
+    return { stoppedRunning, droppedQueued }
   }
 
   /**
@@ -1059,6 +1124,69 @@ export class VnService {
     }
     if (edits.rebuild !== false) ids.push(await this.enqueue(slug, TASKS.build, `regen-${id}`, run, { depends_on: [...ids], priority: 1 }))
     return { jobs: ids, staleSprites }
+  }
+
+  /**
+   * A prompt for an asset, for the Regenerate dialog: the project's art-director (images) or composer (audio) writes it from the book, the
+   * current prompt and the user's notes. No model that answers directly (client models wait for an MCP client, so they are skipped): the
+   * deterministic prompt from the book. Nothing is saved and no job is queued; Regenerate sends the prompt the user keeps.
+   */
+  async suggestAssetPrompt(slug: string, id: string, instructions?: string): Promise<{ prompt: string; source: 'ai' | 'fallback' }> {
+    assertSlug(slug)
+    const entry = await this.requireAsset(slug, id)
+    const { settings } = await this.store.loadSettings(slug)
+    const book = await this.store.loadBook(slug)
+    const extra = instructions?.trim() || ''
+    const stylePrompt = resolveStylePrompt(book, settings)
+    const derived = deriveAssets(book, settings).find((a) => a.id === id)?.prompt || derivedFallbackPrompt(entry, book, { pixel: settings.art.style === 'pixel', stylePrompt })
+    const base = derived || entry.prompt || `${entry.kind} for "${book.title}"`
+    // the user's notes replace a prompt they typed over; added to the derived one
+    const fallback = extra && extra !== entry.prompt && extra !== base ? `${base}, ${extra}` : base
+
+    const role = IMAGE_KINDS.has(entry.kind) ? 'art-director' : 'composer'
+    const models = this.deps.router.candidates(role, { projectModel: this.store.projectModel(slug, role) }).filter((m) => m.provider.id !== 'client')
+    let prompt = ''
+    if (models.length > 0) {
+      try {
+        const messages: ChatMessage[] = [
+          {
+            role: 'system',
+            content:
+              'You write generation prompts for the assets of a visual novel (images for an image model, audio for a music or sound model). Answer with ONLY the prompt text: one paragraph, no labels, no quotes, no markdown, no explanation.'
+          },
+          {
+            role: 'user',
+            content: [
+              `Book: "${book.title}" (format ${book.format}${book.genre ? `, genre ${book.genre}` : ''})`,
+              `Asset: ${entry.id} (kind: ${entry.kind})`,
+              assetContext(book, entry),
+              IMAGE_KINDS.has(entry.kind) && entry.kind !== 'sprite' && stylePrompt ? `Start the prompt with these style words: ${styleForKind(stylePrompt, entry.kind)}` : '',
+              entry.kind === 'sprite' ? 'The sprite is an edit of the character sheet: begin with "Same character as the reference image" and describe pose, expression and framing (full body, plain background).' : '',
+              entry.prompt ? `Current prompt: ${entry.prompt}` : '',
+              derived && derived !== entry.prompt ? `Prompt derived from the book: ${derived}` : '',
+              extra ? `The user's notes (follow them): ${extra}` : '',
+              'Write the improved prompt.'
+            ]
+              .filter(Boolean)
+              .join('\n')
+          }
+        ]
+        let text = ''
+        for await (const ev of this.deps.router.chat(models, { messages, maxTokens: 400, temperature: 0.5, meta: { role, book: slug, agent: role, task: 'suggest_prompt' } })) {
+          if (ev.type === 'attempt') text = ''
+          else if (ev.type === 'delta') text += ev.text
+        }
+        prompt = cleanProse(text)
+          .replace(/^prompt:\s*/i, '')
+          .replace(/^["']|["']$/g, '')
+          .trim()
+      } catch (e) {
+        this.log(`suggestAssetPrompt ${slug}/${id}: the model failed, using the book's prompt: ${(e as Error).message}`)
+      }
+    }
+    const result = prompt ? { prompt, source: 'ai' as const } : { prompt: fallback, source: 'fallback' as const }
+    this.emit({ type: 'asset.prompt.suggested', slug, id, ...result })
+    return result
   }
 
   /** In hand-made art mode an image is never generated: it is set with vno_asset_replace. */
@@ -1629,6 +1757,99 @@ export class VnService {
 
   // ---- commands ----
 
+  /** Applies scene transition/pause and cast slot updates from the Scenes tab, schedules a rebuild, and emits `project.loaded`. */
+  async updateSceneCues(
+    slug: string,
+    cmd: {
+      scenes?: { id: string; transition?: SceneTransitionView | null; pause?: number | null }[]
+      casts?: { beatId: string; slots: Record<string, StageSlotView> }[]
+      rebuild?: boolean
+    }
+  ): Promise<void> {
+    const scenesPatch: Record<string, { transition?: SceneTransition; pause?: number }> = {}
+    for (const s of cmd.scenes ?? []) {
+      scenesPatch[s.id] = {
+        ...(s.transition !== undefined ? { transition: s.transition ?? 'dissolve' } : {}),
+        ...(s.pause !== undefined ? { pause: s.pause ?? 0 } : {})
+      }
+    }
+    const castsPatch: Record<string, Record<string, Slot>> = {}
+    for (const c of cmd.casts ?? []) {
+      castsPatch[c.beatId] = { ...c.slots }
+    }
+    await this.setCues(slug, {
+      ...(Object.keys(scenesPatch).length ? { scenes: scenesPatch } : {}),
+      ...(Object.keys(castsPatch).length ? { casts: castsPatch } : {})
+    })
+    if (cmd.rebuild) await this.rebuildAfterEdit(slug)
+    this.emit({ type: 'project.loaded', slug, project: await this.detail(slug) })
+  }
+
+  /** Applies scene metadata and beat updates from the Scenes tab, reconciles cast slots, schedules a rebuild, and emits `project.loaded`. */
+  async updateSceneStory(
+    slug: string,
+    cmd: {
+      scenes?: { id: string; placeKey?: string | null; time?: string | null; music?: string | null; ambience?: string | null; description?: string }[]
+      beats?: { id: string; cast?: string[]; speakerKey?: string | null; expression?: string; image?: string | null; sfx?: string | null; ambience?: string | null }[]
+      rebuild?: boolean
+    }
+  ): Promise<void> {
+    const ops: StoryOp[] = []
+    for (const s of cmd.scenes ?? []) {
+      ops.push({
+        op: 'scene.update',
+        sceneId: s.id,
+        ...(s.placeKey ? { place: s.placeKey } : {}),
+        ...(s.time !== undefined ? { time: s.time } : {}),
+        ...(s.music !== undefined ? { music: s.music } : {}),
+        ...(s.ambience !== undefined ? { ambience: s.ambience } : {}),
+        ...(s.description !== undefined ? { description: s.description } : {})
+      })
+    }
+    for (const b of cmd.beats ?? []) {
+      ops.push({
+        op: 'beat.update',
+        beatId: b.id,
+        ...(b.cast !== undefined ? { cast: b.cast } : {}),
+        ...(b.speakerKey ? { speaker: b.speakerKey } : {}),
+        ...(b.expression !== undefined ? { expression: b.expression } : {}),
+        ...(b.image !== undefined ? { image: b.image } : {}),
+        ...(b.sfx !== undefined ? { sfx: b.sfx } : {}),
+        ...(b.ambience !== undefined ? { ambience: b.ambience } : {})
+      })
+    }
+    if (ops.length > 0) {
+      await this.editStory(slug, ops)
+    }
+    const castUpdates = (cmd.beats ?? []).filter((b) => b.cast !== undefined)
+    if (castUpdates.length > 0) {
+      await this.store.withLock(slug, async () => {
+        const book = await this.store.loadBook(slug)
+        const cues = (await this.store.readJson<StageCues>(slug, 'cues.json')) ?? defaultCues(book)
+        const nextCasts = { ...(cues.casts ?? {}) }
+        for (const b of castUpdates) {
+          const curSlots = { ...(nextCasts[b.id] ?? {}) }
+          const memberSet = new Set(b.cast!)
+          for (const k of Object.keys(curSlots)) {
+            if (!memberSet.has(k)) delete curSlots[k]
+          }
+          const used = new Set(Object.values(curSlots))
+          for (const k of b.cast!) {
+            if (!curSlots[k]) {
+              const free = SLOTS.find((s) => !used.has(s)) ?? 'center'
+              curSlots[k] = free
+              used.add(free)
+            }
+          }
+          nextCasts[b.id] = curSlots
+        }
+        await this.store.writeJson(slug, 'cues.json', { ...cues, casts: nextCasts, byHand: true })
+      })
+    }
+    if (cmd.rebuild) await this.rebuildAfterEdit(slug)
+    this.emit({ type: 'project.loaded', slug, project: await this.detail(slug) })
+  }
+
   /** Runs a UI command and sends the answer events. Errors become `command.error`. */
   async handle(cmd: VnCommand): Promise<void> {
     const slug = 'slug' in cmd ? cmd.slug : undefined
@@ -1757,6 +1978,18 @@ export class VnService {
         case 'saveRenpyConfig':
           this.emit({ type: 'renpy.config', ...(await this.saveRenpyConfig(cmd)) })
           return
+        case 'stopPipeline':
+          await this.stopPipeline(cmd.slug)
+          return
+        case 'suggestAssetPrompt':
+          await this.suggestAssetPrompt(cmd.slug, cmd.id, cmd.instructions)
+          return
+        case 'updateSceneCues':
+          await this.updateSceneCues(cmd.slug, cmd)
+          return
+        case 'updateSceneStory':
+          await this.updateSceneStory(cmd.slug, cmd)
+          return
       }
     } catch (e) {
       this.log(`command ${cmd.type} failed: ${(e as Error).message}`)
@@ -1768,4 +2001,66 @@ export class VnService {
 /** Drops the keys whose value is `null`: a settings patch uses `null` to clear an optional field (art.palette, art.stylePrompt). */
 function clearNulls<T extends Record<string, unknown>>(obj: T): T {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== null)) as T
+}
+
+/** What the book says about an asset, for a model writing its prompt: the place, the character, the picture or the sound, and where it is used. */
+function assetContext(book: VnBook, entry: Pick<AssetEntry, 'id' | 'kind'>): string {
+  const scenes = book.chapters.flatMap((c) => c.scenes)
+  const lines: string[] = []
+  switch (entry.kind) {
+    case 'background': {
+      const used = scenes.filter((s) => s.backgroundId === entry.id)
+      const place = used.map((s) => (s.placeKey ? book.places.find((p) => p.key === s.placeKey) : undefined)).find(Boolean)
+      lines.push(`Place: ${place?.name ?? used[0]?.placeText ?? entry.id}${place?.looks ? ` (${place.looks})` : ''}`)
+      if (used[0]?.time) lines.push(`Time: ${used[0].time}`)
+      for (const s of used.slice(0, 3)) if (s.description) lines.push(`Scene ${s.id}: ${s.description}`)
+      lines.push('A background: no people in it.')
+      break
+    }
+    case 'sheet':
+    case 'sprite': {
+      const c = book.characters.find((ch) => entry.id === `sheet_${ch.key}` || entry.id.startsWith(`sprite_${ch.key}_`))
+      if (c) lines.push(`Character: ${c.name}. Looks: ${c.looks}`)
+      if (c && entry.kind === 'sprite') lines.push(`Expression: ${entry.id.slice(`sprite_${c.key}_`.length)}`)
+      break
+    }
+    case 'cg': {
+      const img = (book.images ?? []).find((i) => `cg_${i.key}` === entry.id)
+      if (img) {
+        lines.push(`Picture (${img.display === 'insert' ? 'an object or document shown small' : 'a full-screen CG'}): ${img.description}`)
+        for (const k of img.characters ?? []) {
+          const c = book.characters.find((ch) => ch.key === k)
+          if (c) lines.push(`In it: ${c.name} (${c.looks})`)
+        }
+      }
+      break
+    }
+    case 'cover':
+      if (book.coverBrief) lines.push(`Cover brief: ${book.coverBrief}`)
+      lines.push(`Characters: ${book.characters.map((c) => c.name).join(', ')}`)
+      break
+    case 'music':
+      lines.push(`Style notes: ${book.style.slice(0, 300)}`)
+      for (const c of book.chapters.slice(0, 8)) lines.push(`Chapter ${c.n}: ${c.title}${c.summary ? ` - ${c.summary.slice(0, 160)}` : ''}`)
+      lines.push('Instrumental, no vocals, loops well.')
+      break
+    case 'sfx':
+    case 'ambience': {
+      const key = entry.id.replace(/^(sfx|amb)_/, '')
+      const sound = (book.sounds ?? []).find((s) => s.key === key || s.key === entry.id)
+      if (sound) lines.push(`Sound (${sound.kind}): ${sound.description}`)
+      const where: string[] = []
+      for (const s of scenes) {
+        if (entry.kind === 'ambience' && (s.ambience === key || s.ambience === entry.id)) where.push(`Scene ${s.id} (${s.placeText}): ${s.description}`)
+        for (const b of s.beats) {
+          if (b.sfx !== key && b.sfx !== entry.id && b.ambience !== key && b.ambience !== entry.id) continue
+          where.push(`${b.id}: ${'text' in b ? b.text.slice(0, 160) : `in ${s.placeText}`}`)
+        }
+      }
+      if (where.length) lines.push('Used at:', ...where.slice(0, 5))
+      lines.push(entry.kind === 'sfx' ? 'A short one-shot sound effect.' : 'A seamless ambient loop, no melody.')
+      break
+    }
+  }
+  return lines.join('\n')
 }

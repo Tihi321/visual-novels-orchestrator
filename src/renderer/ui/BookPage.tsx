@@ -8,12 +8,14 @@ import { BuildTab } from './book/BuildTab'
 import { EditionsTab } from './book/EditionsTab'
 import { LookTab } from './book/LookTab'
 import { PipelineTab } from './book/PipelineTab'
+import { ScenesTab } from './book/ScenesTab'
 import { VoiceTab } from './book/VoiceTab'
 import { Pill } from './common'
 
-type Tab = 'pipeline' | 'editions' | 'assets' | 'look' | 'voice' | 'build'
+type Tab = 'pipeline' | 'scenes' | 'editions' | 'assets' | 'look' | 'voice' | 'build'
 const TABS: { id: Tab; label: string }[] = [
   { id: 'pipeline', label: 'Pipeline' },
+  { id: 'scenes', label: 'Scenes' },
   { id: 'editions', label: 'Editions' },
   { id: 'assets', label: 'Assets' },
   { id: 'look', label: 'Look' },
@@ -90,6 +92,8 @@ function TabBody({ tab, slug, detail }: { tab: Tab; slug: string; detail: Projec
   switch (tab) {
     case 'pipeline':
       return <PipelineTab slug={slug} detail={detail} />
+    case 'scenes':
+      return <ScenesTab slug={slug} detail={detail} />
     case 'editions':
       return <EditionsTab slug={slug} detail={detail} />
     case 'assets':

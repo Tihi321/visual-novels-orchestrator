@@ -402,3 +402,8 @@ export type AssetEntry = z.infer<typeof assetEntrySchema>
 
 export const assetManifestSchema = z.object({ assets: z.array(assetEntrySchema) })
 export type AssetManifest = z.infer<typeof assetManifestSchema>
+
+/** The expressions a character has sprites for: the book's set (default: the standard eight) plus its own. */
+export function expressionsOf(book: Pick<VnBook, 'expressions'>, char?: { expressions?: string[] }): Expression[] {
+  return [...new Set([...(book.expressions ?? CANONICAL_EXPRESSIONS), ...(char?.expressions ?? [])])]
+}

@@ -1410,6 +1410,17 @@ export function generatePlayerJs(): string {
     currentBeatIdx = -1;
     const scene = ch.scenes[scIdx];
 
+    // Clear stage slots & CG overlays when starting a new scene
+    dom.slotLeft.innerHTML = '';
+    if (dom.slotLeft.setAttribute) dom.slotLeft.setAttribute('data-char', '');
+    dom.slotCenter.innerHTML = '';
+    if (dom.slotCenter.setAttribute) dom.slotCenter.setAttribute('data-char', '');
+    dom.slotRight.innerHTML = '';
+    if (dom.slotRight.setAttribute) dom.slotRight.setAttribute('data-char', '');
+    dom.cgLayer.classList.add('vno-hidden');
+    dom.cgOverlay.classList.add('vno-hidden');
+    dom.insertCard.classList.add('vno-hidden');
+
     // Background transition
     if (scene.bgPath) {
       dom.bgImage.style.backgroundImage = 'url("' + scene.bgPath + '")';
@@ -1547,10 +1558,19 @@ export function generatePlayerJs(): string {
     if (stage.shows) {
       stage.shows.forEach(item => {
         const slotEl = item.slot === 'left' ? dom.slotLeft : item.slot === 'right' ? dom.slotRight : dom.slotCenter;
+        clearSlotByChar(item.charKey, slotEl);
         const char = gameData.characters[item.charKey];
-        const spritePath = char && char.sprites ? char.sprites[item.expression] : null;
+
+        const spritePath = char && char.sprites ? (char.sprites[item.expression] || char.sprites['neutral'] || Object.values(char.sprites)[0]) : null;
         if (spritePath) {
-          slotEl.innerHTML = '<img class="vno-sprite-img" src="' + spritePath + '" alt="' + item.charKey + '">';
+          slotEl.innerHTML = '<img class="vno-sprite-img" data-char="' + item.charKey + '" src="' + spritePath + '" alt="' + item.charKey + '">';
+          if (slotEl.setAttribute) slotEl.setAttribute('data-char', item.charKey);
+        } else {
+          const existingChar = getSlotCharKey(slotEl);
+          if (existingChar && existingChar !== item.charKey) {
+            slotEl.innerHTML = '';
+            if (slotEl.setAttribute) slotEl.setAttribute('data-char', '');
+          }
         }
       });
     }
@@ -1569,16 +1589,36 @@ export function generatePlayerJs(): string {
           dom.insertCard.classList.remove('vno-hidden');
         } else {
           dom.insertCard.classList.add('vno-hidden');
+          dom.cgOverlay.classList.remove('vno-hidden');
           dom.cgOverlay.style.backgroundImage = 'url("' + cg.path + '")';
         }
       }
     }
   }
 
-  function clearSlotByChar(charKey) {
+  function getSlotCharKey(slot) {
+    if (!slot) return null;
+    const img = slot.querySelector ? slot.querySelector('img') : null;
+    if (img) {
+      const dc = img.getAttribute ? img.getAttribute('data-char') : null;
+      if (dc) return dc;
+      if (img.alt) return img.alt;
+    }
+    const dcAttr = slot.getAttribute ? slot.getAttribute('data-char') : null;
+    if (dcAttr) return dcAttr;
+    const m = /data-char="([^"]+)"/.exec(slot.innerHTML || '') || /alt="([^"]+)"/.exec(slot.innerHTML || '');
+    return m ? m[1] : null;
+  }
+
+  function clearSlotByChar(charKey, exceptSlot) {
     [dom.slotLeft, dom.slotCenter, dom.slotRight].forEach(slot => {
-      const img = slot.querySelector('img');
-      if (img && img.alt === charKey) slot.innerHTML = '';
+      if (!slot || slot === exceptSlot) return;
+      const img = slot.querySelector ? slot.querySelector('img') : null;
+      const imgChar = img ? ((img.getAttribute && img.getAttribute('data-char')) || img.alt) : getSlotCharKey(slot);
+      if (imgChar === charKey) {
+        slot.innerHTML = '';
+        if (slot.setAttribute) slot.setAttribute('data-char', '');
+      }
     });
   }
 

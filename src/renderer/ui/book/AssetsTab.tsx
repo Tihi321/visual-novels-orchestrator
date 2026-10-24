@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { AssetView, ProjectDetail } from '../../../shared/protocol'
 import { pickFile, sendCommand } from '../../api'
 import { groupAssets, isAudioPath, isImagePath, readyCount, reviewBadge } from '../../lib/assets'
@@ -212,6 +212,20 @@ function RegenerateDialog({ asset, slug, onClose, onSent }: { asset: AssetView; 
   const workflows = useVn((s) => s.workflows)
   const choices = engineChoices(asset.kind, engines, workflows, asset.engine)
   const [prompt, setPrompt] = useState(asset.prompt)
+  const suggestion = useVn((s) => s.promptSuggestions[`${slug}:${asset.id}`])
+  const [seenRev, setSeenRev] = useState(() => suggestion?.rev ?? 0)
+  const [suggesting, setSuggesting] = useState(false)
+  const suggestError = useRecentError(slug, 'suggestAssetPrompt')
+  useEffect(() => {
+    if (suggestion && suggestion.rev > seenRev) {
+      setSeenRev(suggestion.rev)
+      setPrompt(suggestion.prompt)
+      setSuggesting(false)
+    }
+  }, [suggestion, seenRev])
+  useEffect(() => {
+    if (suggestError) setSuggesting(false)
+  }, [suggestError])
   const [engine, setEngine] = useState(asset.engine)
   const [seed, setSeed] = useState(asset.seed === null ? '' : String(asset.seed))
   const seedNum = seed.trim() === '' ? undefined : Number(seed)
@@ -219,8 +233,26 @@ function RegenerateDialog({ asset, slug, onClose, onSent }: { asset: AssetView; 
   return (
     <Modal title={`Regenerate ${asset.id}`} onClose={onClose} width={620}>
       <div className="dim">Makes a new version and selects it. The old versions stay in the strip. A build follows.</div>
-      <label className="dim">Prompt</label>
-      <textarea rows={8} value={prompt} onChange={(e) => setPrompt(e.target.value)} data-testid="regen-prompt" />
+      <div className="row spread">
+        <label className="dim">Prompt</label>
+        <button
+          onClick={() => {
+            setSuggesting(true)
+            sendCommand({ type: 'suggestAssetPrompt', slug, id: asset.id, instructions: prompt.trim() || undefined })
+          }}
+          disabled={suggesting}
+          data-testid="regen-suggest-prompt"
+        >
+          {suggesting ? 'Generating...' : 'Generate prompt with AI'}
+        </button>
+      </div>
+      <textarea
+        rows={8}
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        placeholder="Write a prompt, or type optional instructions and click 'Generate prompt with AI'..."
+        data-testid="regen-prompt"
+      />
       <div className="row">
         <label className="dim">Engine</label>
         <select value={engine} onChange={(e) => setEngine(e.target.value)} data-testid="regen-engine">

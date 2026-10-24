@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { rm } from 'node:fs/promises'
 import type { EngineEvent, AgentProblem, AgentState } from '../../shared/protocol'
 import type { FactoryConfig, JobFrontmatter } from '../../shared/schemas'
 import type { AgentDef, AgentStore } from '../agents/agents'
@@ -67,7 +68,8 @@ export interface HandlerOptions {
   skipModel?: (job: JobFile) => Promise<boolean>
 }
 
-type AbortReason = 'stop' | 'fire' | 'stopNow' | 'shutdown'
+/** `stopped`: the user stopped the job's project; the job is dropped, not put back in the queue. */
+export type AbortReason = 'stop' | 'fire' | 'stopNow' | 'shutdown' | 'stopped'
 
 interface RunningJob {
   job: JobFile
@@ -180,6 +182,17 @@ export class Scheduler {
     let n = 0
     for (const rj of this.running.values()) {
       if (rj.agentId === agentId) {
+        this.abort(rj, reason)
+        n++
+      }
+    }
+    return n
+  }
+
+  stopBook(book: string, reason: AbortReason = 'stopped'): number {
+    let n = 0
+    for (const rj of this.running.values()) {
+      if (rj.job.data.book === book) {
         this.abort(rj, reason)
         n++
       }
@@ -665,8 +678,14 @@ export class Scheduler {
     } catch (err) {
       const aborted = rj.controller.signal.aborted || isAbortError(err)
       if (aborted) {
-        await jobs.requeue(j.id)
-        logAll(`### Result\nStopped (${rj.reason ?? 'stop'}), job goes back to the queue. ${numbers()}\n`)
+        if (rj.reason === 'stopped') {
+          // its project was stopped: drop the job, so nothing starts it again
+          await rm(jobs.file('running', j.id), { force: true })
+          logAll(`### Result\nStopped with its project, job dropped. ${numbers()}\n`)
+        } else {
+          await jobs.requeue(j.id)
+          logAll(`### Result\nStopped (${rj.reason ?? 'stop'}), job goes back to the queue. ${numbers()}\n`)
+        }
         emit({ type: 'job.done', jobId: j.id, agent: agent.id, ok: false, error: `stopped (${rj.reason ?? 'stop'})` })
       } else if (err instanceof BudgetError) {
         await jobs.requeue(j.id, { not_before: new Date(this.now() + 15_000).toISOString() })
