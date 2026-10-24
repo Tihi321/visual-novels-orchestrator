@@ -4,15 +4,14 @@ import { useVn } from '../store/hooks'
 import { McpSettings } from './McpSettings'
 import { RenpySettings } from './RenpySettings'
 
-/** Provider key variables the engine usually knows. The engine refuses names that are not in providers.md. */
-const KEY_NAMES = ['DEEPSEEK_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY', 'OPENROUTER_API_KEY', 'STRATA_API_KEY']
-
 export function SettingsPage() {
   const settings = useVn((s) => s.settings)
   const secretsSet = useVn((s) => s.secretsSet)
+  /** The key variables the engine reports (`api_key_env` of every provider, custom ones too). It refuses names that are not in providers.md. */
+  const keyNames = useVn((s) => s.keyNames)
   const dataDir = useVn((s) => s.dataDir)
   const [scriptoriumData, setScriptoriumData] = useState<string | null>(null)
-  const [keyName, setKeyName] = useState(KEY_NAMES[0]!)
+  const [picked, setKeyName] = useState('')
   const [keyValue, setKeyValue] = useState('')
   const [login, setLogin] = useState<boolean | null>(null)
 
@@ -24,6 +23,8 @@ export function SettingsPage() {
     if (settings && scriptoriumData === null) setScriptoriumData(settings.scriptoriumData)
   }, [settings, scriptoriumData])
 
+  const names = [...new Set([...keyNames, ...secretsSet])]
+  const keyName = names.includes(picked) ? picked : (names[0] ?? '')
   const keySet = secretsSet.includes(keyName)
   const saveScriptorium = () => {
     if (settings && scriptoriumData && scriptoriumData.trim() !== settings.scriptoriumData) sendCommand({ type: 'saveSettings', scriptoriumData: scriptoriumData.trim() })
@@ -65,7 +66,7 @@ export function SettingsPage() {
       <hr />
       <div className="dim">Provider API key (stored in the Windows credential store, never in a file)</div>
       <select value={keyName} onChange={(e) => setKeyName(e.target.value)} data-testid="set-key-name">
-        {[...new Set([...KEY_NAMES, ...secretsSet])].map((n) => (
+        {names.map((n) => (
           <option key={n} value={n}>
             {n}
             {secretsSet.includes(n) ? ' (set)' : ''}
@@ -83,7 +84,7 @@ export function SettingsPage() {
           data-testid="set-key-value"
         />
         <button
-          disabled={!keyValue}
+          disabled={!keyValue || !keyName}
           data-testid="set-key-save"
           onClick={() => {
             sendCommand({ type: 'setSecret', name: keyName, value: keyValue })

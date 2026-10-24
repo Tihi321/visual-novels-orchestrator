@@ -45,6 +45,10 @@ export const providerModelSchema = z.looseObject({
 export const providerEntrySchema = z.looseObject({
   id: z.string().min(1),
   kind: z.enum(['openai-compat', 'anthropic', 'gemini', 'mock', 'search', 'client']),
+  /** The name shown in the UI (the id when missing). */
+  name: z.string().optional(),
+  /** Added in the Models page's Add provider form: the form may edit and remove it. A custom provider is its own group in the fallback order. */
+  custom: z.boolean().default(false),
   enabled: z.boolean().default(true),
   local: z.boolean().default(false),
   base_url: z.string().optional(),
@@ -129,12 +133,17 @@ export const factorySchema = configBase('factory').extend({
 // ---- settings ----
 
 export const settingsSchema = configBase('settings').extend({
-  /** What the role aliases in roles.md stand for: `paid`, `strata` and `lmstudio` (each a `provider/model`). */
-  default_paid_model: z.string().default('deepseek/deepseek-flash'),
-  default_strata_model: z.string().default('strata/qwen3.8-flash-next'),
-  default_lmstudio_model: z.string().default('lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'),
-  /** One fallback order for every role: the groups `paid` (any API model), `strata` and `lmstudio`, first one first. Empty: each role keeps the order of its list in roles.md. */
-  model_order: z.array(z.enum(['paid', 'strata', 'lmstudio'])).default([]),
+  /**
+   * What the role aliases in roles.md stand for, per group: `paid`, `strata`, `lmstudio` and the id of every other provider group
+   * (a custom provider, `acp`), each a `provider/model`. A group left out falls back to the built-in default, or to its first ticked model.
+   */
+  group_defaults: z.record(z.string(), z.string()).default({}),
+  /** The settings of before `group_defaults`: still read (`group_defaults` wins), never written again. */
+  default_paid_model: z.string().optional(),
+  default_strata_model: z.string().optional(),
+  default_lmstudio_model: z.string().optional(),
+  /** One fallback order for every role: the groups (`paid` = any API model, `strata`, `lmstudio`, a provider id), first one first. Empty: each role keeps the order of its list in roles.md. */
+  model_order: z.array(z.string()).default([]),
   /** How the engine loads LM Studio models that aren't loaded yet: requests at once, context window, idle minutes before LM Studio unloads it. */
   lmstudio_parallel: z.number().int().min(1).max(16).default(4),
   lmstudio_context: z.number().int().min(2048).default(131072),
@@ -142,6 +151,22 @@ export const settingsSchema = configBase('settings').extend({
   /** Folder of the Scriptorium data (its `books/` folder is where books to import are listed). */
   scriptoriumData: z.string().default('~/Scriptorium')
 })
+
+/** The built-in defaults behind the `paid`, `strata` and `lmstudio` aliases. */
+export const BUILTIN_GROUP_DEFAULTS: Record<string, string> = {
+  paid: 'deepseek/deepseek-flash',
+  strata: 'strata/qwen3.8-flash-next',
+  lmstudio: 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'
+}
+
+/** The default model of every group: the built-in ones, the old `default_*_model` fields, then `group_defaults`. */
+export function groupDefaultsOf(s: z.infer<typeof settingsSchema>): Record<string, string> {
+  const out = { ...BUILTIN_GROUP_DEFAULTS }
+  if (s.default_paid_model) out.paid = s.default_paid_model
+  if (s.default_strata_model) out.strata = s.default_strata_model
+  if (s.default_lmstudio_model) out.lmstudio = s.default_lmstudio_model
+  return { ...out, ...s.group_defaults }
+}
 
 // ---- agents ----
 

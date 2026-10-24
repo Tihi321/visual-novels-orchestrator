@@ -34,6 +34,7 @@ export function modelSummaries(registry: ModelRegistry): ModelSummary[] {
       model: m.id,
       family: m.family,
       local: m.provider.local,
+      group: registry.groupOf(m.ref),
       enabled: m.provider.available,
       shown: registry.isShown(m.ref),
       source: m.picked ? ('picked' as const) : m.discovered ? ('discovered' as const) : ('config' as const),
@@ -51,8 +52,15 @@ export function providerSummaries(registry: ModelRegistry, limiter: ProviderLimi
     .filter((p) => p.kind !== 'search' && p.kind !== 'mock')
     .map((p) => ({
       id: p.id,
+      name: p.name,
       kind: p.kind,
       local: p.local,
+      custom: p.custom,
+      enabled: p.enabled,
+      baseUrl: p.baseUrl,
+      jsonSchema: p.jsonSchema,
+      keyName: p.apiKeyEnv,
+      keySet: registry.hasKey(p),
       available: p.available,
       reason: p.available ? undefined : p.unavailableReason,
       keyFrom: p.keyFrom,

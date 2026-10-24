@@ -5,6 +5,9 @@ import type { ChatEvent, ChatMessage, ChatRequest, ProviderClient, RequestMeta }
 /** Default lease: how long a client has to answer a task it took before the task goes back to waiting. */
 export const DEFAULT_LEASE_MS = 30 * 60 * 1000
 
+/** The client that takes a task whose model is not named: Claude Code (the seed model `client/claude-code`). */
+export const DEFAULT_CLIENT = 'claude-code'
+
 /** An image of a request (the art-critic's images), as it sat in the messages. */
 export interface ClientImage {
   type: 'image'
@@ -25,6 +28,8 @@ export interface ClientTask {
   book: string
   agent: string
   unit: string
+  /** The client model the job asked for (`client/<id>`: `claude-code`, `antigravity`, ...). Only a client that names it takes the task. */
+  client: string
   messages: ChatMessage[]
   /** JSON schema the answer must match (a structured request). */
   schema?: Record<string, unknown>
@@ -45,12 +50,15 @@ export interface ClientTaskSummary {
   book: string
   agent: string
   unit: string
+  client: string
   state: 'waiting' | 'leased'
   ageMs: number
   leaseMsLeft?: number
 }
 
 export interface ClientTaskFilter {
+  /** The client asking, as the model id (`antigravity`). Missing: `claude-code`, so Claude Code's prompts keep working and never take another client's tasks. */
+  client?: string
   role?: string
   book?: string
   task?: string
@@ -59,6 +67,8 @@ export interface ClientTaskFilter {
 export type SubmitResult = { accepted: true } | { accepted: false; problems: string[] }
 
 export interface ClientTaskRequest {
+  /** The client model id the task is for. Default `claude-code`. */
+  client?: string
   messages: ChatMessage[]
   schema?: Record<string, unknown>
   maxTokens?: number
@@ -112,6 +122,7 @@ export class ClientTaskQueue {
       book: meta.book ?? '',
       agent: meta.agent ?? '',
       unit: meta.unit ?? '',
+      client: req.client ?? DEFAULT_CLIENT,
       messages: req.messages,
       ...(req.schema ? { schema: req.schema } : {}),
       ...(req.maxTokens ? { maxTokens: req.maxTokens } : {}),
@@ -135,6 +146,7 @@ export class ClientTaskQueue {
       book: k.book,
       agent: k.agent,
       unit: k.unit,
+      client: k.client,
       state: k.leaseUntil === undefined ? ('waiting' as const) : ('leased' as const),
       ageMs: t - k.createdAt,
       ...(k.leaseUntil === undefined ? {} : { leaseMsLeft: Math.max(0, k.leaseUntil - t) })
@@ -165,6 +177,7 @@ export class ClientTaskQueue {
     this.expire()
     for (const { task } of this.entries.values()) {
       if (task.leaseUntil !== undefined) continue
+      if (task.client !== (filter.client || DEFAULT_CLIENT)) continue
       if (filter.role && task.role !== filter.role) continue
       if (filter.book && task.book !== filter.book) continue
       if (filter.task && task.task !== filter.task) continue
@@ -300,7 +313,7 @@ export class ClientProvider implements ProviderClient {
     if (req.signal?.aborted) throw abortError()
     const images: ClientImage[] = []
     for (const m of req.messages) if (typeof m.content !== 'string') for (const p of m.content) if (p.type === 'image') images.push({ type: 'image', mime: p.mime, data: p.data })
-    const { task, done } = this.queue.add({ messages: req.messages, schema: req.schema, maxTokens: req.maxTokens, images }, req.meta)
+    const { task, done } = this.queue.add({ client: req.model, messages: req.messages, schema: req.schema, maxTokens: req.maxTokens, images }, req.meta)
     const onAbort = () => void this.queue.cancel(task.id)
     req.signal?.addEventListener('abort', onAbort, { once: true })
     if (req.signal?.aborted) onAbort()

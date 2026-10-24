@@ -126,6 +126,17 @@ providers:
     concurrency: 1
     discover: true
     models: []
+  # The ACP proxy (api-acp-proxy: Antigravity, Codex and Claude through ACP) as an OpenAI-style server. Off until you start the proxy and switch it on.
+  # Text only. See "ACP proxy" below for the proxy settings it needs.
+  - id: acp
+    kind: openai-compat
+    enabled: false
+    local: true
+    base_url: http://127.0.0.1:7461/v1
+    concurrency: 2
+    json_schema: false
+    discover: true
+    models: []
   # Model work done by an MCP client (Claude Code). It is on, and harmless until a role, an agent or a project names it
   # (client/claude-code in config/roles.md, `model:` in agents/<agent>.md, or the project's models). See the "Client" section below.
   - id: client
@@ -136,6 +147,9 @@ providers:
       - id: claude-code
         vision: true              # the art-critic sends images
         context: 200000
+      - id: antigravity           # Antigravity CLI takes these with vno_get_task {client: "antigravity"}
+        vision: true
+        context: 1000000
 ---
 # Providers
 
@@ -148,6 +162,8 @@ Prices were checked 2026-10-08 from third-party listings; the DeepSeek ones were
 - `id`: the name used in model references. A model is written `provider/model`, for example `lmstudio/nail-qwen3.6-35b-a3b-mtp`.
 - `kind`: `openai-compat` (any OpenAI-style API), `anthropic`, `gemini`, `client` (an MCP client answers, see below), or `mock` (scripted answers, only for the tests: the app's own config has none, so the model pickers never offer one).
 - `enabled`: `false` switches the provider off. A provider whose key can't be found is skipped automatically.
+- `name`: the name shown in the app (the id when missing).
+- `custom`: `true` for a provider added in the app's **Models** page (Add provider). The app can edit and remove those entries, and only those: it never touches the others or the comments here. A custom provider is its own group in the fallback order, named by its id, and can be written in `roles.md` as `acp-home` (the id) like `strata`. Its key is stored under `CUSTOM_<ID>_API_KEY`; removing the provider deletes that key.
 - `local`: `true` for models on this machine. Local models cost nothing and never count against the caps. Their tokens and time are still recorded.
 - `base_url`, `api_key_env`: where to call and which variable holds the key.
 - `concurrency`: how many requests may run at once. `auto`: as many as the server says it serves at once, asked at start and every 10 seconds, 1 while the server is down. A server that doesn't answer is skipped: its jobs go straight to the next model in the role (no failed retries first) until it answers again, and the office shows the model that really answers. The first request that can't connect marks it down at once for every agent, and the status bar shows it as off with a **Check now** button for right after you start it. Strata reports it as `concurrency.serving` of `<base_url>/status`, so it follows the script you started: 4 with a `-parallel` script, 1 with a `-solo` one, and nothing in this file changes when you switch. For LM Studio it is the sum of `parallel` over the loaded chat models (from LM Studio's `/api/v1/models`): load a model with `--parallel 4` and four requests go to it at once. Requests in parallel share the GPU, so each one is slower, but the total is higher.
@@ -161,9 +177,21 @@ Prices were checked 2026-10-08 from third-party listings; the DeepSeek ones were
 
 `kind: client` has no server and no key: a request waits in the engine's in-memory client task queue until an MCP client takes it (`vno_get_task`) and answers (`vno_submit_task`). It is `local: true`, so it is free, never paid and never budget-checked, and it has no timeout and is never marked down. Give it `concurrency` (8 is enough for the scheduler not to stall on `waiting-provider`) and a model such as `claude-code` (`vision: true` if the client can look at images; the art-critic needs that).
 
+Each model is a named client: a task made for `client/antigravity` is only handed to a client that asks for `antigravity` (`vno_get_task {client: "antigravity"}`); a `vno_get_task` without `client` takes the `claude-code` ones. The seed has `claude-code` and `antigravity`; add another with **Add a model by its id** on the `client` provider (the Models page). See the guide, "Antigravity CLI as a client".
+
 - It is on by default (the entry above), and nothing uses it until you pick it. `context` is only recorded: nothing here sizes a prompt by it. Use it for one project: `vno_update_settings {slug, models: {"art-director": "client/claude-code"}}` (saved as `models` in the project's `project.md`, first in that project's model lists). Or for every project: put `client/claude-code` first in a role's list in `config/roles.md`, or set one agent's `model:` in `agents/<agent>.md` (reloaded at once; a running request is asked again on the new model).
 - A role left on `client` with nobody answering stalls every job of that role. Put the models back when the run is done.
 - The queue is lost when the engine restarts: the running job is asked again (a new task). See the guide (`vn-studio://guide`, "Do the model work yourself").
+
+## ACP proxy
+
+The `acp` entry (off by default) is for `api-acp-proxy`, a server on `http://127.0.0.1:7461/v1` that answers OpenAI-style requests through Antigravity, Codex or Claude over ACP. Start it yourself, then set `enabled: true` (or use the Models page), press **Detect models** and tick the models you want.
+
+- Start it with `PROXY_IGNORE_SAMPLING=1`: VN Studio sends `temperature`, `max_tokens` and `stream_options`, which the proxy otherwise passes on or rejects.
+- It is text only: no vision, so it can't serve the art-critic (use `client/antigravity`, `client/claude-code` or a vision model there).
+- `PROXY_TIMEOUT_MS` (5 minutes by default) must cover your longest request, or long jobs fail.
+- `local: true` makes it free here (no key, never counted against the caps), but the subscription behind it has its own limits and terms. Using Antigravity's models through a proxy may break Google's terms: see the creative-hub `ROADMAP.md`, "Antigravity models and the ACP proxy", before relying on it.
+- Any other OpenAI-style server can be added in the Models page with **Add provider**.
 
 ## Strata
 

@@ -1,8 +1,9 @@
 ---
 kind: settings
-default_paid_model: deepseek/deepseek-flash
-default_strata_model: strata/qwen3.8-flash-next
-default_lmstudio_model: lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic
+group_defaults:
+  paid: deepseek/deepseek-flash
+  strata: strata/qwen3.8-flash-next
+  lmstudio: lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic
 model_order: []
 lmstudio_parallel: 4
 lmstudio_context: 131072
@@ -17,12 +18,10 @@ scriptoriumData: ~/Scriptorium
 
 ## Default models
 
-The role lists in `roles.md` can name these aliases instead of a model: `paid`, `strata` and `lmstudio`. Change a default here (or in the app's Models panel) and every role that uses the alias follows. An agent's own model, picked in the app, still goes first.
+The role lists in `roles.md` can name these aliases instead of a model: `paid`, `strata`, `lmstudio` and the id of any other provider (a custom provider such as `acp-home`, or `acp`). Change a default here (or in the app's Models panel) and every role that uses the alias follows. An agent's own model, picked in the app, still goes first.
 
-- `default_paid_model`: the API model behind `paid` (DeepSeek V4.1 Flash). It can be a free one, such as an OpenRouter `:free` model.
-- `default_strata_model`: the Strata model behind `strata`.
-- `default_lmstudio_model`: the LM Studio model behind `lmstudio`.
-- `model_order`: one fallback order for every role, for example `[paid, lmstudio, strata]`. The groups are `paid` (every API model, free or paid), `strata` and `lmstudio`. Each role's list is sorted by group and keeps its own order inside a group, so a role that names Strata's `-low` model still uses that one when Strata's turn comes. A group left out goes last. `[]` keeps each role's own order from `roles.md`. Set it in the Models panel (One fallback order for every role, and the up and down buttons) or here. A change applies at once, to running jobs too.
+- `group_defaults`: the model behind each alias, keyed by group. `paid`: the API model (DeepSeek V4.1 Flash; it can be a free one, such as an OpenRouter `:free` model). `strata`: the Strata model. `lmstudio`: the LM Studio model. A custom provider or `acp` can have its own entry (`acp-home: acp-home/some-model`); without one, its alias stands for its first ticked model. The older fields `default_paid_model`, `default_strata_model` and `default_lmstudio_model` are still read when `group_defaults` does not name the group, and the app writes only `group_defaults`.
+- `model_order`: one fallback order for every role, for example `[paid, lmstudio, strata]`. The groups are `paid` (every API model of the built-in providers, free or paid), `strata`, `lmstudio`, and the id of every other provider (`acp`, a custom provider): each of those is its own group. Each role's list is sorted by group and keeps its own order inside a group, so a role that names Strata's `-low` model still uses that one when Strata's turn comes. A group left out goes last. `[]` keeps each role's own order from `roles.md`. Set it in the Models panel (One fallback order for every role, and the up and down buttons) or here. A change applies at once, to running jobs too.
 
 ## LM Studio loading
 
