@@ -232,7 +232,7 @@ ${extraCss}
       </div>
 
       <!-- Audio Elements -->
-      <audio id="vno-audio-music" preload="auto"></audio>
+      <audio id="vno-audio-music" loop preload="auto"></audio>
       <audio id="vno-audio-ambience" loop preload="auto"></audio>
       <audio id="vno-audio-sfx" preload="auto"></audio>
       <audio id="vno-audio-voice" preload="auto"></audio>
@@ -292,11 +292,14 @@ body.vno-body {
 
 #vno-stage {
   position: absolute;
+  top: 50%;
+  left: 50%;
   width: 1920px;
   height: 1080px;
   overflow: hidden;
   background-color: var(--vno-color-bg, #101018);
   transform-origin: center center;
+  transform: translate(-50%, -50%) scale(1);
 }
 
 /* Layers */
@@ -317,6 +320,7 @@ body.vno-body {
   height: 100%;
   background-size: cover;
   background-position: center;
+  background-repeat: no-repeat;
   transition: opacity var(--vno-transition-dissolve, 0.6s) ease;
 }
 
@@ -341,7 +345,7 @@ body.vno-body {
   position: absolute;
   bottom: 0;
   height: 85%;
-  width: 480px;
+  width: min(640px, 35%);
   transform: translateX(-50%);
   display: flex;
   justify-content: center;
@@ -370,6 +374,7 @@ body.vno-body {
   height: 100%;
   background-size: cover;
   background-position: center;
+  background-repeat: no-repeat;
   transition: opacity var(--vno-transition-dissolve, 0.6s) ease;
 }
 
@@ -974,6 +979,11 @@ export function generatePlayerJs(): string {
     cacheDom();
     setupVirtualStage();
     window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    if (typeof ResizeObserver !== 'undefined' && dom.container) {
+      new ResizeObserver(handleResize).observe(dom.container);
+    }
+    setupAutoplayUnlock();
     handleResize();
 
     loadSettings();
@@ -993,6 +1003,7 @@ export function generatePlayerJs(): string {
   }
 
   function cacheDom() {
+    dom.container = document.getElementById('vno-container');
     dom.stage = document.getElementById('vno-stage');
     dom.bgImage = document.getElementById('vno-bg-image');
     dom.blackCurtain = document.getElementById('vno-black-curtain');
@@ -1043,9 +1054,20 @@ export function generatePlayerJs(): string {
     const ww = window.innerWidth;
     const wh = window.innerHeight;
     const scale = Math.min(ww / 1920, wh / 1080);
-    dom.stage.style.transform = 'scale(' + scale + ')';
-    dom.stage.style.left = ((ww - 1920 * scale) / 2) + 'px';
-    dom.stage.style.top = ((wh - 1080 * scale) / 2) + 'px';
+    dom.stage.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
+    dom.stage.style.left = '50%';
+    dom.stage.style.top = '50%';
+  }
+
+  function setupAutoplayUnlock() {
+    const unlock = () => {
+      if (dom.audioMusic && dom.audioMusic.paused && dom.audioMusic.src) {
+        dom.audioMusic.play().catch(() => {});
+      }
+    };
+    ['click', 'pointerdown', 'keydown'].forEach(evt => {
+      window.addEventListener(evt, unlock);
+    });
   }
 
   function populateLanguageSelect(selectEl) {
@@ -1398,6 +1420,8 @@ export function generatePlayerJs(): string {
     // Music
     if (scene.music) {
       playMusic(scene.music, scene.musicLoopStartSec);
+    } else if (scene.music === null && scene.musicExplicitNull) {
+      stopMusic();
     }
 
     // Ambience
@@ -1798,17 +1822,41 @@ export function generatePlayerJs(): string {
   function playMusic(trackId, loopStart) {
     if (!gameData.audio || !gameData.audio.music || !gameData.audio.music[trackId]) return;
     const item = gameData.audio.music[trackId];
+    if (typeof loopStart !== 'number' && typeof item.loopStartSec === 'number') {
+      loopStart = item.loopStartSec;
+    }
     if (dom.audioMusic.src.includes(item.path) && !dom.audioMusic.paused) return;
 
     dom.audioMusic.src = item.path;
-    dom.audioMusic.play().catch(() => {});
+    dom.audioMusic.currentTime = 0;
+    dom.audioMusic.ontimeupdate = null;
+    dom.audioMusic.onended = null;
+
     if (typeof loopStart === 'number' && loopStart > 0) {
+      dom.audioMusic.loop = false;
       dom.audioMusic.ontimeupdate = () => {
-        if (dom.audioMusic.currentTime >= dom.audioMusic.duration - 0.1) {
+        if (dom.audioMusic.currentTime >= dom.audioMusic.duration - 0.25) {
           dom.audioMusic.currentTime = loopStart;
         }
       };
+      dom.audioMusic.onended = () => {
+        dom.audioMusic.currentTime = loopStart;
+        dom.audioMusic.play().catch(() => {});
+      };
+    } else {
+      dom.audioMusic.loop = true;
     }
+
+    dom.audioMusic.play().catch(() => {});
+  }
+
+  function stopMusic() {
+    if (!dom.audioMusic) return;
+    dom.audioMusic.pause();
+    dom.audioMusic.currentTime = 0;
+    dom.audioMusic.src = '';
+    dom.audioMusic.ontimeupdate = null;
+    dom.audioMusic.onended = null;
   }
 
   function playAmbience(ambKey) {

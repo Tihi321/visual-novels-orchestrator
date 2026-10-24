@@ -78,12 +78,14 @@ function createPlayerHarness(gameData: GameData) {
     value = ''
     src = ''
     alt = ''
+    loop = false
     selected = false
     paused = true
     currentTime = 0
     duration = 10
     volume = 1
     ontimeupdate: (() => void) | null = null
+    onended: (() => void) | null = null
     onclick: ((e?: unknown) => void) | null = null
     style: Record<string, string> = {}
     attrs = new Map<string, string>()
@@ -275,12 +277,29 @@ function createPlayerHarness(gameData: GameData) {
     exitFullscreen: () => Promise.resolve()
   }
 
-  const fakeWindow: Record<string, unknown> = {
+  interface FakePlayerWindow {
+    innerWidth: number
+    innerHeight: number
+    VNO_GAME_DATA: GameData
+    VNOEngine: unknown
+    addEventListener: (type: string, fn: (e: unknown) => void) => void
+    dispatchEvent: (type: string, evt?: unknown) => void
+  }
+
+  const windowListeners = new Map<string, Array<(e: unknown) => void>>()
+  const fakeWindow: FakePlayerWindow = {
     innerWidth: 1920,
     innerHeight: 1080,
     VNO_GAME_DATA: gameData,
     VNOEngine: null,
-    addEventListener: () => {}
+    addEventListener: (type: string, fn: (e: unknown) => void) => {
+      const list = windowListeners.get(type) ?? []
+      list.push(fn)
+      windowListeners.set(type, list)
+    },
+    dispatchEvent: (type: string, evt: unknown = {}) => {
+      for (const fn of windowListeners.get(type) ?? []) fn(evt)
+    }
   }
 
   const fakeLocalStorage = {
@@ -298,7 +317,7 @@ function createPlayerHarness(gameData: GameData) {
   speedInput.dispatchEvent('input')
 
   return {
-    window: fakeWindow as {
+    window: fakeWindow as FakePlayerWindow & {
       VNOEngine: {
         getState: () => { chapterIdx: number; sceneIdx: number; beatIdx: number; lang: string }
         getLanguages: () => Array<{ code: string; name: string; nativeName: string }>
@@ -674,5 +693,189 @@ describe('right-to-left layout', () => {
     expect(rpy).toContain('    gui.navigation_xpos = 1220\n')
     expect(rpy).toContain('    gui.history_name_xpos = 1047\n')
     expect(rpy).not.toContain('translate None')
+  })
+})
+
+describe('VNO-42: Web Player Audio Continuity and Responsive Stage Scaling', () => {
+  function getSampleBook() {
+    return buildBook(
+      storyInputSchema.parse({
+        title: 'Scaling Test',
+        kind: 'linear',
+        characters: [{ key: 'alex', name: 'Alex', looks: 'a person' }],
+        places: [
+          { key: 'studio', name: 'Studio', looks: 'a studio' },
+          { key: 'street', name: 'Street', looks: 'a street' }
+        ],
+        chapters: [
+          {
+            title: 'Chapter 1',
+            scenes: [
+              {
+                place: 'studio',
+                beats: [{ speaker: 'Alex', text: 'Hello world.' }]
+              }
+            ]
+          }
+        ]
+      }),
+      { slug: 'scaling-case', lang: 'en' }
+    ).book
+  }
+
+  it('responsive stage scaling computes translate(-50%, -50%) scale(...) and 50% left/top across aspect ratios', () => {
+    const book = getSampleBook()
+    const gd = buildGameData({ book, theme: TEST_THEME })
+    const h = createPlayerHarness(gd)
+    const stage = h.getById('vno-stage')
+
+    // Standard 1920x1080 -> scale(1)
+    expect(stage.style.left).toBe('50%')
+    expect(stage.style.top).toBe('50%')
+    expect(stage.style.transform).toBe('translate(-50%, -50%) scale(1)')
+
+    // Ultrawide (1024x380) -> scale = min(1024/1920, 380/1080) = 380/1080
+    h.window.innerWidth = 1024
+    h.window.innerHeight = 380
+    h.window.dispatchEvent('resize')
+    const ultrawideScale = Math.min(1024 / 1920, 380 / 1080)
+    expect(stage.style.left).toBe('50%')
+    expect(stage.style.top).toBe('50%')
+    expect(stage.style.transform).toBe(`translate(-50%, -50%) scale(${ultrawideScale})`)
+
+    // Tall mobile viewport (800x1200) -> scale = min(800/1920, 1200/1080) = 800/1920
+    h.window.innerWidth = 800
+    h.window.innerHeight = 1200
+    h.window.dispatchEvent('resize')
+    const tallScale = Math.min(800 / 1920, 1200 / 1080)
+    expect(stage.style.left).toBe('50%')
+    expect(stage.style.top).toBe('50%')
+    expect(stage.style.transform).toBe(`translate(-50%, -50%) scale(${tallScale})`)
+  })
+
+  it('music loops infinitely by default when loopStart is not specified', () => {
+    const book = getSampleBook()
+    const gd = buildGameData({
+      book,
+      theme: TEST_THEME,
+      music: { music_01: 'audio/bgm.ogg' }
+    })
+    const h = createPlayerHarness(gd)
+    const audio = h.getById('vno-audio-music')
+
+    // Start game
+    h.getById('vno-mm-start').click()
+    expect(audio.src).toContain('audio/bgm.ogg')
+    expect(audio.loop).toBe(true)
+    expect(audio.ontimeupdate).toBeNull()
+    expect(audio.onended).toBeNull()
+  })
+
+  it('music with loopStartSec > 0 sets loop=false and rewinds via ontimeupdate and onended', () => {
+    const book = getSampleBook()
+    const gd = buildGameData({
+      book,
+      theme: TEST_THEME,
+      music: { music_01: 'audio/bgm.ogg' },
+      musicLoops: { music_01: 4.5 }
+    })
+    const h = createPlayerHarness(gd)
+    const audio = h.getById('vno-audio-music')
+
+    h.getById('vno-mm-start').click()
+    expect(audio.loop).toBe(false)
+    expect(typeof audio.ontimeupdate).toBe('function')
+    expect(typeof audio.onended).toBe('function')
+
+    // Simulate ontimeupdate threshold rewind
+    audio.currentTime = audio.duration - 0.1
+    audio.ontimeupdate!()
+    expect(audio.currentTime).toBe(4.5)
+
+    // Simulate onended handler rewind
+    audio.currentTime = audio.duration
+    audio.onended!()
+    expect(audio.currentTime).toBe(4.5)
+    expect(audio.paused).toBe(false)
+  })
+
+  it('first user interaction unlocks deferred background music', () => {
+    const book = getSampleBook()
+    const gd = buildGameData({
+      book,
+      theme: TEST_THEME,
+      music: { music_01: 'audio/bgm.ogg' }
+    })
+    const h = createPlayerHarness(gd)
+    const audio = h.getById('vno-audio-music')
+
+    // Start game, then simulate browser pausing due to autoplay deferral
+    h.getById('vno-mm-start').click()
+    audio.paused = true
+
+    // Trigger user click on window
+    h.window.dispatchEvent('click')
+    expect(audio.paused).toBe(false)
+  })
+
+  it('buildGameData falls back to chapter music when scene music is omitted, and flags explicit null', () => {
+    const book = buildBook(
+      storyInputSchema.parse({
+        title: 'Music Fallback Test',
+        kind: 'linear',
+        characters: [{ key: 'alex', name: 'Alex', looks: 'a person' }],
+        places: [
+          { key: 'studio', name: 'Studio', looks: 'a studio' },
+          { key: 'street', name: 'Street', looks: 'a street' }
+        ],
+        chapters: [
+          {
+            title: 'Chapter 1',
+            scenes: [
+              {
+                place: 'studio',
+                beats: [{ speaker: 'Alex', text: 'Scene 1 with chapter music.' }]
+              },
+              {
+                place: 'street',
+                beats: [{ speaker: 'Alex', text: 'Scene 2 with silent override.' }]
+              }
+            ]
+          }
+        ]
+      }),
+      { slug: 'music-fallback', lang: 'en' }
+    ).book
+
+    const cues = {
+      menuMusic: 'music_01',
+      chapters: {
+        1: { music: 'music_01' }
+      },
+      scenes: {
+        [book.chapters[0]!.scenes[1]!.id]: {
+          transition: 'fade' as const,
+          music: null
+        }
+      },
+      casts: {}
+    }
+    const gd = buildGameData({
+      book,
+      theme: TEST_THEME,
+      cues,
+      music: { music_01: 'audio/chapter.ogg' }
+    })
+
+    const ch = gd.chapters[0]!
+    expect(ch.music).toBe('music_01')
+
+    // Scene 0 inherits chapter theme
+    expect(ch.scenes[0]!.music).toBe('music_01')
+    expect(ch.scenes[0]!.musicExplicitNull).toBe(false)
+
+    // Scene 1 explicitly silences music
+    expect(ch.scenes[1]!.music).toBeNull()
+    expect(ch.scenes[1]!.musicExplicitNull).toBe(true)
   })
 })
