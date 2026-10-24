@@ -132,25 +132,11 @@ export const factorySchema = configBase('factory').extend({
 
 // ---- settings ----
 
-export const settingsSchema = configBase('settings').extend({
-  /**
-   * What the role aliases in roles.md stand for, per group: `paid`, `strata`, `lmstudio` and the id of every other provider group
-   * (a custom provider, `acp`), each a `provider/model`. A group left out falls back to the built-in default, or to its first ticked model.
-   */
-  group_defaults: z.record(z.string(), z.string()).default({}),
-  /** The settings of before `group_defaults`: still read (`group_defaults` wins), never written again. */
-  default_paid_model: z.string().optional(),
-  default_strata_model: z.string().optional(),
-  default_lmstudio_model: z.string().optional(),
-  /** One fallback order for every role: the groups (`paid` = any API model, `strata`, `lmstudio`, a provider id), first one first. Empty: each role keeps the order of its list in roles.md. */
-  model_order: z.array(z.string()).default([]),
-  /** How the engine loads LM Studio models that aren't loaded yet: requests at once, context window, idle minutes before LM Studio unloads it. */
-  lmstudio_parallel: z.number().int().min(1).max(16).default(4),
-  lmstudio_context: z.number().int().min(2048).default(131072),
-  lmstudio_ttl_minutes: z.number().int().min(1).default(60),
-  /** Folder of the Scriptorium data (its `books/` folder is where books to import are listed). */
-  scriptoriumData: z.string().default('~/Scriptorium')
-})
+export const BUILTIN_FALLBACKS = [
+  'deepseek/deepseek-flash',
+  'strata/qwen3.8-flash-next',
+  'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'
+]
 
 /** The built-in defaults behind the `paid`, `strata` and `lmstudio` aliases. */
 export const BUILTIN_GROUP_DEFAULTS: Record<string, string> = {
@@ -159,13 +145,68 @@ export const BUILTIN_GROUP_DEFAULTS: Record<string, string> = {
   lmstudio: 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'
 }
 
-/** The default model of every group: the built-in ones, the old `default_*_model` fields, then `group_defaults`. */
+const baseSettingsSchema = configBase('settings').extend({
+  /**
+   * The fallback list: `provider/model` refs, first row first, at least one. A row's kind comes from its provider (`paid` for an API
+   * provider, otherwise the provider's id). A kind name in roles.md (`paid`, `strata`, `lmstudio`, `client` ...) stands for the first row of
+   * that kind, `<kind>-<n>` for the n-th.
+   */
+  fallbacks: z.array(z.string().min(1)).min(1).default(BUILTIN_FALLBACKS),
+  /** One fallback order for every role: the rows top to bottom. False: each role keeps the order of its list in roles.md. */
+  fallback_shared: z.boolean().default(false),
+  /**
+   * What the role aliases in roles.md stand for, per group: `paid`, `strata`, `lmstudio` and the id of every other provider group
+   * (a custom provider, `acp`), each a `provider/model`. Kept for backwards compatibility.
+   */
+  group_defaults: z.record(z.string(), z.string()).optional(),
+  /** The settings of before `group_defaults`: still read (`group_defaults` wins), never written again. */
+  default_paid_model: z.string().optional(),
+  default_strata_model: z.string().optional(),
+  default_lmstudio_model: z.string().optional(),
+  /** One fallback order for every role: the groups (`paid` = any API model, `strata`, `lmstudio`, a provider id), first one first. */
+  model_order: z.array(z.string()).optional(),
+  /** How the engine loads LM Studio models that aren't loaded yet: requests at once, context window, idle minutes before LM Studio unloads it. */
+  lmstudio_parallel: z.number().int().min(1).max(16).default(4),
+  lmstudio_context: z.number().int().min(2048).default(131072),
+  lmstudio_ttl_minutes: z.number().int().min(1).default(60),
+  /** Folder of the Scriptorium data (its `books/` folder is where books to import are listed). */
+  scriptoriumData: z.string().default('~/Scriptorium')
+})
+
+export const settingsSchema = z.preprocess((val) => {
+  if (val && typeof val === 'object' && !Array.isArray(val)) {
+    const raw = val as Record<string, unknown>
+    if (raw.fallbacks === undefined && (raw.group_defaults || raw.default_paid_model || raw.default_strata_model || raw.default_lmstudio_model || raw.model_order)) {
+      const gd = (raw.group_defaults && typeof raw.group_defaults === 'object' ? raw.group_defaults : {}) as Record<string, string>
+      const paid = typeof raw.default_paid_model === 'string' && raw.default_paid_model.trim() ? raw.default_paid_model.trim() : (gd.paid ?? BUILTIN_GROUP_DEFAULTS.paid!)
+      const strata = typeof raw.default_strata_model === 'string' && raw.default_strata_model.trim() ? raw.default_strata_model.trim() : (gd.strata ?? BUILTIN_GROUP_DEFAULTS.strata!)
+      const lmstudio = typeof raw.default_lmstudio_model === 'string' && raw.default_lmstudio_model.trim() ? raw.default_lmstudio_model.trim() : (gd.lmstudio ?? BUILTIN_GROUP_DEFAULTS.lmstudio!)
+      const defs: Record<string, string> = { paid, strata, lmstudio, ...gd }
+      const order = Array.isArray(raw.model_order) ? (raw.model_order as unknown[]).filter((g): g is string => typeof g === 'string' && g.trim() !== '') : []
+      const groups = [...new Set([...order, 'paid', 'strata', 'lmstudio'])]
+      const derivedFallbacks: string[] = []
+      for (const g of groups) {
+        const m = defs[g]
+        if (m && !derivedFallbacks.includes(m)) derivedFallbacks.push(m)
+      }
+      return {
+        ...raw,
+        fallbacks: derivedFallbacks.length > 0 ? derivedFallbacks : BUILTIN_FALLBACKS,
+        fallback_shared: raw.fallback_shared ?? (order.length > 0)
+      }
+    }
+  }
+  return val
+}, baseSettingsSchema);
+
+/** The default model of every group: legacy helper for backwards compatibility. */
 export function groupDefaultsOf(s: z.infer<typeof settingsSchema>): Record<string, string> {
-  const out = { ...BUILTIN_GROUP_DEFAULTS }
-  if (s.default_paid_model) out.paid = s.default_paid_model
-  if (s.default_strata_model) out.strata = s.default_strata_model
-  if (s.default_lmstudio_model) out.lmstudio = s.default_lmstudio_model
-  return { ...out, ...s.group_defaults }
+  const out = { ...BUILTIN_GROUP_DEFAULTS };
+  if (s.default_paid_model) out.paid = s.default_paid_model;
+  if (s.default_strata_model) out.strata = s.default_strata_model;
+  if (s.default_lmstudio_model) out.lmstudio = s.default_lmstudio_model;
+  if (s.group_defaults) Object.assign(out, s.group_defaults);
+  return out;
 }
 
 // ---- agents ----

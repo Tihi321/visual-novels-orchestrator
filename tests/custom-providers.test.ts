@@ -123,18 +123,18 @@ describe('custom providers in the engine', () => {
     expect(snap.models.find((m) => m.ref === 'strata/qwen3.8-flash-next')?.group).toBe('strata')
     expect(snap.models.find((m) => m.ref === 'client/claude-code')?.group).toBeUndefined()
 
-    // the alias: without a default it is the first ticked model, with one it is that model; the group sorts under model_order
-    expect(engine.registry.resolve(id)).toBe(`${id}/claude-opus-5-5`)
-    expect(engine.registry.groupOf(id)).toBe(id)
-    await engine.handleCommand({ type: 'saveSettings', groupDefaults: { [id]: `${id}/qwen3.8-flash` } })
+    // the alias: without a row it names no model; once added to fallbacks it resolves to that row
+    expect(engine.registry.resolve(id)).toBe(id)
+    expect(engine.registry.kindOf(id)).toBe(id)
+    await engine.handleCommand({ type: 'saveSettings', fallbacks: [`${id}/qwen3.8-flash`, 'deepseek/deepseek-flash'] })
     expect(engine.registry.resolve(id)).toBe(`${id}/qwen3.8-flash`)
-    expect((await readConfig('settings.md')).data.group_defaults).toMatchObject({ [id]: `${id}/qwen3.8-flash`, paid: 'deepseek/deepseek-flash' })
+    expect((await readConfig('settings.md')).data.fallbacks).toEqual([`${id}/qwen3.8-flash`, 'deepseek/deepseek-flash'])
     await engine.setRoleModel('script-analyst', id) // roles.md names the provider id like an alias
     expect(engine.registry.roleModelRefs('script-analyst')[0]).toBe(`${id}/qwen3.8-flash`)
-    await engine.handleCommand({ type: 'saveSettings', modelOrder: ['strata', id, 'lmstudio', 'paid'] })
-    expect(engine.registry.roleEntries('director')).toEqual(['strata', 'lmstudio', 'paid']) // the seed's role lists have no custom entry
-    expect(engine.registry.roleEntries('script-analyst')).toEqual(['strata', id, 'lmstudio', 'paid']) // the provider id sorts as its own group
-    expect((await engine.snapshot()).settings.modelOrder).toEqual(['strata', id, 'lmstudio', 'paid'])
+    await engine.handleCommand({ type: 'saveSettings', fallbacks: ['strata/qwen3.8-flash-next', `${id}/qwen3.8-flash`, 'deepseek/deepseek-flash'], fallbackShared: false })
+    expect(engine.registry.roleEntries('director')).toEqual(['paid', 'strata', 'lmstudio']) // roles.md entries kept with shared false
+    expect(engine.registry.roleEntries('script-analyst')[0]).toBe(id)
+    expect((await engine.snapshot()).settings.fallbacks).toEqual(['strata/qwen3.8-flash-next', `${id}/qwen3.8-flash`, 'deepseek/deepseek-flash'])
 
     // limits and a hidden model are stored for it too
     await engine.handleCommand({ type: 'setProviderLimits', provider: id, rpm: 10 })
@@ -147,8 +147,8 @@ describe('custom providers in the engine', () => {
     const models = (await readConfig('models.md')).data
     expect(JSON.stringify(models)).not.toContain(id)
     const settings = (await readConfig('settings.md')).data
-    expect(settings.group_defaults).toEqual({ paid: 'deepseek/deepseek-flash', strata: 'strata/qwen3.8-flash-next', lmstudio: 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic' })
-    expect(settings.model_order).toEqual(['strata', 'lmstudio', 'paid'])
+    expect(settings.fallbacks).toEqual(['strata/qwen3.8-flash-next', 'deepseek/deepseek-flash'])
+    expect(settings).not.toHaveProperty('group_defaults')
     expect(JSON.stringify((await readConfig('roles.md')).data)).toContain(id)
     expect(await readFile(file('providers.md'), 'utf8')).not.toContain(id)
     expect((await readFile(file('providers.md'), 'utf8'))).toContain('# to verify') // comments stay
@@ -243,48 +243,51 @@ describe('custom providers in the engine', () => {
   })
 })
 
-describe('groups and the settings migration', () => {
-  it('reads default_*_model of an older settings.md, and writes only group_defaults when anything is saved', async () => {
+describe('fallbacks and the settings migration', () => {
+  it('reads default_*_model of an older settings.md, and writes only fallbacks when anything is saved', async () => {
     const body = '# My settings\n\nhand notes\n'
     await writeFile(file('settings.md'), `---\nkind: settings\ndefault_paid_model: deepseek/deepseek-v4-pro\ndefault_strata_model: strata/qwen3.8-flash-next-low\ndefault_lmstudio_model: lmstudio/nail-qwen3.6-35b-a3b-mtp\nmodel_order: [lmstudio, paid]\nlmstudio_parallel: 2\nscriptoriumData: ~/Scriptorium\n---\n${body}`)
     const { engine } = await started()
     expect((await engine.snapshot()).settings).toMatchObject({
-      groupDefaults: { paid: 'deepseek/deepseek-v4-pro', strata: 'strata/qwen3.8-flash-next-low', lmstudio: 'lmstudio/nail-qwen3.6-35b-a3b-mtp' },
-      modelOrder: ['lmstudio', 'paid']
+      fallbacks: ['lmstudio/nail-qwen3.6-35b-a3b-mtp', 'deepseek/deepseek-v4-pro', 'strata/qwen3.8-flash-next-low'],
+      fallbackShared: true
     })
     expect(engine.registry.resolve('paid')).toBe('deepseek/deepseek-v4-pro')
     expect(engine.registry.resolve('lmstudio')).toBe('lmstudio/nail-qwen3.6-35b-a3b-mtp')
     expect(await readFile(file('settings.md'), 'utf8')).toContain('default_paid_model') // reading does not rewrite the file
 
-    await engine.handleCommand({ type: 'saveSettings', groupDefaults: { strata: 'strata/qwen3.8-flash-next' } })
+    await engine.handleCommand({ type: 'saveSettings', fallbacks: ['strata/qwen3.8-flash-next', 'deepseek/deepseek-v4-pro', 'lmstudio/nail-qwen3.6-35b-a3b-mtp'], fallbackShared: true })
     const saved = await readFile(file('settings.md'), 'utf8')
     expect(saved).not.toMatch(/default_(paid|strata|lmstudio)_model/)
+    expect(saved).not.toContain('group_defaults')
     expect(saved).toContain(body)
     expect(parseMd(saved).data).toMatchObject({
-      group_defaults: { paid: 'deepseek/deepseek-v4-pro', strata: 'strata/qwen3.8-flash-next', lmstudio: 'lmstudio/nail-qwen3.6-35b-a3b-mtp' },
-      model_order: ['lmstudio', 'paid'],
+      fallbacks: ['strata/qwen3.8-flash-next', 'deepseek/deepseek-v4-pro', 'lmstudio/nail-qwen3.6-35b-a3b-mtp'],
+      fallback_shared: true,
       lmstudio_parallel: 2
     })
     expect(engine.registry.resolve('paid')).toBe('deepseek/deepseek-v4-pro')
   })
 
-  it('a settings.md with neither shape gets the built-in defaults; group_defaults wins over the old fields', async () => {
+  it('a settings.md with neither shape gets the built-in defaults; fallbacks wins over the old fields', async () => {
     await writeFile(file('settings.md'), '---\nkind: settings\n---\n')
     const a = await started()
-    expect((await a.engine.snapshot()).settings.groupDefaults).toEqual({ paid: 'deepseek/deepseek-flash', strata: 'strata/qwen3.8-flash-next', lmstudio: 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic' })
-    await writeFile(file('settings.md'), '---\nkind: settings\ndefault_paid_model: deepseek/old\ngroup_defaults:\n  paid: deepseek/new\n---\n')
+    expect((await a.engine.snapshot()).settings.fallbacks).toEqual(['deepseek/deepseek-flash', 'strata/qwen3.8-flash-next', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
+    await writeFile(file('settings.md'), '---\nkind: settings\ndefault_paid_model: deepseek/old\nfallbacks:\n  - deepseek/new\n---\n')
     const b = await started()
     expect(b.engine.registry.resolve('paid')).toBe('deepseek/new')
   })
 
-  it('the seed settings.md uses group_defaults, and a fresh data folder has the acp provider (off) and both client models', async () => {
+  it('the seed settings.md uses fallbacks, and a fresh data folder has the acp provider (off) and both client models', async () => {
     const settings = (await readConfig('settings.md')).data
-    expect(settings.group_defaults).toEqual({ paid: 'deepseek/deepseek-flash', strata: 'strata/qwen3.8-flash-next', lmstudio: 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic' })
+    expect(settings.fallbacks).toEqual(['deepseek/deepseek-flash', 'strata/qwen3.8-flash-next', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
+    expect(settings.fallback_shared).toBe(false)
+    expect(settings).not.toHaveProperty('group_defaults')
     expect(settings).not.toHaveProperty('default_paid_model')
     const registry = new ModelRegistry(dir, { keys: () => undefined })
     await registry.load()
     expect(registry.providers.get('acp')).toMatchObject({ kind: 'openai-compat', enabled: false, local: true, custom: false, baseUrl: 'http://127.0.0.1:7461/v1', concurrency: 2, jsonSchema: false, discover: true, available: false })
-    expect(registry.groupOf('acp/anything')).toBe('acp')
+    expect(registry.kindOf('acp/anything')).toBe('acp')
     expect(registry.getModel('client/claude-code')).toMatchObject({ vision: true, context: 200000 })
     expect(registry.getModel('client/antigravity')).toMatchObject({ vision: true, context: 1000000, priceIn: 0 })
     expect(registry.providers.get('client')!.local).toBe(true)

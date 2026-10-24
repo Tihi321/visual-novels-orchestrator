@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { sendCommand } from '../api'
 import { useVn } from '../store/hooks'
 import { vnStore } from '../store/store'
-import type { ModelGroup, ProviderSummary, SettingsSummary } from '../../shared/protocol'
+import type { ModelSummary, ProviderSummary, SettingsSummary } from '../../shared/protocol'
 
 interface Row {
   ref: string
@@ -36,9 +36,18 @@ function todayText(p: ProviderSummary): string {
   return `Today: ${p.requestsToday}${p.rpd ? ` of ${p.rpd}` : ''} requests. The day starts again at ${at} (midnight UTC).`
 }
 
-/** The groups that always have a row: API (every non-local built-in provider), Strata and LM Studio. Every other provider is its own group once it has a ticked model. */
-const BASE_GROUPS: ModelGroup[] = ['paid', 'strata', 'lmstudio']
-const BASE_LABELS: Record<string, string> = { paid: 'API', strata: 'Strata', lmstudio: 'LM Studio' }
+function kindLabel(kind: string, providers: ProviderSummary[]): string {
+  if (kind === 'paid') return 'API'
+  const p = providers.find((x) => x.id === kind)
+  return p?.custom ? p.name : kind
+}
+
+function rowKind(ref: string, models: ModelSummary[], providers: ProviderSummary[]): string {
+  const m = models.find((x) => x.ref === ref)
+  if (m?.kind) return m.kind
+  const p = providers.find((x) => x.id === ref.split('/')[0])
+  return p?.local || p?.custom ? p.id : 'paid'
+}
 
 /** The Add provider form as typed. `id` is set when editing a custom provider. */
 interface ProviderForm {
@@ -176,53 +185,74 @@ export function ModelsPage() {
     setAdd({ id: '', priceIn: '', priceOut: '', context: '', vision: false })
   }
 
-  // the order every role tries the groups in; empty means each role keeps the order of its own list
-  const shared = (settings?.modelOrder.length ?? 0) > 0
-  // the groups with a row: API, Strata and LM Studio, and every other group that has a ticked model (a custom provider, acp)
-  const groups: ModelGroup[] = [...BASE_GROUPS]
-  for (const m of models) if (m.shown !== false && m.group && !groups.includes(m.group)) groups.push(m.group)
-  for (const g of settings?.modelOrder ?? []) if (!groups.includes(g) && providers.some((p) => p.id === g)) groups.push(g)
-  const groupLabel = (g: ModelGroup) => BASE_LABELS[g] ?? providers.find((p) => p.id === g)?.name ?? g
-  const order: ModelGroup[] = shared ? [...settings!.modelOrder.filter((g) => groups.includes(g)), ...groups.filter((g) => !settings!.modelOrder.includes(g))] : groups
+  // the fallback list: one row per model, kind chosen first; `fallback_shared` makes it the order every role tries
+  const shared = settings?.fallbackShared ?? false
+  const fallbacks = settings?.fallbacks ?? []
+  const save = (next: string[]) => settings && saveModelSettings(settings, { fallbacks: next })
   const move = (i: number, by: number) => {
-    if (!settings) return
-    const next = [...order]
+    const next = [...fallbacks]
     ;[next[i], next[i + by]] = [next[i + by]!, next[i]!]
-    saveModelSettings(settings, { modelOrder: next })
+    save(next)
   }
-
-  /** One group's row: its place in the order, the default model behind its alias (the ticked models it may point at), and moving it. */
-  const groupRow = (g: ModelGroup, i: number) => {
-    if (!settings) return null
-    const refs = models.filter((m) => m.shown !== false && m.group === g).map((m) => m.ref)
-    const chosen = settings.groupDefaults[g] ?? ''
-    if (chosen && !refs.includes(chosen)) refs.unshift(chosen)
+  const ticked = models.filter((m) => m.shown !== false && m.enabled)
+  /** The kinds a row may have: API, local providers, then client providers; only those with a ticked model (and the row's own). */
+  const kindsFor = (own: string): string[] => {
+    const kinds = ['paid', ...providers.filter((p) => (p.local || p.custom) && p.kind !== 'client').map((p) => p.id), ...providers.filter((p) => p.kind === 'client').map((p) => p.id)]
+    return kinds.filter((k) => k === own || ticked.some((m) => m.kind === k))
+  }
+  const kindsOfRows = fallbacks.map((r) => rowKind(r, models, providers))
+  const seenKinds = new Map<string, number>()
+  /** One fallback row: its place (when shared), the alias it answers to, its kind, its model (a ticked one of that kind), moving and removing. */
+  const fallbackRow = (ref: string, i: number) => {
+    const kind = kindsOfRows[i]!
+    const n = (seenKinds.get(kind) ?? 0) + 1
+    seenKinds.set(kind, n)
+    const alias = n === 1 ? kind : `${kind}-${n}`
+    const refs = ticked.filter((m) => m.kind === kind).map((m) => m.ref)
+    if (!refs.includes(ref)) refs.unshift(ref)
     return (
-      <div key={g} className="row" style={{ gap: 6 }} data-testid={`order-${g}`}>
+      <div key={i} className="row" style={{ gap: 6 }} data-testid={`fallback-row-${i}`}>
         <span className="dim" style={{ width: 16 }}>{shared ? `${i + 1}.` : ''}</span>
-        <span style={{ width: 70, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={groupLabel(g)}>
-          {groupLabel(g)}
+        <span className="dim" style={{ width: 70 }} title={`The name roles.md uses for this row: ${alias}`} data-testid={`fallback-alias-${i}`}>
+          {alias}
         </span>
         <select
-          value={chosen || refs[0] || ''}
-          onChange={(e) => saveModelSettings(settings, { groupDefaults: { ...settings.groupDefaults, [g]: e.target.value } })}
-          style={{ flex: 1, minWidth: 0 }}
-          data-testid={`set-default-${g}`}
+          value={kind}
+          onChange={(e) => {
+            const first = ticked.find((m) => m.kind === e.target.value)
+            if (first) save(fallbacks.map((r, j) => (j === i ? first.ref : r)))
+          }}
+          style={{ width: 90 }}
+          data-testid={`fallback-kind-${i}`}
         >
+          {kindsFor(kind).map((k) => (
+            <option key={k} value={k}>
+              {kindLabel(k, providers)}
+            </option>
+          ))}
+        </select>
+        <select value={ref} onChange={(e) => save(fallbacks.map((r, j) => (j === i ? e.target.value : r)))} style={{ flex: 1, minWidth: 0 }} data-testid={`fallback-model-${i}`}>
           {refs.map((r) => (
             <option key={r} value={r}>
               {r}
             </option>
           ))}
         </select>
-        <button disabled={i === 0} onClick={() => move(i, -1)} title="Try this group earlier" data-testid={`order-up-${g}`}>
+        <button disabled={i === 0} onClick={() => move(i, -1)} title="Try this row earlier" data-testid={`fallback-up-${i}`}>
           ↑
         </button>
-        <button disabled={i === order.length - 1} onClick={() => move(i, 1)} title="Try this group later" data-testid={`order-down-${g}`}>
+        <button disabled={i === fallbacks.length - 1} onClick={() => move(i, 1)} title="Try this row later" data-testid={`fallback-down-${i}`}>
           ↓
+        </button>
+        <button disabled={fallbacks.length <= 1} onClick={() => save(fallbacks.filter((_, j) => j !== i))} title="Remove this row" data-testid={`fallback-remove-${i}`}>
+          ×
         </button>
       </div>
     )
+  }
+  const addRow = () => {
+    const first = ticked.find((m) => m.kind === 'paid') ?? ticked[0]
+    if (first) save([...fallbacks, first.ref])
   }
   const formUrlOk = !!form && /^https?:\/\/\S+$/i.test(form.baseUrl.trim())
   const formConcurrencyOk = !!form && (form.concurrency.trim() === 'auto' || (Number.isInteger(Number(form.concurrency)) && Number(form.concurrency) >= 1))
@@ -357,23 +387,28 @@ export function ModelsPage() {
     <div className="stack models-page" data-testid="models-page">
       <div className="models" style={{ display: 'contents' }}>
         <div className="panel-title">Models</div>
-        <div className="dim">Default models: the aliases paid (API, free or paid), strata, lmstudio and the id of any provider you added, in roles.md. Every role that names one follows it.</div>
+        <div className="dim">Fallback models: each row is a kind (API, Strata, LM Studio ...) and its model. roles.md names a kind for its first row (paid, strata, lmstudio ...) and kind-2, kind-3 for the next ones.</div>
         <label className="inline">
           <input
             type="checkbox"
             checked={shared}
-            onChange={(e) => settings && saveModelSettings(settings, { modelOrder: e.target.checked ? order : [] })}
+            onChange={(e) => settings && saveModelSettings(settings, { fallbackShared: e.target.checked })}
             data-testid="order-shared"
           />
           One fallback order for every role
         </label>
         <div className="stack" style={{ gap: 4 }}>
-          {order.map(groupRow)}
+          {fallbacks.map((r, i) => fallbackRow(r, i))}
+        </div>
+        <div className="row">
+          <button onClick={addRow} disabled={ticked.length === 0} data-testid="fallback-add">
+            Add a fallback
+          </button>
         </div>
         <div className="dim">
           {shared
-            ? "Every role tries the groups top to bottom: the first is the primary, the rest are fallbacks. An agent's own model still goes first. Running jobs switch at once."
-            : 'Each role keeps the order of its list in roles.md. Move a group up or down to use one order for every role.'}
+            ? "Every role tries these top to bottom: the first is the primary, the rest are fallbacks. A role's own model of the same kind (Strata's -low for the checks) takes that row's place. An agent's own model still goes first. Running jobs switch at once."
+            : 'Each role keeps the order of its list in roles.md. The rows set what paid, paid-2, strata, lmstudio ... stand for.'}
         </div>
         <hr />
         <div className="dim">Tick the models the pickers offer. Saved in config/models.md.</div>

@@ -34,6 +34,7 @@ export function modelSummaries(registry: ModelRegistry): ModelSummary[] {
       model: m.id,
       family: m.family,
       local: m.provider.local,
+      kind: registry.kindOf(m.ref),
       group: registry.groupOf(m.ref),
       enabled: m.provider.available,
       shown: registry.isShown(m.ref),

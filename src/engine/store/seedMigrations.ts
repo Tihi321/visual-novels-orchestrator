@@ -88,6 +88,42 @@ export const SEED_MIGRATIONS: SeedMigration[] = [
       models.add(doc.createNode({ id: 'antigravity', vision: true, context: ANTIGRAVITY_CONTEXT }))
       return true
     }
+  },
+  {
+    id: 'settings-fallbacks-v1',
+    file: 'config/settings.md',
+    apply(doc) {
+      if (doc.has('fallbacks')) return false
+      const gd = doc.get('group_defaults', true)
+      const gdMap = isMap(gd) ? gd : null
+      const paid = (doc.get('default_paid_model') as string) || (gdMap?.get('paid') as string) || 'deepseek/deepseek-flash'
+      const strata = (doc.get('default_strata_model') as string) || (gdMap?.get('strata') as string) || 'strata/qwen3.8-flash-next'
+      const lm = (doc.get('default_lmstudio_model') as string) || (gdMap?.get('lmstudio') as string) || 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'
+      const defs: Record<string, string> = { paid, strata, lmstudio: lm }
+      if (gdMap) {
+        for (const item of gdMap.items) {
+          const k = String(item.key)
+          const v = String(item.value)
+          if (v) defs[k] = v
+        }
+      }
+      const mo = doc.get('model_order', true)
+      const order = isSeq(mo) ? mo.items.map((x) => String(x)) : []
+      const groups = [...new Set([...order, 'paid', 'strata', 'lmstudio'])]
+      const derived: string[] = []
+      for (const g of groups) {
+        const m = defs[g]
+        if (m && !derived.includes(m)) derived.push(m)
+      }
+      doc.set('fallbacks', doc.createNode(derived.length > 0 ? derived : ['deepseek/deepseek-flash', 'strata/qwen3.8-flash-next', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic']))
+      doc.set('fallback_shared', order.length > 0)
+      doc.delete('group_defaults')
+      doc.delete('model_order')
+      doc.delete('default_paid_model')
+      doc.delete('default_strata_model')
+      doc.delete('default_lmstudio_model')
+      return true
+    }
   }
 ]
 

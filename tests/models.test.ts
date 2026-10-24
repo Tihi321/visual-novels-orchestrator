@@ -72,7 +72,7 @@ describe('seed configs', () => {
     expect(registry.loadConfigFor('lmstudio', 'nail-qwen3.6-35b-a3b-mtp')).toEqual({ parallel: 2, context: 65536, ttlMinutes: 60 })
     expect(registry.loadConfigFor('lmstudio', 'gemma-4-e4b-it-ultra-uncensored-heretic')).toEqual({ parallel: 4, context: 131072, ttlMinutes: 60 })
     // another default in the settings: the roles follow, and an agent override may be an alias too
-    registry.setDefaults({ aliases: { paid: 'deepseek/deepseek-v4-pro', strata: 'strata/qwen3.8-flash-next', lmstudio: 'lmstudio/nail-qwen3.6-35b-a3b-mtp' }, lmLoad: { parallel: 2, context: 16384, ttlMinutes: 30 } })
+    registry.setDefaults({ fallbacks: ['deepseek/deepseek-v4-pro', 'strata/qwen3.8-flash-next', 'lmstudio/nail-qwen3.6-35b-a3b-mtp'], shared: false, lmLoad: { parallel: 2, context: 16384, ttlMinutes: 30 } })
     await registry.load()
     expect(registry.roleModelRefs('director')).toEqual(['deepseek/deepseek-v4-pro', 'strata/qwen3.8-flash-next', 'lmstudio/nail-qwen3.6-35b-a3b-mtp'])
     expect(registry.getModel('lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic')?.context).toBe(16384)
@@ -984,7 +984,7 @@ x
     // the client model first even with avoidFamily
     expect(router.candidates('writer', { projectModel: 'client/claude-code', avoidFamily: 'client' })[0]?.ref).toBe('client/claude-code')
     // model_order sorts the groups, but a client ref stays where the role put it (first)
-    registry.setDefaults({ aliases: { paid: 'paid/p1', strata: 'strata/x', lmstudio: 'lmstudio/y' }, order: ['paid', 'strata', 'lmstudio'], lmLoad: { parallel: 1, context: 8192, ttlMinutes: 1 } })
+    registry.setDefaults({ fallbacks: ['paid/p1', 'strata/x', 'lmstudio/y'], shared: true, lmLoad: { parallel: 1, context: 8192, ttlMinutes: 1 } })
     registry.roles = { kind: 'roles', roles: { writer: { models: ['paid/p1', 'client/claude-code', 'loc/m1'] } } } as typeof registry.roles
     expect(registry.roleEntries('writer')[0]).toBe('client/claude-code')
   })
@@ -1074,5 +1074,76 @@ describe('shared credential stores', () => {
     const get = store({ 'scriptorium:K': 's', 'vn-studio:OWN': 'mine' })
     expect(resolveKey('K', get, { VNO_SHARED_KEYS: '0' })).toBeUndefined()
     expect(resolveKey('OWN', get, { VNO_SHARED_KEYS: '0' })).toBe('mine')
+  })
+})
+
+describe('fallbacks as an open list', () => {
+  const lm = { parallel: 1, context: 8192, ttlMinutes: 30 }
+  // two API providers, LM Studio, Strata (with its -low variant) and the client
+  const providers = [
+    { id: 'deepseek', price: 1, models: ['flash', 'pro'] },
+    { id: 'openrouter', price: 1, models: ['x', 'y'] },
+    { id: 'lmstudio', local: true, models: ['gemma'] },
+    { id: 'strata', local: true, models: ['q', 'q-low'] },
+    { id: 'client', kind: 'client' as const, models: ['claude-code'] }
+  ]
+  const rows = ['deepseek/flash', 'openrouter/x', 'lmstudio/gemma', 'openrouter/y']
+
+  it('a kind is an alias for its first row and kind-n for the n-th; an alias with no row names nothing', async () => {
+    const { registry } = await registryWith({ providers, roles: { director: ['paid', 'strata', 'lmstudio'], editor: ['paid-2', 'paid-3', 'lmstudio-2', 'client'] } })
+    registry.setDefaults({ fallbacks: rows, shared: false, lmLoad: lm })
+    expect(registry.kindOf('deepseek/flash')).toBe('paid')
+    expect(registry.kindOf('lmstudio/gemma')).toBe('lmstudio')
+    expect(registry.kindOf('client/claude-code')).toBe('client')
+    expect(registry.kindOf('nowhere/x')).toBe('paid') // a provider providers.md lacks counts as API
+    expect(registry.resolve('paid')).toBe('deepseek/flash')
+    expect(registry.resolve('paid-2')).toBe('openrouter/x')
+    expect(registry.resolve('paid-3')).toBe('openrouter/y')
+    expect(registry.resolve('lmstudio')).toBe('lmstudio/gemma')
+    expect(registry.resolve('strata')).toBe('strata') // no Strata row
+    expect(registry.resolve('lmstudio-2')).toBe('lmstudio-2')
+    expect(registry.roleModelRefs('director')).toEqual(['deepseek/flash', 'strata', 'lmstudio/gemma'])
+    expect(registry.unresolvedAliases().sort()).toEqual(['client', 'lmstudio-2', 'strata'])
+    // the router skips what names no model
+    expect(new ModelRouter(registry, undefined).candidates('director').map((m) => m.ref)).toEqual(['deepseek/flash', 'lmstudio/gemma'])
+    expect(new ModelRouter(registry, undefined).candidates('editor').map((m) => m.ref)).toEqual(['openrouter/x', 'openrouter/y'])
+  })
+
+  it('a shared order gives every role the rows top to bottom, its own model of a kind taking that row', async () => {
+    const { registry } = await registryWith({
+      providers,
+      roles: {
+        editor: ['strata', 'lmstudio', 'paid'],
+        checker: ['strata/q-low', 'lmstudio', 'paid'],
+        critic: ['deepseek/flash', 'paid'],
+        pro: ['deepseek/pro', 'paid'],
+        clienty: ['deepseek/flash', 'client/claude-code']
+      }
+    })
+    registry.setDefaults({ fallbacks: rows, shared: true, lmLoad: lm })
+    // editor: its Strata alias has no row, and comes last
+    expect(registry.roleModelRefs('editor')).toEqual(['deepseek/flash', 'openrouter/x', 'lmstudio/gemma', 'openrouter/y', 'strata'])
+    // a concrete Strata model with no Strata row goes last
+    expect(registry.roleModelRefs('checker')).toEqual(['deepseek/flash', 'openrouter/x', 'lmstudio/gemma', 'openrouter/y', 'strata/q-low'])
+    // a model that is a row keeps it
+    expect(registry.roleModelRefs('critic')).toEqual(['deepseek/flash', 'openrouter/x', 'lmstudio/gemma', 'openrouter/y'])
+    // another API model takes the first free API row
+    expect(registry.roleModelRefs('pro')).toEqual(['deepseek/pro', 'openrouter/x', 'lmstudio/gemma', 'openrouter/y'])
+    // the client goes first
+    expect(registry.roleModelRefs('clienty')[0]).toBe('client/claude-code')
+    // with a Strata row, -low takes that row's place
+    registry.setDefaults({ fallbacks: ['deepseek/flash', 'strata/q', 'lmstudio/gemma'], shared: true, lmLoad: lm })
+    expect(registry.roleModelRefs('checker')).toEqual(['deepseek/flash', 'strata/q-low', 'lmstudio/gemma'])
+    expect(registry.roleEntries('checker')).toEqual(['deepseek/flash', 'strata/q-low', 'lmstudio/gemma'])
+  })
+
+  it('with the old three rows the seed roles keep the chains the group sort gave them', async () => {
+    const registry = new ModelRegistry(dir, { keys: () => undefined })
+    await registry.load()
+    const three = ['deepseek/deepseek-flash', 'strata/qwen3.8-flash-next', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic']
+    registry.setDefaults({ fallbacks: three, shared: true, lmLoad: lm })
+    expect(registry.roleModelRefs('director')).toEqual(three)
+    expect(registry.roleModelRefs('script-analyst')).toEqual(three) // [strata, lmstudio, paid] sorted by the rows
+    expect(registry.roleModelRefs('edition-aligner')).toEqual(['deepseek/deepseek-flash', 'strata/qwen3.8-flash-next-low', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
   })
 })

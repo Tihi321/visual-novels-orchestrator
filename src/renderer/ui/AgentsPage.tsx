@@ -18,7 +18,6 @@ export function AgentsPage() {
   const agents = useAgentList()
   const known = useVn((s) => s.models)
   const defaults = useVn((s) => s.roleDefaults)
-  const order = useVn((s) => s.settings?.modelOrder ?? [])
   const [hiring, setHiring] = useState(false)
   return (
     <div className="stack" style={{ maxWidth: 980 }} data-testid="page-agents">
@@ -81,13 +80,14 @@ export function AgentsPage() {
         })}
         {!agents.length && <div className="dim">No agents yet. Hire one, or start the engine so the seed agents are copied into the data folder.</div>}
       </div>
-      <RoleDefaults order={order} />
+      <RoleDefaults />
     </div>
   )
 }
 
 /** Default model per role: sends `setModel` with `role`. */
-function RoleDefaults({ order }: { order: string[] }) {
+function RoleDefaults() {
+  const shared = useVn((s) => s.settings?.fallbackShared ?? false)
   const known = useVn((s) => s.models)
   const defaults = useVn((s) => s.roleDefaults)
   const roles = [...new Set<string>([...KNOWN_ROLES, ...Object.keys(defaults)])]
@@ -119,7 +119,7 @@ function RoleDefaults({ order }: { order: string[] }) {
         ))}
         <span className="dim">
           Running jobs of the role switch at once. The engine writes config/roles.md.
-          {order.length > 0 ? ' With one fallback order for every role (Models page), the model goes first within its group.' : ''}
+          {shared ? ' With one fallback order for every role (Models page), the model takes the place of the first fallback row of its kind.' : ''}
         </span>
       </div>
     </div>
