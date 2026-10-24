@@ -512,6 +512,7 @@ export interface GameDataScene {
   pause?: number
   music: string | null
   musicLoopStartSec?: number | null
+  musicExplicitNull?: boolean
   ambience: string | null
   beats: GameDataSceneBeat[]
 }
@@ -527,6 +528,8 @@ export interface GameDataChapter {
   label: string
   number: number
   title: string
+  music?: string | null
+  musicLoopStartSec?: number | null
   scenes: GameDataScene[]
   choices: GameDataChoice[]
   ending?: { type: string; message: string } | null
@@ -588,7 +591,8 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
   const resolution = inp.resolution ?? { w: 1920, h: 1080 }
   const format: ImageFormat = inp.imageFormat ?? 'webp'
   const warnings = inp.warnings ?? []
-  const cues = inp.cues ?? defaultCues(book, { warn: (m) => warnings.push(m) })
+  const musicIds = Object.keys(inp.music ?? {})
+  const cues = inp.cues ?? defaultCues(book, { musicIds, warn: (m) => warnings.push(m) })
   const knownChars = new Set(book.characters.map((c) => c.key))
 
   // 1. Languages
@@ -702,7 +706,7 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
         }
       })
 
-      const sceneMusic = stagePlan.music ?? null
+      const sceneMusic = stagePlan.music !== undefined ? stagePlan.music : (cues.chapters[ch.n]?.music ?? null)
       const loop = sceneMusic ? inp.musicLoops?.[sceneMusic] : undefined
 
       return {
@@ -715,6 +719,7 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
         pause: stagePlan.pause,
         music: sceneMusic,
         musicLoopStartSec: typeof loop === 'number' ? loop : null,
+        musicExplicitNull: stagePlan.music === null,
         ambience: stagePlan.ambience ?? null,
         beats
       }
@@ -729,11 +734,16 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
     const nextCh = book.chapters[chIdx + 1]
     const nextChapterLabel = book.kind === 'linear' && nextCh ? chapterLabel(nextCh.n) : null
 
+    const chMusic = cues.chapters[ch.n]?.music ?? null
+    const chLoop = chMusic ? inp.musicLoops?.[chMusic] : undefined
+
     return {
       id: `chapter_${ch.n}`,
       label: chapterLabel(ch.n),
       number: ch.n,
       title: ch.title,
+      music: chMusic,
+      musicLoopStartSec: typeof chLoop === 'number' ? chLoop : null,
       scenes,
       choices,
       ending: ch.ending ? { type: 'the_end', message: ch.ending } : null,
@@ -774,7 +784,8 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
 
 /** Emit both scripts and game data for full compatibility. */
 export function emitProject(inp: BuildGameDataInput): { gameData: GameData; files: Record<string, string>; lineMap: LineMapEntry[]; used: UsedImages } {
-  const cues = inp.cues ?? defaultCues(inp.book, { warn: (m) => inp.warnings?.push(m) })
+  const musicIds = Object.keys(inp.music ?? {})
+  const cues = inp.cues ?? defaultCues(inp.book, { musicIds, warn: (m) => inp.warnings?.push(m) })
   const scriptResult = emitScripts({
     book: inp.book,
     editions: inp.editions,
