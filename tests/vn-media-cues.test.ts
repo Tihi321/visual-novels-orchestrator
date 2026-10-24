@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { emitScripts } from '../src/engine/renpy/emit'
-import { defaultCues } from '../src/engine/renpy/stage'
+import { emitScripts } from '../src/engine/game/emit'
+import { defaultCues } from '../src/engine/game/stage'
 import { deriveAssets } from '../src/engine/assets/derive'
 import { applyStoryOps, validateBook } from '../src/engine/vn/story'
 import { loadBook, loadEdition } from './fixtures/vn/load'

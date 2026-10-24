@@ -38,8 +38,7 @@ import type { ModelRegistry } from '../models/registry'
 import type { ModelRouter } from '../models/router'
 import type { JobFile, JobState, JobStore } from '../queue/jobs'
 import { JOB_STATES } from '../queue/jobs'
-import { androidPreflight as runAndroidPreflight } from '../renpy/android'
-import { run as runRenpyGame, sdkExists, sdkPython } from '../renpy/run'
+import { run as runGame } from '../game/run'
 import { findTheme, listThemes } from '../themes/load'
 import { pickTheme } from '../themes/pick'
 import { themeFontFaces, themePreviewCss } from '../themes/emit'
@@ -48,8 +47,8 @@ import type { SettingsConfig } from '../../shared/schemas'
 import { findAppDirs } from './appdirs'
 import type { AppDirs } from './appdirs'
 import type { AlignReport } from './align'
-import { defaultCues } from '../renpy/stage'
-import type { SceneTransition, Slot, StageCues } from '../renpy/stage'
+import { defaultCues } from '../game/stage'
+import type { SceneTransition, Slot, StageCues } from '../game/stage'
 import { MAX_SECONDS, MIN_SECONDS } from './agents/composer'
 import type { MusicPlan } from './agents/composer'
 import { buildEdition, importBook, textSample } from './import'
@@ -1354,14 +1353,9 @@ export class VnService {
     return { sdkPath: (await loadRenpyConfig(this.dataDir)).sdkPath, packagesDir: packagesDirOf(this.dirs.templates) }
   }
 
-  /** What an import proves its puzzles with (the puzzle library), or null when the Ren'Py SDK is not there: the puzzles are then left unproved. */
-  private async importProver(): Promise<((p: PuzzleEntry) => Promise<PuzzleProof>) | null> {
-    try {
-      const py = await this.puzzlePython()
-      return sdkPython(py.sdkPath) ? (p) => solvePuzzle(py, p.data) : null
-    } catch {
-      return null
-    }
+  /** What an import proves its puzzles with: native TypeScript puzzle solver (unconditional). */
+  private async importProver(): Promise<(p: PuzzleEntry) => Promise<PuzzleProof>> {
+    return (p) => solvePuzzle(undefined, p.data)
   }
 
   /** Asks both studios for their tools. Never throws: an unreachable studio is `ok: false` with the message (and how to start it). */
@@ -1471,37 +1465,25 @@ export class VnService {
     return this.enqueue(slug, TASKS.lint, 'now', await this.nextRun(slug), { label: 'lint the game', priority: 1 })
   }
 
-  async enqueueAndroid(slug: string, bundle = false): Promise<string> {
-    return this.enqueue(slug, TASKS.android, 'now', await this.nextRun(slug), { body: { bundle }, label: 'build the Android package', priority: 1 })
-  }
-
   async runGame(slug: string): Promise<{ pid: number | undefined }> {
-    const renpy = await loadRenpyConfig(this.dataDir)
     const dir = this.gameDir(slug)
-    if (!existsSync(path.join(dir, 'game'))) throw new Error(`${slug} has not been built yet: build it first`)
-    return runRenpyGame(dir, { sdkPath: renpy.sdkPath })
-  }
-
-  async androidPreflight(slug: string): Promise<BuildResult> {
-    const renpy = await loadRenpyConfig(this.dataDir)
-    const pre = runAndroidPreflight(this.gameDir(slug), { sdkPath: renpy.sdkPath })
-    const result: BuildResult = { slug, action: 'preflight', ok: pre.ok, messages: pre.ok ? pre.found : pre.problems, at: nowIso(), gameDir: this.gameDir(slug) }
-    this.emit({ type: 'build.result', result })
-    return result
+    const hasIndex = existsSync(path.join(dir, 'index.html')) || existsSync(path.join(dir, 'game', 'index.html'))
+    if (!hasIndex) throw new Error(`${slug} has not been built yet: build it first`)
+    const r = runGame(dir)
+    return { pid: r.pid }
   }
 
   async sdkAvailable(): Promise<boolean> {
-    return sdkExists((await loadRenpyConfig(this.dataDir)).sdkPath)
+    return true
   }
 
   // ---- Ren'Py config (config/renpy.md) ----
 
   async renpyConfigView(warning?: string): Promise<RenpyConfigView> {
     const c = await loadRenpyConfig(this.dataDir)
-    const sdkFound = sdkExists(c.sdkPath)
+    const sdkFound = true
     const envOverride = !!process.env.VNO_RENPY_SDK
-    const note = warning ?? (sdkFound ? undefined : `the Ren'Py SDK was not found in ${c.sdkPath}: games are written but not translated, linted or run`)
-    return { sdkPath: c.sdkPath, resolution: `${c.resolution.w}x${c.resolution.h}`, imageFormat: c.imageFormat, sdkFound, envOverride, ...(note ? { warning: note } : {}) }
+    return { sdkPath: c.sdkPath ?? '', resolution: `${c.resolution.w}x${c.resolution.h}`, imageFormat: c.imageFormat, sdkFound, envOverride, ...(warning ? { warning } : {}) }
   }
 
   /** Writes the given fields to config/renpy.md (the others and the notes below the frontmatter stay). A missing SDK is a warning. */
@@ -1719,12 +1701,6 @@ export class VnService {
           this.emit({ type: 'game.started', slug: cmd.slug, pid: r.pid ?? null })
           return
         }
-        case 'androidPreflight':
-          await this.androidPreflight(cmd.slug)
-          return
-        case 'androidBuild':
-          await this.enqueueAndroid(cmd.slug, cmd.bundle)
-          return
         case 'listThemes':
           this.emit({ type: 'themes.listed', themes: this.listThemes() })
           return

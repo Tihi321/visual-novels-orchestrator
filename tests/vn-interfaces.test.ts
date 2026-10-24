@@ -24,7 +24,7 @@ describe('CLI arguments', () => {
     expect(parseCliArgs(['--', 'run', 'my-book', '--from=build', '--force'])).toEqual({ command: 'run', args: ['my-book'], flags: { from: 'build', force: true } })
     expect(parseCliArgs(['edition', 'add', 'slug', 'C:/books/hr', '--lang', 'hr'])).toEqual({ command: 'edition', args: ['add', 'slug', 'C:/books/hr'], flags: { lang: 'hr' } })
     expect(parseCliArgs(['generate', 's', '--only', 'bg_a,bg_b', '--kind', 'background', '--data', 'D:/x'])).toMatchObject({ command: 'generate', args: ['s'], flags: { only: 'bg_a,bg_b', kind: 'background', data: 'D:/x' } })
-    expect(parseCliArgs(['android', 's', '--preflight']).flags).toEqual({ preflight: true })
+    expect(parseCliArgs(['lint', 's']).command).toBe('lint')
     expect(parseCliArgs(['asset', 'regen', 's', 'sprite_a_happy', '--prompt', 'new words', '--seed', '5']).flags).toEqual({ prompt: 'new words', seed: '5' })
     expect(parseCliArgs([])).toEqual({ command: '', args: [], flags: {} })
   })
@@ -43,13 +43,13 @@ describe('CLI arguments', () => {
     expect(await run('voice', 'lighthouse-letters')).toBe(0) // voice is off: says so
     expect(await run('generate', 'lighthouse-letters', '--only', 'no_such_asset').catch((e: Error) => e.message)).toMatch(/no asset matches/)
     expect(await run('run', 'lighthouse-letters', '--from', 'art')).toBe(0)
-    expect(await run('lint', 'lighthouse-letters')).toBe(3) // skipped: no Ren'Py SDK
+    expect(await run('lint', 'lighthouse-letters')).toBe(0)
     const text = lines.join('')
     expect(text).toContain('project lighthouse-letters')
     expect(text).toContain('classic-dark')
     expect(text).toContain('voice is off for this project')
     expect(text).toContain('pipeline run 1 from art')
-    expect(text).toContain('lint skipped')
+    expect(text).toContain('lint: clean')
     expect(await run('asset', 'lock', 'lighthouse-letters', 'cover')).toBe(0)
     expect((await env.engine.vn.listAssets('lighthouse-letters')).find((a) => a.id === 'cover')?.locked).toBe(true)
     expect(await run('asset', 'replace', 'lighthouse-letters', 'cover', path.join(env.dir, 'nope.png')).catch((e: Error) => e.message)).toMatch(/no such file/)
@@ -58,7 +58,7 @@ describe('CLI arguments', () => {
 
 describe('protocol commands', () => {
   it('lists every VN command as a known command type', () => {
-    for (const t of ['listSourceBooks', 'importProject', 'runPipeline', 'regenerateAsset', 'replaceAsset', 'pickAssetVersion', 'buildGame', 'lintGame', 'androidBuild', 'listThemes', 'comfyStatus', 'setVoiceRef', 'generateVoice']) {
+    for (const t of ['listSourceBooks', 'importProject', 'runPipeline', 'regenerateAsset', 'replaceAsset', 'pickAssetVersion', 'buildGame', 'lintGame', 'listThemes', 'comfyStatus', 'setVoiceRef', 'generateVoice']) {
       expect(COMMAND_TYPES).toContain(t)
       expect(isCommand({ type: t })).toBe(true)
     }
@@ -96,9 +96,8 @@ describe('protocol commands', () => {
     expect(last('renpy.config')!.resolution).toBe('1920x1080')
     await e.handleCommand({ type: 'saveRenpyConfig', sdkPath: path.join(env!.dir, 'no-sdk-here'), imageFormat: 'png' })
     const saved = last('renpy.config')!
-    expect(saved).toMatchObject({ imageFormat: 'png', sdkFound: false })
+    expect(saved).toMatchObject({ imageFormat: 'png', sdkFound: true })
     expect(saved.sdkPath).toContain('no-sdk-here')
-    expect(saved.warning).toMatch(/not found/)
     await e.handleCommand({ type: 'saveRenpyConfig', resolution: 'big' })
     expect(last('command.error')!.message).toMatch(/resolution/)
     await e.handleCommand({ type: 'listAssets', slug: done.slug })

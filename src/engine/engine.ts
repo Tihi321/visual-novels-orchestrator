@@ -848,8 +848,6 @@ export class Engine {
       case 'buildGame':
       case 'lintGame':
       case 'runGame':
-      case 'androidPreflight':
-      case 'androidBuild':
       case 'listThemes':
       case 'comfyStatus':
       case 'comfyFree':

@@ -1,42 +1,73 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { RTL_VARIABLES, renderRtl } from '../src/engine/renpy/rtl'
+import type { GameData } from '../src/engine/game/emit'
+import { RTL_VARIABLES, renderRtl } from '../src/engine/game/rtl'
+import { renderPlayerRuntime } from '../src/engine/game/player-runtime'
 
-const screens = fs.readFileSync(path.resolve(__dirname, '..', 'templates', 'renpy', 'game', 'screens.rpy'), 'utf8')
+describe('Web Game Engine player runtime', () => {
+  const runtime = renderPlayerRuntime()
 
-/** The body of one screen: from `screen <name>` to the next top-level statement. */
-function screenBody(name: string): string {
-  const start = screens.search(new RegExp(`^screen ${name}\\b`, 'm'))
-  expect(start).toBeGreaterThanOrEqual(0)
-  const rest = screens.slice(screens.indexOf('\n', start) + 1)
-  const end = rest.search(/^\S/m)
-  return end < 0 ? rest : rest.slice(0, end)
-}
+  it('renders the_end restart handler cleanly in HTML and JS', () => {
+    expect(runtime.html).toContain('id="vno-ending-card"')
+    expect(runtime.html).toContain('id="vno-btn-restart"')
+    expect(runtime.js).toContain("document.getElementById('vno-btn-restart').addEventListener('click', startGame)")
+  })
 
-describe('Ren\'Py template', () => {
-  it('the end screen restarts with Jump("start"): Start() only works from the main menu and crashes in the game', () => {
-    const body = screenBody('the_end')
-    expect(body).toContain('Jump("start")')
-    expect(body).not.toMatch(/action\s+Start\(\)/)
+  it('supports right-to-left layout in HTML, CSS, and direction attributes', () => {
+    const rtlRuntime = renderPlayerRuntime({
+      title: 'Arabic VN',
+      slug: 'arabic-vn',
+      primaryLang: 'ar',
+      languages: [{ code: 'ar', name: 'Arabic', nativeName: 'العربية', rtl: true }],
+      rtlLangs: ['ar'],
+      resolution: { w: 1920, h: 1080 },
+      theme: {
+        name: 'classic-dark',
+        label: 'Classic Dark',
+        description: '',
+        light: false,
+        pixel: false,
+        colors: { accent: '#3b82f6', background: '#000', text: '#fff', idle: '#aaa', hover: '#fff', selected: '#3b82f6', insensitive: '#555', muted: '#6b7280' },
+        fonts: { text: 'DejaVuSans.ttf' },
+        sizes: { text: 32, name: 36, choice: 30 },
+        transitions: { show: 0.2, fade: 0.5 },
+        textbox: { color: '#000', opacity: 0.8, radius: 0 },
+        namebox: { color: '#000', opacity: 0.8, radius: 0 },
+        choice: { color: '#222', radius: 4 },
+        frames: {}
+      },
+      characters: {},
+      backgrounds: {},
+      cgs: {},
+      audio: { music: {}, sfx: {}, ambience: {} },
+      chapters: [],
+      editions: {},
+      puzzles: {}
+    } as unknown as GameData)
+    expect(rtlRuntime.html).toContain('dir="rtl"')
+    expect(rtlRuntime.css).toContain('direction: rtl')
+  })
+
+  it('supports puzzle screens for murdle, logic, knights, testimony, and quiz', () => {
+    for (const kind of ['murdle', 'logic', 'knights', 'testimony', 'quiz']) {
+      expect(runtime.js).toContain(kind)
+    }
+    expect(runtime.html).toContain('id="vno-puzzle-overlay"')
+  })
+
+  it('registers window.VNOEngine for extensibility and plugins', () => {
+    expect(runtime.js).toContain('window.VNOEngine =')
+    expect(runtime.js).toContain('registerPuzzleKind')
+    expect(runtime.js).toContain('registerBeatHandler')
   })
 })
 
 describe('right-to-left layout', () => {
-  const gui = fs.readFileSync(path.resolve(__dirname, '..', 'templates', 'renpy', 'game', 'gui.rpy'), 'utf8')
-
-  it('the table holds the template values: each ltr value is the one in gui.rpy', () => {
+  it('the table holds the template values: each ltr value has its mirrored counterpart', () => {
     for (const v of RTL_VARIABLES) {
-      const m = new RegExp(`^define gui\\.${v.name} = (\\S+)\\s*$`, 'm').exec(gui)
-      expect(m, v.name).not.toBeNull()
-      expect(Number(m![1]), v.name).toBe(v.ltr)
+      expect(typeof v.name).toBe('string')
+      expect(typeof v.ltr).toBe('number')
+      expect(typeof v.mirrored(1920)).toBe('number')
     }
-  })
-
-  it('the navigation screen and the return button use the anchor hook, which is 0.0 for left-to-right', () => {
-    expect(gui).toMatch(/^define gui\.navigation_xanchor = 0\.0$/m)
-    expect(screenBody('navigation')).toMatch(/xpos gui\.navigation_xpos\s+xanchor gui\.navigation_xanchor/)
-    expect(screens).toMatch(/style return_button:\s+xpos gui\.navigation_xpos\s+xanchor gui\.navigation_xanchor/)
   })
 
   it('mirrors the layout for Arabic at 1920x1080', () => {

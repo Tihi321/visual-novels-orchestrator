@@ -38,6 +38,15 @@ export function readBackTask(p: Pick<PuzzleEntry, 'data'>, words: { names: Recor
       `Answer with JSON: [{"id": "c1", "type": <type>, "a": ..., "b": ..., "n": <number, apart only>}] where type is one of: is (a and b go together), not (they do not), either (a goes with one of the two names in b), neither (a goes with neither of the two names in b), oneof (a is two names, b is two names: one of a goes with one of b and the other with the other), before (a comes before b in the order), after (a comes after b), apart (a and b are exactly n ${unit} apart). a and b are names; where the type needs two names, they are lists of two.`
     ].join('\n')
   }
+  if (d.kind === 'quiz') {
+    return [
+      'Read these multiple-choice quiz questions and options and write each one back as structured data. Use only the names/options provided; do not guess.',
+      names,
+      `intro: ${words.text.intro ?? '(missing)'}`,
+      ...d.questions.map((q) => `${q.id}: ${words.text[q.id] ?? '(missing)'} (Options: ${q.options.map((o) => words.names[o] ?? o).join(', ')})`),
+      'Answer with JSON: [{"id": "q1", "prompt": "<question text>", "options": ["<option 1>", ...], "answer": "<correct option>"}]'
+    ].join('\n')
+  }
   const traits = Object.entries(d.descr ?? {}).filter(([it]) => d.clues.some((c) => (c.descr ?? []).includes(it)))
   return [
     'Read these clues of a logic puzzle and write each one back as structured data. Use only the names in the list; do not guess what is not said.',

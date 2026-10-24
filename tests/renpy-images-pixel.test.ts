@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildImages } from '../src/engine/renpy/images'
+import { buildImages } from '../src/engine/game/images'
 import type { VnBook } from '../src/shared/vn'
 
 let dir = ''

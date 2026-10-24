@@ -8,7 +8,7 @@ import path from 'node:path'
  */
 export interface AppDirs {
   themes: string
-  /** The Ren'Py project template (`templates/renpy`). */
+  /** The theme or project template directory. */
   templates: string
   seed: string
 }
@@ -32,7 +32,7 @@ export function findAppDirs(env: NodeJS.ProcessEnv = process.env, start: string 
   const themes = env.VNO_THEMES ? path.resolve(env.VNO_THEMES) : (walkUp(['themes'], start, hasThemes) ?? path.resolve(process.cwd(), 'themes'))
   const templates = env.VNO_TEMPLATES
     ? path.resolve(env.VNO_TEMPLATES)
-    : (walkUp(['templates', 'renpy'], start, (d) => existsSync(path.join(d, 'game'))) ?? path.resolve(process.cwd(), 'templates', 'renpy'))
+    : (walkUp(['templates'], start, (d) => existsSync(d)) ?? themes)
   const seed = env.VNO_SEED ? path.resolve(env.VNO_SEED) : (walkUp(['seed'], start, (d) => existsSync(path.join(d, 'config'))) ?? path.resolve(process.cwd(), 'seed'))
   return { themes, templates, seed }
 }

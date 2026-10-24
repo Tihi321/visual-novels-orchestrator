@@ -8,7 +8,7 @@ import { assetDir, loadManifest, resolveFile, saveManifest } from '../assets/man
 import { loadComfyConfig } from '../comfy/client'
 import type { ComfyConfig } from '../comfy/client'
 import { workflowDirs } from '../comfy/custom-workflow'
-import { DEFAULT_SDK_PATH } from '../renpy/run'
+import { DEFAULT_SDK_PATH } from '../game/run'
 import { atomicWrite, readMd, writeMd } from '../store/atomic'
 import type { AlignReport } from './align'
 import { asciiSlug } from './ids'
@@ -266,13 +266,13 @@ export class ProjectStore {
 // ---- config files in the data folder ----
 
 export const renpyConfigSchema = z.object({
-  sdkPath: z.string().default(DEFAULT_SDK_PATH),
+  sdkPath: z.string().default(DEFAULT_SDK_PATH).optional(),
   resolution: z.string().regex(/^\d{3,5}x\d{3,5}$/, 'WIDTHxHEIGHT').default('1920x1080'),
   imageFormat: z.enum(['webp', 'png']).default('webp')
 })
 
 export interface RenpyConfig {
-  sdkPath: string
+  sdkPath?: string
   resolution: { w: number; h: number }
   imageFormat: 'webp' | 'png'
 }
@@ -288,7 +288,7 @@ export async function loadRenpyConfig(dataDir: string, env: NodeJS.ProcessEnv = 
   const parsed = renpyConfigSchema.safeParse(data)
   const c = parsed.success ? parsed.data : renpyConfigSchema.parse({})
   const [w, h] = c.resolution.split('x').map(Number) as [number, number]
-  return { sdkPath: env.VNO_RENPY_SDK ?? c.sdkPath, resolution: { w, h }, imageFormat: c.imageFormat }
+  return { sdkPath: env.VNO_RENPY_SDK ?? c.sdkPath ?? '', resolution: { w, h }, imageFormat: c.imageFormat }
 }
 
 export function loadComfyConfigFor(dataDir: string): Promise<ComfyConfig> {

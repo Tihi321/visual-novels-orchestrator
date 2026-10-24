@@ -16,7 +16,7 @@ Usage:
   yarn mcp [--port <n>] [--data <dir>]   the engine without Electron, serving MCP over HTTP (= node out/engine/index.js --mcp-only)
   yarn engine probe [--model <provider/model>] [--data <dir>]
   yarn key:set <ENV_NAME>
-  yarn engine -- <books|import|projects|run|edition|plan|generate|asset|build|lint|play|android|voice|comfy|settings|studios|studio|themes> ...   the CLI (see: yarn engine -- help)
+  yarn engine -- <books|import|projects|run|edition|plan|generate|asset|build|lint|play|voice|comfy|settings|studios|studio|themes> ...   the CLI (see: yarn engine -- help)
   yarn engine -- mcp                  the MCP server on stdio: relays to the running engine's MCP, else runs its own (claude mcp add vn-studio -- yarn engine -- mcp)
 
   --data <dir>      Data folder. Default: VNO_DATA, else ~/VisualNovels

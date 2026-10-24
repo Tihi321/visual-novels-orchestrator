@@ -7,8 +7,8 @@ import { assertKnownLang, BUILTIN_LANGUAGES, isKnownLang, languageInfo, language
 import { LANGS, langSchema, projectSettingsSchema } from '../src/shared/vn'
 import { detectLanguage } from '../src/engine/vn/lang'
 import { loadLanguageConfig } from '../src/engine/vn/languages-config'
-import { languageTable } from '../src/engine/renpy/build'
-import { writeUiStrings } from '../src/engine/renpy/tl'
+import { languageTable } from '../src/engine/game/build'
+import { writeUiStrings } from '../src/engine/game/tl'
 
 afterEach(() => resetLanguages())
 

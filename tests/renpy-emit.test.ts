@@ -1,9 +1,9 @@
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { chapterLabel, characterColor, emitScripts, translatableStrings, voicePath, type VoiceSource } from '../src/engine/renpy/emit'
-import { defaultCues } from '../src/engine/renpy/stage'
+import { chapterLabel, characterColor, emitScripts, translatableStrings, voicePath, type VoiceSource } from '../src/engine/game/emit'
+import { defaultCues } from '../src/engine/game/stage'
 import { applyStoryOps } from '../src/engine/vn/story'
-import { bookLanguages, languageTable, languageWarnings } from '../src/engine/renpy/build'
+import { bookLanguages, languageTable, languageWarnings } from '../src/engine/game/build'
 import { registerLanguages, resetLanguages } from '../src/shared/languages'
 import { fixturesDir, loadBook, loadEdition } from './fixtures/vn/load'
 

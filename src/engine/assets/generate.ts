@@ -209,7 +209,7 @@ export interface FinishedImage {
  * The post-processing of an image asset, the same for a generated image and an imported one:
  * background (and cover): fitted to the project resolution, then pixel finishing; sprite: background removed, one figure kept, trimmed and
  * scaled to the sprite height, then pixel finishing; sheet: as it is. A cover whose shape is far from the screen's (a portrait one) is kept
- * whole: the build composes it (see `renpy/images.ts`).
+ * whole: the build composes it (see `game/images.ts`).
  */
 export async function finishImage(ctx: FinishContext, entry: AssetEntry, bytes: Buffer, o: FinishOptions = {}): Promise<FinishedImage> {
   const warnings: string[] = []

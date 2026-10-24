@@ -2,7 +2,6 @@ import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync }
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DEFAULT_SDK_PATH, sdkPython } from '../src/engine/renpy/run'
 import { alignEdition } from '../src/engine/vn/align'
 import { parseBible } from '../src/engine/vn/bible'
 import { importBook, parseRawBook } from '../src/engine/vn/import'
@@ -260,7 +259,7 @@ describe('a translated edition lines up by clue id', () => {
   })
 })
 
-describe.skipIf(!sdkPython(process.env.VNO_RENPY_SDK ?? DEFAULT_SDK_PATH))('importing a puzzle book through the service', () => {
+describe('importing a puzzle book through the service', () => {
   let env: VnEnv
   beforeEach(async () => {
     env = await makeVnEnv({ sdk: undefined })

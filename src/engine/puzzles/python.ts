@@ -1,66 +1,208 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import path from 'node:path'
-import { z } from 'zod'
 import { puzzleGeneratedSchema, puzzleProofSchema } from '../../shared/puzzle'
 import type { PuzzleCore, PuzzleGenerated, PuzzleProof, ReadBackClue } from '../../shared/puzzle'
-import { runSdkPython, sdkPython } from '../renpy/run'
-
-/**
- * The puzzle library runs in Python (the same files the game uses): the engine starts the SDK's own Python for a short call with JSON in and
- * JSON out, like it runs `renpy lint`. Nothing is installed: the SDK ships Python 3.12.
- */
+import {
+  generate,
+  solve,
+  renderText,
+  checkText,
+  checkAccusation,
+  checkMarks,
+  checkSolution,
+  checkPresent
+} from '../../shared/puzzles'
 
 export const PUZZLES_VERSION = 'vno_puzzles 1.0'
 
 export interface PuzzlePython {
-  /** The Ren'Py SDK folder (`config/renpy.md`). */
-  sdkPath: string
-  /** `templates/puzzles/game/python-packages`. */
-  packagesDir: string
+  /** Optional Ren'Py SDK folder. Kept for backwards compatibility. */
+  sdkPath?: string
+  /** `templates/puzzles/game/python-packages`. Kept for backwards compatibility. */
+  packagesDir?: string
   timeoutMs?: number
 }
 
+export type PuzzleCliOptions = PuzzlePython
+
 /** `templates/puzzles/game/python-packages` next to the Ren'Py template folder. */
-export const packagesDirOf = (templatesDir: string): string => path.join(path.dirname(templatesDir), 'puzzles', 'game', 'python-packages')
+export const packagesDirOf = (templatesDir: string): string =>
+  path.join(path.dirname(templatesDir), 'puzzles', 'game', 'python-packages')
 
-const textCheckSchema = z.object({
-  ok: z.boolean(),
-  problems: z.array(z.object({ clue: z.string(), problem: z.string() })),
-  differing: z.array(z.string())
-})
-export type PuzzleTextCheck = z.infer<typeof textCheckSchema>
-
-const renderedSchema = z.object({ names: z.record(z.string(), z.string()), text: z.record(z.string(), z.string()) })
-
-export class PuzzleToolError extends Error {}
-
-async function call<T>(py: PuzzlePython, args: string[], schema: z.ZodType<T>, input?: unknown): Promise<T> {
-  if (!sdkPython(py.sdkPath)) throw new PuzzleToolError(`the puzzle tools need the Ren'Py SDK (its Python runs the puzzle library): set sdkPath in config/renpy.md (now ${py.sdkPath})`)
-  const cli = path.join(py.packagesDir, 'vno_puzzles', 'cli.py')
-  const r = await runSdkPython(py.sdkPath, ['-I', cli, ...args], { input: input === undefined ? '' : JSON.stringify(input), timeoutMs: py.timeoutMs ?? 30_000 })
-  if (r.timedOut) throw new PuzzleToolError('the puzzle library did not answer within 30 s')
-  let json: unknown
-  try {
-    json = JSON.parse(r.stdout)
-  } catch {
-    throw new PuzzleToolError(`the puzzle library failed (exit ${r.code}): ${(r.stderr || r.stdout).trim().slice(-600)}`)
-  }
-  const err = (json as { error?: string } | null)?.error
-  if (err) throw new PuzzleToolError(err)
-  const parsed = schema.safeParse(json)
-  if (!parsed.success) throw new PuzzleToolError(`the puzzle library answered with an unexpected shape: ${parsed.error.issues[0]?.message ?? 'invalid'}`)
-  return parsed.data
+export interface PuzzleTextCheck {
+  ok: boolean
+  problems: { clue: string; problem: string }[]
+  differing: string[]
 }
 
-/** A new puzzle: the core and the canonical English names and sentences. Nothing is saved. */
-export const generatePuzzle = (py: PuzzlePython, o: { kind: string; size?: number; band: string; seed: number; motive?: boolean; attrs?: boolean }): Promise<PuzzleGenerated> =>
-  call(py, ['generate', '--kind', o.kind, ...(o.size ? ['--size', String(o.size)] : []), '--band', o.band, '--seed', String(o.seed), ...(o.motive ? ['--motive'] : []), ...(o.attrs ? ['--attrs'] : [])], puzzleGeneratedSchema)
+export class PuzzleToolError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PuzzleToolError'
+  }
+}
 
-/** The proof of a core: exactly one solution, solvable by deduction alone, its band, its steps. */
-export const solvePuzzle = (py: PuzzlePython, core: PuzzleCore): Promise<PuzzleProof> => call(py, ['solve'], puzzleProofSchema, core)
+export class PuzzleCliError extends PuzzleToolError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PuzzleCliError'
+  }
+}
 
-/** The canonical English sentences of a core with these names. */
-export const renderPuzzleText = (py: PuzzlePython, core: PuzzleCore, names?: Record<string, string>) => call(py, ['render-text'], renderedSchema, { puzzle: core, names })
+export type GeneratedPuzzle = PuzzleGenerated
 
-/** The flavour check: the reader's clues (written from the prose alone) must mean the same as the originals. */
-export const checkPuzzleText = (py: PuzzlePython, puzzle: PuzzleCore & { names: Record<string, string> }, readBack: ReadBackClue[], text?: Record<string, string>): Promise<PuzzleTextCheck> =>
-  call(py, ['check-text'], textCheckSchema, { puzzle, readBack, text })
+/**
+ * A new puzzle: the core and the canonical English names and sentences.
+ * Pure TypeScript implementation (no Python spawn needed).
+ */
+export async function generatePuzzle(
+  _py?: PuzzlePython,
+  o: {
+    kind?: string
+    size?: number | null
+    band?: string
+    seed?: number
+    motive?: boolean
+    attrs?: boolean
+    count?: number
+  } = {}
+): Promise<PuzzleGenerated> {
+  try {
+    const p = generate({
+      kind: o.kind ?? 'murdle',
+      size: o.size,
+      band: o.band ?? 'medium',
+      seed: o.seed ?? 1,
+      motive: o.motive,
+      attrs: o.attrs,
+      count: o.count
+    })
+    const parsed = puzzleGeneratedSchema.safeParse(p)
+    if (!parsed.success) {
+      throw new PuzzleToolError(`the puzzle engine produced an unexpected shape: ${parsed.error.issues[0]?.message ?? 'invalid'}`)
+    }
+    return parsed.data
+  } catch (err: any) {
+    if (err instanceof PuzzleToolError) throw err
+    throw new PuzzleToolError(err.message ?? String(err))
+  }
+}
+
+/**
+ * The proof of a core: exactly one solution, solvable by deduction alone, its band, its steps.
+ * Pure TypeScript implementation.
+ */
+export async function solvePuzzle(_py: PuzzlePython | undefined, core: PuzzleCore): Promise<PuzzleProof> {
+  try {
+    const proof = solve(core)
+    const parsed = puzzleProofSchema.safeParse(proof)
+    if (!parsed.success) {
+      throw new PuzzleToolError(`the puzzle solver answered with an unexpected shape: ${parsed.error.issues[0]?.message ?? 'invalid'}`)
+    }
+    return parsed.data
+  } catch (err: any) {
+    if (err instanceof PuzzleToolError) throw err
+    throw new PuzzleToolError(err.message ?? String(err))
+  }
+}
+
+/**
+ * The canonical English sentences of a core with these names.
+ * Pure TypeScript implementation.
+ */
+export async function renderPuzzleText(
+  _py: PuzzlePython | undefined,
+  core: PuzzleCore,
+  names?: Record<string, string>
+): Promise<{ names: Record<string, string>; text: Record<string, string> }> {
+  try {
+    return renderText(core, names)
+  } catch (err: any) {
+    throw new PuzzleToolError(err.message ?? String(err))
+  }
+}
+
+/**
+ * The flavour check: the reader's clues (written from the prose alone) must mean the same as the originals.
+ * Pure TypeScript implementation.
+ */
+export async function checkPuzzleText(
+  _py: PuzzlePython | undefined,
+  puzzle: PuzzleCore & { names: Record<string, string> },
+  readBack: ReadBackClue[],
+  text?: Record<string, string>
+): Promise<PuzzleTextCheck> {
+  try {
+    return checkText(puzzle, readBack, text)
+  } catch (err: any) {
+    throw new PuzzleToolError(err.message ?? String(err))
+  }
+}
+
+/**
+ * Run CLI-equivalent command in pure TypeScript (for tools / scripts / backwards compat).
+ */
+export async function runPuzzleCli(
+  cmd: string,
+  args: string[] = [],
+  input?: unknown,
+  _opts?: PuzzleCliOptions
+): Promise<any> {
+  try {
+    if (cmd === 'generate') {
+      let kind = 'murdle'
+      let size: number | undefined
+      let seed = 1
+      let band = 'medium'
+      let motive = false
+      let attrs = false
+
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--kind') kind = args[++i]!
+        else if (args[i] === '--size') size = parseInt(args[++i]!, 10)
+        else if (args[i] === '--seed') seed = parseInt(args[++i]!, 10)
+        else if (args[i] === '--band') band = args[++i]!
+        else if (args[i] === '--motive') motive = true
+        else if (args[i] === '--attrs') attrs = true
+      }
+      return generatePuzzle(undefined, { kind, size, seed, band, motive, attrs })
+    }
+
+    if (cmd === 'solve') {
+      return solvePuzzle(undefined, input as PuzzleCore)
+    }
+
+    if (cmd === 'check-text') {
+      const data = input as { puzzle: any; readBack: any[]; text?: Record<string, string> }
+      return checkPuzzleText(undefined, data.puzzle, data.readBack, data.text)
+    }
+
+    if (cmd === 'render-text') {
+      const data = input as { puzzle: any; names?: Record<string, string> }
+      return renderPuzzleText(undefined, data.puzzle, data.names)
+    }
+
+    if (cmd === 'check') {
+      const data = input as { puzzle: any; accusation?: any; marks?: any; statement?: string; evidence?: string; pressed?: string[] }
+      const p = data.puzzle
+      if (p.kind === 'testimony') {
+        return checkPresent(p, data.statement ?? '', data.evidence ?? '', data.pressed ?? [])
+      }
+      if (p.murder) {
+        return {
+          accusation: checkAccusation(p, data.accusation ?? {}),
+          wrong_marks: checkMarks(p, data.marks ?? {})
+        }
+      }
+      return {
+        solution: checkSolution(p, data.marks ?? {}),
+        wrong_marks: checkMarks(p, data.marks ?? {})
+      }
+    }
+
+    throw new PuzzleCliError(`unknown command "${cmd}"`)
+  } catch (err: any) {
+    if (err instanceof PuzzleCliError) throw err
+    throw new PuzzleCliError(err.message ?? String(err))
+  }
+}

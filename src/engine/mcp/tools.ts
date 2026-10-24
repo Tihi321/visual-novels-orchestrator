@@ -317,16 +317,6 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     def('vno_themes', 'The game themes a project can use (name, label, description, light, pixel).', z.object({}), async () => ({ themes: svc.listThemes().map((t) => ({ name: t.name, label: t.label, description: t.description, light: t.light, pixel: t.pixel })) })),
 
     // ---- build ----
-    def('vno_android_preflight', 'Check that the Android build can run (SDK, Java, signing). Returns ok and what is missing.', z.object({ slug }), async (a) => ({ result: await svc.androidPreflight(a.slug) })),
-    def(
-      'vno_android_build',
-      'Build the Android package of a built game (waits by default). bundle: an app bundle (aab) instead of an apk.',
-      z.object({ slug, bundle: z.boolean().optional(), wait }),
-      async (a) => {
-        const job = await svc.enqueueAndroid(a.slug, !!a.bundle)
-        return { job, ...(await settle(a.slug, a.wait ?? true)) }
-      }
-    ),
     def('vno_renpy_config_get', "The Ren'Py settings: SDK folder, resolution, image format, and whether the SDK was found.", z.object({}), async () => ({ config: await svc.renpyConfigView() })),
     def(
       'vno_renpy_config_set',

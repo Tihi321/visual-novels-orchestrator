@@ -309,3 +309,75 @@ export function themeFontFaces(theme: Theme, folder: string): string {
     face(`vnp-${theme.name}`, theme.fonts.text) + face(`vnp-${theme.name}-name`, theme.fonts.name) + face(`vnp-${theme.name}-bold`, theme.fonts.bold)
   )
 }
+
+
+/**
+ * CSS stylesheet variables and styling rules for the HTML5 web player runtime.
+ */
+export function renderThemeCss(theme: Theme, fonts: { text: string; name: string; interface: string; bold: string | null }): string {
+  const c = theme.colors
+  const css = (hex: string): string => {
+    const x = parseHex(hex)
+    return `rgba(${x.r},${x.g},${x.b},${+x.a.toFixed(3)})`
+  }
+  const tb = parseHex(theme.textbox.color)
+  const nb = parseHex(theme.namebox.color)
+  const ch = theme.choice
+  const choiceBg = parseHex(ch.color)
+  const choiceHover = parseHex(ch.hoverColor ?? c.muted)
+
+  const fontText = fonts.text.includes('/') || fonts.text.endsWith('.ttf') || fonts.text.endsWith('.otf') || fonts.text.endsWith('.woff2')
+    ? `"${fonts.text.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '')}", "DejaVu Sans", sans-serif`
+    : `"${fonts.text}", "DejaVu Sans", sans-serif`
+  const fontName = fonts.name.includes('/') || fonts.name.endsWith('.ttf') || fonts.name.endsWith('.otf') || fonts.name.endsWith('.woff2')
+    ? `"${fonts.name.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '')}", ${fontText}`
+    : `"${fonts.name}", ${fontText}`
+  const fontIface = fonts.interface.includes('/') || fonts.interface.endsWith('.ttf') || fonts.interface.endsWith('.otf') || fonts.interface.endsWith('.woff2')
+    ? `"${fonts.interface.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '')}", sans-serif`
+    : `"${fonts.interface}", sans-serif`
+
+  return `
+:root {
+  --vno-color-accent: ${css(c.accent)};
+  --vno-color-bg: ${css(c.background)};
+  --vno-color-text: ${css(c.text)};
+  --vno-color-idle: ${css(c.idle)};
+  --vno-color-hover: ${css(c.hover)};
+  --vno-color-selected: ${css(c.selected)};
+  --vno-color-insensitive: ${css(c.insensitive)};
+  --vno-color-muted: ${css(c.muted)};
+  
+  --vno-textbox-bg: rgba(${tb.r},${tb.g},${tb.b},${+(theme.textbox.opacity * tb.a).toFixed(3)});
+  --vno-textbox-radius: ${theme.textbox.radius}px;
+  --vno-textbox-border: ${theme.textbox.borderColor ? `4px solid ${css(theme.textbox.borderColor)}` : 'none'};
+  --vno-textbox-border-color: ${theme.textbox.borderColor ? css(theme.textbox.borderColor) : 'transparent'};
+
+  --vno-namebox-bg: rgba(${nb.r},${nb.g},${nb.b},${+(theme.namebox.opacity * nb.a).toFixed(3)});
+  --vno-namebox-radius: ${theme.namebox.radius}px;
+  --vno-namebox-text-color: ${theme.namebox.textColor ? css(theme.namebox.textColor) : 'inherit'};
+
+  --vno-choice-bg: rgba(${choiceBg.r},${choiceBg.g},${choiceBg.b},${+choiceBg.a.toFixed(3)});
+  --vno-choice-hover-bg: rgba(${choiceHover.r},${choiceHover.g},${choiceHover.b},${+choiceHover.a.toFixed(3)});
+  --vno-choice-radius: ${ch.radius}px;
+  --vno-choice-border: ${ch.borderColor ? `2px solid ${css(ch.borderColor)}` : 'none'};
+  --vno-choice-text-color: ${css(ch.textColor ?? c.idle)};
+  --vno-choice-hover-text-color: ${css(ch.hoverTextColor ?? c.selected)};
+
+  --vno-font-text: ${fontText};
+  --vno-font-name: ${fontName};
+  --vno-font-interface: ${fontIface};
+
+  --vno-size-text: ${theme.sizes.text}px;
+  --vno-size-name: ${theme.sizes.name}px;
+  --vno-size-interface: ${theme.sizes.interface}px;
+  --vno-size-label: ${theme.sizes.label}px;
+  --vno-size-title: ${theme.sizes.title}px;
+  --vno-size-choice: ${theme.sizes.choice}px;
+
+  --vno-transition-dissolve: ${theme.transitions.dissolve}s;
+  --vno-transition-show: ${theme.transitions.show}s;
+  --vno-transition-fade: ${theme.transitions.fade}s;
+  --vno-pixelated: ${theme.pixel ? 'pixelated' : 'auto'};
+}
+`.trim()
+}

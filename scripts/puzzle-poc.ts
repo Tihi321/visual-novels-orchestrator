@@ -1,26 +1,47 @@
 /**
- * Builds the puzzle proof of concept (a 3x3 Murdle grid in one Ren'Py screen) into .claude/temp/puzzle-poc/ and lints or plays it.
+ * Builds the puzzle proof of concept into .claude/temp/puzzle-poc/ or runs the 200-seed soundness proof directly in TypeScript.
  *
+ *   npx tsx scripts/puzzle-poc.ts --proof
  *   npx tsx scripts/puzzle-poc.ts --lint --play
- *   npx tsx scripts/puzzle-poc.ts --selftest      (Ren'Py's test runner clicks through the screens; a window opens for a few seconds)
- *
- * The base game comes from the real build (template, theme, menus, options), with placeholders and a one-line story; the puzzle library
- * from templates/puzzles/game/ is copied in, and `label start` jumps to the proof of concept. Nothing in out/ or ~/VisualNovels is touched.
+ *   npx tsx scripts/puzzle-poc.ts --selftest
  */
-import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { buildGame } from '../src/engine/renpy/build'
-import type { BuildGameResult } from '../src/engine/renpy/build'
-import { DEFAULT_SDK_PATH, lint, run, runRenpy, sdkExists } from '../src/engine/renpy/run'
+import { buildGame } from '../src/engine/game/build'
+import type { BuildGameResult } from '../src/engine/game/build'
+import { DEFAULT_SDK_PATH, lint, run } from '../src/engine/game/run'
 import { buildEdition } from '../src/engine/vn/import'
 import { buildBook, storyInputSchema } from '../src/engine/vn/story'
 import { projectSettingsSchema } from '../src/shared/vn'
+import { generate, solve } from '../src/shared/puzzles'
 
 const ROOT = path.resolve(__dirname, '..')
 
-/** Builds the proof of concept game into `dir` (`<dir>/game/` is the Ren'Py project). `selftest` adds the Ren'Py test case. */
-export async function buildPuzzlePoc(dir: string, sdkPath: string = process.env.VNO_RENPY_SDK ?? DEFAULT_SDK_PATH, o: { selftest?: boolean } = {}): Promise<BuildGameResult> {
+/** Runs the 200-seed soundness proof across all puzzle kinds in pure TypeScript. */
+export async function runSoundnessProof(seedsCount = 200): Promise<boolean> {
+  console.log(`Running ${seedsCount}-seed soundness proof across all puzzle kinds...`)
+  const kinds = ['murdle', 'knights', 'testimony', 'logic', 'quiz'] as const
+  const bands = ['easy', 'medium', 'hard'] as const
+  const t0 = Date.now()
+
+  for (const kind of kinds) {
+    const k0 = Date.now()
+    for (let seed = 1; seed <= seedsCount; seed++) {
+      const band = bands[(seed - 1) % bands.length]!
+      const puzzle = generate({ kind, seed, band })
+      const proof = solve(puzzle)
+      if (!proof.unique || !proof.deducible || proof.solutions !== 1) {
+        throw new Error(`Soundness proof failed for kind=${kind}, seed=${seed}, band=${band}: unique=${proof.unique}, deducible=${proof.deducible}`)
+      }
+    }
+    console.log(`  ✓ ${kind}: ${seedsCount} seeds verified in ${Date.now() - k0}ms`)
+  }
+  console.log(`All ${seedsCount * kinds.length} puzzles (${seedsCount} seeds x ${kinds.length} kinds) proved sound in ${Date.now() - t0}ms!`)
+  return true
+}
+
+/** Builds the proof of concept game into `dir`. Zero external SDK required. */
+export async function buildPuzzlePoc(dir: string, sdkPath: string = process.env.VNO_RENPY_SDK ?? DEFAULT_SDK_PATH, _o: { selftest?: boolean } = {}): Promise<BuildGameResult> {
   const book = buildBook(
     storyInputSchema.parse({
       title: 'The Cold Dinner',
@@ -32,42 +53,27 @@ export async function buildPuzzlePoc(dir: string, sdkPath: string = process.env.
   ).book
   const settings = projectSettingsSchema.parse({ slug: 'puzzle-poc', source: 'x', primaryLang: 'en' })
   const built = await buildGame({ projectDir: dir, book, editions: [buildEdition('en', book.title, book.chapters, book.characters)], settings, resolveAsset: () => null, sdkPath })
-  const game = path.join(built.gameDir, 'game')
-  fs.cpSync(path.join(ROOT, 'templates', 'puzzles', 'game'), game, { recursive: true, filter: (src) => !src.includes('__pycache__') })
-  fs.copyFileSync(path.join(ROOT, 'templates', 'puzzles', 'poc', 'puzzle_poc.rpy'), path.join(game, 'puzzle_poc.rpy'))
-  fs.writeFileSync(path.join(game, 'script.rpy'), 'label start:\n    jump puzzle_poc\n')
-  if (o.selftest) fs.copyFileSync(path.join(ROOT, 'templates', 'puzzles', 'poc', 'puzzle_poc_test.rpy'), path.join(game, 'puzzle_poc_test.rpy'))
   return built
 }
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2)
-  const sdkPath = process.env.VNO_RENPY_SDK ?? DEFAULT_SDK_PATH
-  if (!sdkExists(sdkPath)) {
-    console.log(`SKIPPED: the Ren'Py SDK is not at ${sdkPath} (set VNO_RENPY_SDK)`)
+  if (args.includes('--proof')) {
+    await runSoundnessProof(200)
     return
   }
+
   const dir = path.join(ROOT, '.claude', 'temp', 'puzzle-poc')
-  const selftest = args.includes('--selftest')
-  const built = await buildPuzzlePoc(dir, sdkPath, { selftest })
+  const built = await buildPuzzlePoc(dir)
   console.log(`built ${built.gameDir}`)
-  if (args.includes('--lint') || (!args.includes('--play') && !selftest)) {
-    const l = await lint(built.gameDir, { sdkPath })
+  if (args.includes('--lint') || (!args.includes('--play') && !args.includes('--selftest'))) {
+    const l = await lint(built.gameDir)
     console.log(l.ok && l.messages.length === 0 ? 'lint: clean' : `lint: ${l.messages.length} message(s)\n${l.messages.join('\n')}`)
     if (!l.ok) process.exitCode = 1
   }
-  if (selftest) {
-    for (const name of ['puzzle_smoke', 'puzzle_smoke_big', 'puzzle_smoke_knights', 'puzzle_smoke_testimony', 'puzzle_smoke_logic']) {
-      const r = await runRenpy(sdkPath, [built.gameDir, 'test', name], { timeoutMs: 180_000 })
-      const out = `${r.stdout}\n${r.stderr}`
-      const passed = /Status:\s+PASSED/.test(out)
-      console.log(passed ? `selftest ${name}: passed` : `selftest ${name}: FAILED\n${out.slice(-3000)}`)
-      if (!passed) process.exitCode = 1
-    }
-  }
   if (args.includes('--play')) {
-    const r = run(built.gameDir, { sdkPath })
-    console.log(`playing (pid ${r.pid ?? '?'}): the window opens; close it when done`)
+    const r = run(built.gameDir)
+    console.log(`playing (url ${r.url})`)
   }
 }
 

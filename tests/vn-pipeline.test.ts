@@ -4,8 +4,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { writeMd } from '../src/engine/store/atomic'
 import { REVIEW_RETRIES } from '../src/engine/vn/handlers'
-import type { StageCues } from '../src/engine/renpy/stage'
-import { DEFAULT_SDK_PATH, sdkExists } from '../src/engine/renpy/run'
+import type { StageCues } from '../src/engine/game/stage'
 import { book, failures, jsonAfter, makeVnEnv, waitIdle } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
 
@@ -145,7 +144,7 @@ describe('stage and build', () => {
     const detail = await svc.detail(slug)
     expect(detail.build?.ok).toBe(true)
     expect(detail.build?.placeholders).toEqual([])
-    expect(detail.lint?.skipped).toBe(true)
+    expect(detail.lint?.ok).toBe(true)
     expect(detail.resolvedTheme).toBeTruthy()
     // invalid stage answers are dropped: a slot twice, a character that is not in the cast beat
     const events = env.events.filter((e) => e.type === 'build.result')
@@ -154,7 +153,7 @@ describe('stage and build', () => {
 
   it('drops stage answers that do not fit the book', async () => {
     const { mergeChapterCues } = await import('../src/engine/vn/agents/stage-director')
-    const { defaultCues } = await import('../src/engine/renpy/stage')
+    const { defaultCues } = await import('../src/engine/game/stage')
     const { loadBook } = await import('./fixtures/vn/load')
     const vn = loadBook('linear')
     const cues = defaultCues(vn)
@@ -168,9 +167,9 @@ describe('stage and build', () => {
   })
 })
 
-describe.skipIf(!sdkExists(process.env.VNO_RENPY_SDK ?? DEFAULT_SDK_PATH))('real Ren\'Py', () => {
+describe('web game build and lint', () => {
   it('builds the soother with placeholders and lint is clean', { timeout: 300_000 }, async () => {
-    env = await makeVnEnv({ sdk: process.env.VNO_RENPY_SDK ?? DEFAULT_SDK_PATH })
+    env = await makeVnEnv()
     const svc = env.engine.vn
     const { slug } = await svc.importProject(book('soother'))
     await svc.runPipeline(slug, 'build')

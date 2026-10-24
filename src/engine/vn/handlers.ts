@@ -19,12 +19,11 @@ import type { ChatMessage } from '../models/types'
 import type { JobFile } from '../queue/jobs'
 import type { HandlerOptions, JobContext } from '../queue/scheduler'
 import type { Scheduler } from '../queue/scheduler'
-import { buildGame } from '../renpy/build'
-import type { VoiceSource } from '../renpy/emit'
-import { androidBuild } from '../renpy/android'
-import { lint, sdkExists } from '../renpy/run'
-import { addScenePlan, defaultCues, fillCues } from '../renpy/stage'
-import type { StageCues } from '../renpy/stage'
+import { buildGame } from '../game/build'
+import type { VoiceSource } from '../game/emit'
+import { lint } from '../game/run'
+import { addScenePlan, defaultCues, fillCues } from '../game/stage'
+import type { StageCues } from '../game/stage'
 import { alignEdition } from './align'
 import { planArt } from './agents/art-director'
 import { reviewImage } from './agents/art-critic'
@@ -783,7 +782,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     { noModel: true, step: false }
   )
 
-  // ---- build, lint, android ----
+  // ---- build, lint ----
 
   /** The voice clips of the project, for the Ren'Py emitter. */
   const voiceSource = async (slug: string, settings: ProjectSettings): Promise<VoiceSource | undefined> => {
@@ -805,10 +804,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       const { settings } = await store.loadSettings(slug)
       const book = await store.loadBook(slug)
       const renpy = await loadRenpyConfig(deps.dataDir)
-      const sdk = sdkExists(renpy.sdkPath)
-      const all = await store.loadEditions(slug, settings.primaryLang)
-      // other editions need the SDK (`renpy translate`); without it only the primary language is built
-      const editions = sdk ? all : all.filter((e) => e.lang === settings.primaryLang)
+      const editions = await store.loadEditions(slug, settings.primaryLang)
       const manifest = await store.loadAssets(slug)
       const dir = store.dir(slug)
       const byId = new Map(manifest.assets.map((a) => [a.id, a]))
@@ -837,7 +833,6 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         fontsDir: dataFolders(deps.dataDir).fonts
       })
       const messages = [...r.warnings]
-      if (!sdk) messages.push(`the Ren'Py SDK was not found at ${renpy.sdkPath}: the menu images keep the template colours, other editions are not translated and the game cannot be linted or run (set sdkPath in config/renpy.md)`)
       const result: BuildResult = { slug, action: 'build', ok: true, messages, at: nowIso(), gameDir: r.gameDir, theme: r.theme, placeholders: r.placeholders, translated: r.translated }
       await store.writeJson(slug, 'build.json', result)
       deps.emit({ type: 'build.result', result })
@@ -853,9 +848,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       const renpy = await loadRenpyConfig(deps.dataDir)
       const gameDir = svc.gameDir(slug)
       let result: BuildResult
-      if (!sdkExists(renpy.sdkPath)) {
-        result = { slug, action: 'lint', ok: false, skipped: true, messages: [`lint skipped: the Ren'Py SDK was not found at ${renpy.sdkPath} (set sdkPath in config/renpy.md)`], at: nowIso(), gameDir }
-      } else if (!existsSync(path.join(gameDir, 'game'))) {
+      if (!existsSync(path.join(gameDir, 'index.html')) && !existsSync(path.join(gameDir, 'game', 'index.html')) && !existsSync(path.join(gameDir, 'game-data.json'))) {
         result = { slug, action: 'lint', ok: false, skipped: true, messages: ['lint skipped: the game has not been built yet'], at: nowIso(), gameDir }
       } else {
         const l = await lint(gameDir, { sdkPath: renpy.sdkPath })
@@ -867,22 +860,6 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       return result.skipped ? result.messages[0]! : result.ok ? `lint is clean${blocks ? ` (${blocks} dialogue blocks)` : ''}` : `lint found ${result.messages.length} problem(s)`
     },
     { noModel: true }
-  )
-
-  reg(
-    TASKS.android,
-    async (ctx, slug) => {
-      const bundle = !!bodyOf<{ bundle: boolean }>(ctx.jobBody).bundle
-      const renpy = await loadRenpyConfig(deps.dataDir)
-      const gameDir = svc.gameDir(slug)
-      const dest = path.join(store.dir(slug), 'android')
-      const r = await androidBuild(gameDir, { sdkPath: renpy.sdkPath, destination: dest, bundle })
-      const result: BuildResult = { slug, action: 'android', ok: r.ok, messages: r.ok ? [`package written to ${dest}`] : r.problems, files: r.files, at: nowIso(), gameDir }
-      deps.emit({ type: 'build.result', result })
-      if (r.output) ctx.log(r.output.slice(-2000))
-      return r.ok ? `android build ok: ${r.files.join(', ') || dest}` : `android build did not run: ${r.problems.join(' | ')}`
-    },
-    { noModel: true, step: false }
   )
 
   // ---- summary ----
