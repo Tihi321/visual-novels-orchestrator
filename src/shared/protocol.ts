@@ -35,6 +35,8 @@ export interface ModelSummary {
   model: string
   family: string
   local: boolean
+  /** The fallback group it belongs to (`paid`, `strata`, `lmstudio`, or a provider id), see `ModelGroup`. Missing for the client provider. */
+  group?: string
   /** True when the provider is switched on and usable (has a key, or is local). */
   enabled: boolean
   /** The pickers offer it: not hidden in the Models dialog (config/models.md). */
@@ -52,8 +54,20 @@ export interface ModelSummary {
 /** A model provider for the Models dialog (search services are left out). */
 export interface ProviderSummary {
   id: string
+  /** The name shown on screen (`name` in providers.md), else the id. */
+  name: string
   kind: string
   local: boolean
+  /** Added in the Add provider form: it can be edited and removed there. */
+  custom: boolean
+  /** Switched on in providers.md (it may still be unavailable: no key). */
+  enabled: boolean
+  baseUrl?: string
+  /** Sends the JSON schema as `response_format`. */
+  jsonSchema: boolean
+  /** The key variable (`api_key_env`), and whether a key was found for it. */
+  keyName?: string
+  keySet: boolean
   /** Switched on and usable (has a key, or is local). */
   available: boolean
   /** Why it isn't available: switched off, or no key. */
@@ -118,11 +132,9 @@ export interface AgentSummary {
 }
 
 export interface SettingsSummary {
-  /** `provider/model` behind the role aliases `paid`, `strata` and `lmstudio`. */
-  defaultPaidModel: string
-  defaultStrataModel: string
-  defaultLmstudioModel: string
-  /** `model_order` in settings.md: the groups `paid`, `strata`, `lmstudio` in the order every role tries them. Empty: each role's own order. */
+  /** `provider/model` behind each role alias, per group: `paid`, `strata`, `lmstudio` and the id of every other provider group (`group_defaults` in settings.md). */
+  groupDefaults: Record<string, string>
+  /** `model_order` in settings.md: the groups (`paid`, `strata`, `lmstudio`, a provider id) in the order every role tries them. Empty: each role's own order. */
   modelOrder: ModelGroup[]
   /** How the engine loads LM Studio models: requests at once, context window, idle minutes before unloading. */
   lmstudioParallel: number
@@ -132,7 +144,8 @@ export interface SettingsSummary {
   scriptoriumData: string
 }
 
-export type ModelGroup = 'paid' | 'strata' | 'lmstudio'
+/** A fallback group: `paid` (every non-local seed API provider), or a provider id (`strata`, `lmstudio`, `acp`, a custom provider). */
+export type ModelGroup = string
 
 export interface SnapshotEvent {
   type: 'snapshot'
@@ -152,6 +165,8 @@ export interface SnapshotEvent {
   settings: SettingsSummary
   /** Names of secrets that are set (never their values): the provider key variables. */
   secretsSet: string[]
+  /** Every key variable the app may store (`api_key_env` of the providers), for the Settings key select. */
+  keyNames: string[]
   at: string
 }
 
@@ -353,7 +368,11 @@ export type EngineEvent =
       agent?: string
       book?: string
     }
-  | { type: 'secrets.updated'; secretsSet: string[] }
+  | { type: 'secrets.updated'; secretsSet: string[]; keyNames?: string[] }
+  /** The answer to `testCustomProvider`: `GET /models` worked (`count` models) or failed (`error`). */
+  | { type: 'provider.tested'; ok: boolean; count?: number; error?: string; at: string }
+  /** The answer to `saveCustomProvider` and `removeCustomProvider`: done, or why it was refused. */
+  | { type: 'provider.saved'; ok: boolean; id?: string; removed?: boolean; error?: string }
   /** The answer to `detectModels`: every chat model the provider lists, or why it couldn't be asked. */
   | { type: 'models.catalog'; provider: string; models: CatalogModel[]; error?: string; at: string }
   // ---- VN: answers to the queries, and what changes while jobs run ----
@@ -468,7 +487,16 @@ export type Command =
   /** Shows models in the pickers, or hides them (config/models.md). A listed model that isn't known yet is added with its listed price. */
   | { type: 'showModels'; refs: string[]; shown: boolean }
   /** Adds a model by its id to `picked` in config/models.md, for one the provider doesn't list. A paid provider needs both prices (USD per 1M tokens, 0 for free). */
-  | { type: 'addModel'; provider: string; id: string; priceIn?: number; priceOut?: number; context?: number }
+  | { type: 'addModel'; provider: string; id: string; priceIn?: number; priceOut?: number; context?: number; vision?: boolean }
+  /**
+   * Adds a provider to config/providers.md (`custom: true`), or edits the custom provider `id`. The key goes to the credential store (an empty
+   * `apiKey` on an edit keeps the stored one). `free`: a local, keyless provider with no budget. Answers with `provider.saved`.
+   */
+  | { type: 'saveCustomProvider'; id?: string; name: string; baseUrl: string; apiKey?: string; free: boolean; jsonSchema: boolean; concurrency: number | 'auto'; enabled: boolean }
+  /** Removes a custom provider, its stored key, and what config/models.md and config/settings.md say about it. Answers with `provider.saved`. */
+  | { type: 'removeCustomProvider'; id: string }
+  /** Calls `GET <baseUrl>/models` to see whether the server answers. `id`: an edited provider, whose stored key is used when `apiKey` is empty. Answers with `provider.tested`. */
+  | { type: 'testCustomProvider'; baseUrl: string; apiKey?: string; id?: string }
   /**
    * Sets a provider's limits in config/models.md, over providers.md: requests at once (not for a server that reports its own),
    * per minute and per day. 0 for `rpm` or `rpd` means no limit; a field left out keeps its value.
@@ -673,6 +701,9 @@ const COMMAND_TYPE_SET: Record<CommandType, true> = {
   detectModels: true,
   showModels: true,
   addModel: true,
+  saveCustomProvider: true,
+  removeCustomProvider: true,
+  testCustomProvider: true,
   setProviderLimits: true,
   snapshot: true,
   ping: true

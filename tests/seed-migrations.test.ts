@@ -51,23 +51,25 @@ describe('seed migrations', () => {
   it('adds the client provider to an edited providers.md and keeps its comments, providers and body', async () => {
     await oldFolder(OLD)
     const res = await initDataFolder(data, seedDir)
-    expect(res.migrated).toEqual(['providers-client-v1'])
+    expect(res.migrated).toEqual(['providers-client-v1', 'providers-acp-v1'])
     const text = await readFile(file(), 'utf8')
     expect(text).toContain('# my own note about the server')
     expect(text.endsWith('# My providers\n\nBody text stays as it is.\n')).toBe(true)
     const providers = await providersOf()
-    expect(providers.map((p) => p.id)).toEqual(['lmstudio', 'client'])
+    expect(providers.map((p) => p.id)).toEqual(['lmstudio', 'client', 'acp'])
     expect(providers[0]).toMatchObject({ concurrency: 2, base_url: 'http://localhost:1234/v1' })
-    expect(providers[1]).toMatchObject({ kind: 'client', models: [{ id: 'claude-code', context: 200000 }] })
-    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1'])
+    // the client entry comes from the seed, so it already has antigravity
+    expect(providers[1]).toMatchObject({ kind: 'client', models: [{ id: 'claude-code', context: 200000 }, { id: 'antigravity', vision: true, context: 1000000 }] })
+    expect(providers[2]).toMatchObject({ id: 'acp', kind: 'openai-compat', enabled: false, local: true, base_url: 'http://127.0.0.1:7461/v1', concurrency: 2, json_schema: false, discover: true, models: [] })
+    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1'])
   })
 
   it('gives a client model without context 200000 and never changes one that has a value', async () => {
     await oldFolder(OLD.replace('    models: []\n', '    models: []\n  - id: client\n    kind: client\n    models:\n      - id: claude-code\n      - id: other\n        context: 50000\n'))
     const res = await initDataFolder(data, seedDir)
-    expect(res.migrated).toEqual(['providers-client-context-v1'])
+    expect(res.migrated).toEqual(['providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1'])
     const client = (await providersOf()).find((p) => p.id === 'client')!
-    expect(client.models).toEqual([{ id: 'claude-code', context: 200000 }, { id: 'other', context: 50000 }])
+    expect(client.models).toEqual([{ id: 'claude-code', context: 200000 }, { id: 'other', context: 50000 }, { id: 'antigravity', vision: true, context: 1000000 }])
   })
 
   it('does not bring back a client entry you deleted after the migration ran', async () => {
@@ -104,6 +106,20 @@ describe('seed migrations', () => {
     expect(res.updated).toContain('config/providers.md')
     expect(res.migrated).toEqual([])
     expect(await readFile(file(), 'utf8')).toBe(seedText)
-    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1'])
+    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1'])
+  })
+
+  it('adds acp and the antigravity client model once, and does not bring them back when you delete them', async () => {
+    await oldFolder(OLD.replace('    models: []\n', '    models: []\n  - id: client\n    kind: client\n    models:\n      - id: claude-code\n        context: 200000\n'))
+    const first = await initDataFolder(data, seedDir)
+    expect(first.migrated).toEqual(['providers-acp-v1', 'providers-client-antigravity-v1'])
+    const providers = await providersOf()
+    expect(providers.map((p) => p.id)).toEqual(['lmstudio', 'client', 'acp'])
+    expect(providers[1]!.models!.map((m) => m.id)).toEqual(['claude-code', 'antigravity'])
+    expect((await readFile(file(), 'utf8'))).toContain('# my own note about the server')
+    // delete both: they stay deleted
+    await writeFile(file(), OLD.replace('    models: []\n', '    models: []\n  - id: client\n    kind: client\n    models:\n      - id: claude-code\n        context: 200000\n'))
+    expect((await initDataFolder(data, seedDir)).migrated).toEqual([])
+    expect((await providersOf()).map((p) => p.id)).toEqual(['lmstudio', 'client'])
   })
 })

@@ -27,7 +27,7 @@ export function taskView(t: ClientTask): { view: Record<string, unknown>; images
   const multi = turns.filter((m) => m.role === 'user').length > 1 || turns.some((m) => m.role === 'assistant')
   const view: Record<string, unknown> = {
     taskId: t.id,
-    meta: { job: t.job, call: t.call, role: t.role, task: t.task, book: t.book, agent: t.agent, unit: t.unit },
+    meta: { job: t.job, call: t.call, role: t.role, task: t.task, book: t.book, agent: t.agent, unit: t.unit, client: t.client },
     turns: multi ? 'multi' : 'single',
     system,
     ...(multi ? { messages: turns } : { user: turns.map((m) => m.content).join('\n\n') }),
@@ -52,8 +52,9 @@ export function clientTools(svc: VnService, def: ToolDef, opts: McpOptions): Too
     ),
     def(
       'vno_get_task',
-      'Take the oldest waiting model call (leased to you for 30 minutes). Returns the prompt, each text once (`turns: single` gives system and user; `turns: multi`, a repair round or the draw loop, gives system and messages, the turns in order, and no user), the JSON schema if the answer must be JSON, and how to answer. Write the answer and send it with vno_submit_task. Vision tasks (art-critic) also return the images. {none: true} when nothing waits.',
+      'Take the oldest waiting model call (leased to you for 30 minutes). Returns the prompt, each text once (`turns: single` gives system and user; `turns: multi`, a repair round or the draw loop, gives system and messages, the turns in order, and no user), the JSON schema if the answer must be JSON, and how to answer. Write the answer and send it with vno_submit_task. Vision tasks (art-critic) also return the images. {none: true} when nothing waits. A task is for one client model: without `client` you get the claude-code ones; Antigravity passes client: "antigravity".',
       z.object({
+        client: z.string().optional().describe('The client model you are, the id after client/: claude-code (the default) or antigravity. Antigravity passes client: "antigravity"'),
         role: z.string().optional().describe('Only a task of this role, for example art-director or stage-director'),
         book: z.string().optional().describe('Only a task of this project (slug)'),
         task: z.string().optional().describe('Only this task, for example art-plan or stage')

@@ -50,6 +50,12 @@ export interface VnState extends VnData, McpData {
   servers: ServerStatus[]
   settings: SettingsSummary | null
   secretsSet: string[]
+  /** Every key variable the Settings key select offers (from the providers). */
+  keyNames: string[]
+  /** The last answer to `testCustomProvider` in the Add provider form: `pending` until it comes. */
+  providerTest: { pending?: boolean; ok?: boolean; count?: number; error?: string } | null
+  /** The last answer to `saveCustomProvider` / `removeCustomProvider`: `at` changes with every answer. */
+  providerSaved: { ok: boolean; id?: string; removed?: boolean; error?: string; at: number } | null
   page: Page
 }
 
@@ -58,6 +64,8 @@ export interface VnActions {
   setPage(page: Page): void
   /** The Models page asked a provider for its models: show it as loading until `models.catalog` comes. */
   markCatalogLoading(provider: string): void
+  /** The Add provider form pressed Test: show it as pending until `provider.tested` comes. `null` clears the result. */
+  markProviderTesting(pending: boolean): void
   /** Opens the Book page on a project. */
   openProject(slug: string): void
   /** Shows a settings change at once, before the engine confirms it. */
@@ -84,6 +92,9 @@ function initial(): VnState {
     servers: [],
     settings: null,
     secretsSet: [],
+    keyNames: [],
+    providerTest: null,
+    providerSaved: null,
     page: 'library',
     ...initialVn(),
     ...initialMcp()
@@ -129,7 +140,8 @@ export function reduceEvent(s: VnState, e: EngineEvent): Partial<VnState> {
         roleDefaults: e.roleDefaults,
         servers: e.servers ?? [],
         settings: e.settings,
-        secretsSet: e.secretsSet
+        secretsSet: e.secretsSet,
+        keyNames: e.keyNames ?? s.keyNames
       }
     }
     case 'agent.hired':
@@ -155,7 +167,11 @@ export function reduceEvent(s: VnState, e: EngineEvent): Partial<VnState> {
     case 'servers':
       return { servers: e.servers }
     case 'secrets.updated':
-      return { secretsSet: e.secretsSet }
+      return { secretsSet: e.secretsSet, keyNames: e.keyNames ?? s.keyNames }
+    case 'provider.tested':
+      return { providerTest: { ok: e.ok, count: e.count, error: e.error } }
+    case 'provider.saved':
+      return { providerSaved: { ok: e.ok, id: e.id, removed: e.removed, error: e.error, at: Date.now() } }
     case 'models.catalog':
       return { catalogs: { ...s.catalogs, [e.provider]: { models: e.models, error: e.error, at: e.at } } }
     case 'mcp.status':
@@ -165,7 +181,7 @@ export function reduceEvent(s: VnState, e: EngineEvent): Partial<VnState> {
   }
 }
 
-const ACTION_KEYS = ['applyEvents', 'setPage', 'markCatalogLoading', 'openProject', 'clearImport', 'patchSettingsLocal'] as const
+const ACTION_KEYS = ['applyEvents', 'setPage', 'markCatalogLoading', 'markProviderTesting', 'openProject', 'clearImport', 'patchSettingsLocal'] as const
 
 export const vnStore = createStore<VnStore>()((set, get) => ({
   ...initial(),
@@ -189,6 +205,9 @@ export const vnStore = createStore<VnStore>()((set, get) => ({
   },
   clearImport() {
     set({ importPreview: null, lastImported: null })
+  },
+  markProviderTesting(pending) {
+    set({ providerTest: pending ? { pending: true } : null })
   },
   markCatalogLoading(provider) {
     const cur = get().catalogs[provider] ?? { models: [] }

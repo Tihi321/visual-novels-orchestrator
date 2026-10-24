@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { sendCommand } from '../api'
 import { useVn } from '../store/hooks'
 import { vnStore } from '../store/store'
-import type { ModelGroup, ModelSummary, ProviderSummary, SettingsSummary } from '../../shared/protocol'
+import type { ModelGroup, ProviderSummary, SettingsSummary } from '../../shared/protocol'
 
 interface Row {
   ref: string
@@ -20,7 +20,6 @@ interface Row {
 
 const SOURCE_LABEL = { config: 'providers.md', discovered: 'found', picked: 'added' } as const
 
-type AliasKey = 'defaultPaidModel' | 'defaultStrataModel' | 'defaultLmstudioModel'
 type LoadKey = 'lmstudioParallel' | 'lmstudioContext' | 'lmstudioTtlMinutes'
 type LimitKey = 'concurrency' | 'rpm' | 'rpd'
 /** A provider's limits as typed: empty per minute or per day means no limit. */
@@ -37,13 +36,30 @@ function todayText(p: ProviderSummary): string {
   return `Today: ${p.requestsToday}${p.rpd ? ` of ${p.rpd}` : ''} requests. The day starts again at ${at} (midnight UTC).`
 }
 
-/** The model groups behind the aliases: their name on screen, their default-model setting and which models they may point at. */
-const GROUPS: Record<ModelGroup, { label: string; key: AliasKey; pick: (m: ModelSummary) => boolean }> = {
-  paid: { label: 'API', key: 'defaultPaidModel', pick: (m) => !m.local },
-  strata: { label: 'Strata', key: 'defaultStrataModel', pick: (m) => m.provider === 'strata' },
-  lmstudio: { label: 'LM Studio', key: 'defaultLmstudioModel', pick: (m) => m.provider === 'lmstudio' }
+/** The groups that always have a row: API (every non-local built-in provider), Strata and LM Studio. Every other provider is its own group once it has a ticked model. */
+const BASE_GROUPS: ModelGroup[] = ['paid', 'strata', 'lmstudio']
+const BASE_LABELS: Record<string, string> = { paid: 'API', strata: 'Strata', lmstudio: 'LM Studio' }
+
+/** The Add provider form as typed. `id` is set when editing a custom provider. */
+interface ProviderForm {
+  id?: string
+  name: string
+  baseUrl: string
+  apiKey: string
+  free: boolean
+  jsonSchema: boolean
+  /** A number, or `auto`. */
+  concurrency: string
+  enabled: boolean
+  saving?: boolean
+  error?: string
 }
-const DEFAULT_ORDER: ModelGroup[] = ['paid', 'strata', 'lmstudio']
+
+const emptyForm = (): ProviderForm => ({ name: '', baseUrl: 'http://127.0.0.1:7461/v1', apiKey: '', free: true, jsonSchema: false, concurrency: '2', enabled: true })
+
+function formOf(p: ProviderSummary): ProviderForm {
+  return { id: p.id, name: p.name, baseUrl: p.baseUrl ?? '', apiKey: '', free: p.local, jsonSchema: p.jsonSchema, concurrency: p.concurrencyAuto ? 'auto' : String(p.concurrency), enabled: p.enabled }
+}
 
 /** A short word for why a provider can't be used: its key is missing, or it is switched off. */
 function shortReason(reason?: string): string {
@@ -80,11 +96,14 @@ export function ModelsPage() {
   const models = useVn((s) => s.models)
   const catalogs = useVn((s) => s.catalogs)
   const settings = useVn((s) => s.settings)
+  const providerTest = useVn((s) => s.providerTest)
+  const providerSaved = useVn((s) => s.providerSaved)
+  const [form, setForm] = useState<ProviderForm | null>(null)
   const [provider, setProvider] = useState<string | null>(null)
   const [filter, setFilter] = useState('')
   const [freeOnly, setFreeOnly] = useState(false)
   const [shownOnly, setShownOnly] = useState(false)
-  const [add, setAdd] = useState({ id: '', priceIn: '', priceOut: '', context: '' })
+  const [add, setAdd] = useState({ id: '', priceIn: '', priceOut: '', context: '', vision: false })
   const [load, setLoad] = useState<Pick<SettingsSummary, LoadKey> | null>(null)
   const [limits, setLimits] = useState<{ provider: string; values: Limits } | null>(null)
 
@@ -92,6 +111,16 @@ export function ModelsPage() {
   useEffect(() => {
     if (settings && !load) setLoad({ lmstudioParallel: settings.lmstudioParallel, lmstudioContext: settings.lmstudioContext, lmstudioTtlMinutes: settings.lmstudioTtlMinutes })
   }, [settings, load])
+
+  // the answer to Save: close the form and open the provider, or show why it was refused
+  useEffect(() => {
+    if (!providerSaved) return
+    setForm((f) => {
+      if (!f?.saving) return f
+      return providerSaved.ok ? null : { ...f, saving: false, error: providerSaved.error ?? 'could not save' }
+    })
+    if (providerSaved.ok && providerSaved.id && !providerSaved.removed) setProvider(providerSaved.id)
+  }, [providerSaved])
 
   const current = providers.find((p) => p.id === provider) ?? providers.find((p) => p.available) ?? providers[0]
   const catalog = current ? catalogs[current.id] : undefined
@@ -143,13 +172,18 @@ export function ModelsPage() {
   const canAdd = !!current && add.id.trim() !== '' && addPriceOk
   const addModel = () => {
     if (!current || !canAdd) return
-    sendCommand({ type: 'addModel', provider: current.id, id: add.id.trim(), priceIn: num(add.priceIn), priceOut: num(add.priceOut), context: num(add.context) })
-    setAdd({ id: '', priceIn: '', priceOut: '', context: '' })
+    sendCommand({ type: 'addModel', provider: current.id, id: add.id.trim(), priceIn: num(add.priceIn), priceOut: num(add.priceOut), context: num(add.context), ...(add.vision ? { vision: true } : {}) })
+    setAdd({ id: '', priceIn: '', priceOut: '', context: '', vision: false })
   }
 
   // the order every role tries the groups in; empty means each role keeps the order of its own list
   const shared = (settings?.modelOrder.length ?? 0) > 0
-  const order: ModelGroup[] = shared ? [...settings!.modelOrder, ...DEFAULT_ORDER.filter((g) => !settings!.modelOrder.includes(g))] : DEFAULT_ORDER
+  // the groups with a row: API, Strata and LM Studio, and every other group that has a ticked model (a custom provider, acp)
+  const groups: ModelGroup[] = [...BASE_GROUPS]
+  for (const m of models) if (m.shown !== false && m.group && !groups.includes(m.group)) groups.push(m.group)
+  for (const g of settings?.modelOrder ?? []) if (!groups.includes(g) && providers.some((p) => p.id === g)) groups.push(g)
+  const groupLabel = (g: ModelGroup) => BASE_LABELS[g] ?? providers.find((p) => p.id === g)?.name ?? g
+  const order: ModelGroup[] = shared ? [...settings!.modelOrder.filter((g) => groups.includes(g)), ...groups.filter((g) => !settings!.modelOrder.includes(g))] : groups
   const move = (i: number, by: number) => {
     if (!settings) return
     const next = [...order]
@@ -160,14 +194,21 @@ export function ModelsPage() {
   /** One group's row: its place in the order, the default model behind its alias (the ticked models it may point at), and moving it. */
   const groupRow = (g: ModelGroup, i: number) => {
     if (!settings) return null
-    const { label, key, pick } = GROUPS[g]
-    const refs = models.filter((m) => m.shown !== false && pick(m)).map((m) => m.ref)
-    if (settings[key] && !refs.includes(settings[key])) refs.unshift(settings[key])
+    const refs = models.filter((m) => m.shown !== false && m.group === g).map((m) => m.ref)
+    const chosen = settings.groupDefaults[g] ?? ''
+    if (chosen && !refs.includes(chosen)) refs.unshift(chosen)
     return (
       <div key={g} className="row" style={{ gap: 6 }} data-testid={`order-${g}`}>
         <span className="dim" style={{ width: 16 }}>{shared ? `${i + 1}.` : ''}</span>
-        <span style={{ width: 70 }}>{label}</span>
-        <select value={settings[key]} onChange={(e) => saveModelSettings(settings, { [key]: e.target.value })} style={{ flex: 1, minWidth: 0 }} data-testid={`set-${key}`}>
+        <span style={{ width: 70, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={groupLabel(g)}>
+          {groupLabel(g)}
+        </span>
+        <select
+          value={chosen || refs[0] || ''}
+          onChange={(e) => saveModelSettings(settings, { groupDefaults: { ...settings.groupDefaults, [g]: e.target.value } })}
+          style={{ flex: 1, minWidth: 0 }}
+          data-testid={`set-default-${g}`}
+        >
           {refs.map((r) => (
             <option key={r} value={r}>
               {r}
@@ -180,6 +221,95 @@ export function ModelsPage() {
         <button disabled={i === order.length - 1} onClick={() => move(i, 1)} title="Try this group later" data-testid={`order-down-${g}`}>
           ↓
         </button>
+      </div>
+    )
+  }
+  const formUrlOk = !!form && /^https?:\/\/\S+$/i.test(form.baseUrl.trim())
+  const formConcurrencyOk = !!form && (form.concurrency.trim() === 'auto' || (Number.isInteger(Number(form.concurrency)) && Number(form.concurrency) >= 1))
+  const saveForm = () => {
+    if (!form || !form.name.trim() || !formUrlOk || !formConcurrencyOk || form.saving) return
+    setForm({ ...form, saving: true, error: undefined })
+    sendCommand({
+      type: 'saveCustomProvider',
+      id: form.id,
+      name: form.name.trim(),
+      baseUrl: form.baseUrl.trim(),
+      apiKey: form.apiKey.trim() || undefined,
+      free: form.free,
+      jsonSchema: form.jsonSchema,
+      concurrency: form.concurrency.trim() === 'auto' ? 'auto' : Number(form.concurrency),
+      enabled: form.enabled
+    })
+  }
+  const testForm = () => {
+    if (!form || !formUrlOk) return
+    vnStore.getState().markProviderTesting(true)
+    sendCommand({ type: 'testCustomProvider', baseUrl: form.baseUrl.trim(), apiKey: form.apiKey.trim() || undefined, id: form.id })
+  }
+  /** The Add provider / Edit form. */
+  const providerForm = () => {
+    if (!form) return null
+    const set = (change: Partial<ProviderForm>) => setForm({ ...form, ...change })
+    return (
+      <div className="stack panel" style={{ gap: 6 }} data-testid="provider-form">
+        <div className="panel-title">{form.id ? `Edit ${form.id}` : 'Add provider'}</div>
+        <div className="dim">Any OpenAI-compatible server. Saved in config/providers.md; the key goes to the Windows credential store.</div>
+        <label>Name</label>
+        <input value={form.name} placeholder="ACP proxy (home)" onChange={(e) => set({ name: e.target.value })} data-testid="pf-name" />
+        <label>Base URL</label>
+        <input value={form.baseUrl} placeholder="http://127.0.0.1:7461/v1" onChange={(e) => set({ baseUrl: e.target.value })} data-testid="pf-url" />
+        <label>API key (optional)</label>
+        <input
+          type="password"
+          autoComplete="off"
+          value={form.apiKey}
+          placeholder={form.id && providers.find((p) => p.id === form.id)?.keySet ? 'Key is set. Type to replace' : 'Paste the key'}
+          onChange={(e) => set({ apiKey: e.target.value })}
+          data-testid="pf-key"
+        />
+        <div className="row" style={{ gap: 12 }}>
+          <label className="inline" title="A local or free server: no key needed, no budget, never paid. Off: its models need a price">
+            <input type="checkbox" checked={form.free} onChange={(e) => set({ free: e.target.checked })} data-testid="pf-free" />
+            Free (local)
+          </label>
+          <label className="inline" title="Send the JSON schema as response_format. Leave off for servers that reject a bad JSON answer">
+            <input type="checkbox" checked={form.jsonSchema} onChange={(e) => set({ jsonSchema: e.target.checked })} data-testid="pf-schema" />
+            Send JSON schema
+          </label>
+          <label className="inline">
+            <input type="checkbox" checked={form.enabled} onChange={(e) => set({ enabled: e.target.checked })} data-testid="pf-enabled" />
+            Enabled
+          </label>
+        </div>
+        <label>Parallel (a number, or auto)</label>
+        <input value={form.concurrency} onChange={(e) => set({ concurrency: e.target.value })} data-testid="pf-concurrency" />
+        {form.error && (
+          <div className="warn" data-testid="pf-error">
+            {form.error}
+          </div>
+        )}
+        {providerTest && (
+          <div className={providerTest.ok === false ? 'warn' : 'dim'} data-testid="pf-test-result">
+            {providerTest.pending ? 'Testing...' : providerTest.ok ? `Reachable, ${providerTest.count} model${providerTest.count === 1 ? '' : 's'}` : `Could not reach it: ${providerTest.error}`}
+          </div>
+        )}
+        <div className="row" style={{ gap: 6 }}>
+          <button disabled={!formUrlOk || providerTest?.pending} onClick={testForm} data-testid="pf-test">
+            Test
+          </button>
+          <button className="primary" disabled={!form.name.trim() || !formUrlOk || !formConcurrencyOk || form.saving} onClick={saveForm} data-testid="pf-save">
+            {form.id ? 'Save' : 'Add'}
+          </button>
+          <button
+            onClick={() => {
+              setForm(null)
+              vnStore.getState().markProviderTesting(false)
+            }}
+            data-testid="pf-cancel"
+          >
+            Cancel
+          </button>
+        </div>
       </div>
     )
   }
@@ -227,7 +357,7 @@ export function ModelsPage() {
     <div className="stack models-page" data-testid="models-page">
       <div className="models" style={{ display: 'contents' }}>
         <div className="panel-title">Models</div>
-        <div className="dim">Default models: the aliases paid (API, free or paid), strata and lmstudio in roles.md. Every role that names one follows it.</div>
+        <div className="dim">Default models: the aliases paid (API, free or paid), strata, lmstudio and the id of any provider you added, in roles.md. Every role that names one follows it.</div>
         <label className="inline">
           <input
             type="checkbox"
@@ -257,16 +387,36 @@ export function ModelsPage() {
                 data-testid={`models-provider-${p.id}`}
                 title={p.available ? (p.keyFrom ? `key from ${p.keyFrom}` : undefined) : p.reason}
               >
-                <span>{p.id}</span>
+                <span>{p.name}</span>
                 <span className="dim">{p.available ? `${models.filter((m) => m.provider === p.id && m.shown !== false).length} ticked` : shortReason(p.reason)}</span>
               </button>
             ))}
+            <button onClick={() => setForm(emptyForm())} data-testid="models-add-provider" title="Add any OpenAI-compatible server (config/providers.md)">
+              Add provider
+            </button>
           </div>
           {current ? (
             <div className="models-pane">
+              {form && providerForm()}
+              {current.custom && !form && (
+                <div className="row" style={{ gap: 6 }} data-testid="custom-provider-actions">
+                  <span className="dim">
+                    {current.name} was added here ({current.baseUrl})
+                  </span>
+                  <button style={{ marginLeft: 'auto' }} onClick={() => setForm(formOf(current))} data-testid="provider-edit">
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => window.confirm(`Remove ${current.name}? Its key is deleted and its models leave the pickers.`) && sendCommand({ type: 'removeCustomProvider', id: current.id })}
+                    data-testid="provider-remove"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
               {current.kind === 'client' && (
                 <div className="dim" data-testid="client-note">
-                  Local and free. These models do nothing by themselves: a job on one waits until an MCP client (Claude Code) takes it with vno_get_task and answers with vno_submit_task. Do not leave a role on it when no client is working.
+                  Local and free. These models do nothing by themselves: a job on one waits until the MCP client it names (client/claude-code: Claude Code; client/antigravity: Antigravity CLI, which passes client: "antigravity") takes it with vno_get_task and answers with vno_submit_task. Do not leave a role on it when no client is working.
                 </div>
               )}
               {!local && (
@@ -361,6 +511,10 @@ export function ModelsPage() {
                   </>
                 )}
                 <input type="number" min={0} value={add.context} placeholder="context" onChange={(e) => setAdd({ ...add, context: e.target.value })} style={{ flex: 1 }} data-testid="models-add-context" />
+                <label className="inline" title="The model accepts images: the art-critic is offered it">
+                  <input type="checkbox" checked={add.vision} onChange={(e) => setAdd({ ...add, vision: e.target.checked })} data-testid="models-add-vision" />
+                  vision
+                </label>
                 <button disabled={!canAdd} onClick={addModel} data-testid="models-add">
                   Add
                 </button>

@@ -3,13 +3,15 @@ import os from 'node:os'
 import path from 'node:path'
 import type { Command, EngineEvent, SettingsSummary, SnapshotEvent } from '../shared/protocol'
 import { parseMdWith } from '../shared/md'
-import { factorySchema, ROLES, settingsSchema } from '../shared/schemas'
+import { factorySchema, groupDefaultsOf, ROLES, settingsSchema } from '../shared/schemas'
 import type { FactoryConfig, SettingsConfig } from '../shared/schemas'
 import { AgentStore } from './agents/agents'
 import { Budget } from './budget/spend'
 import { LogWriter } from './logs/logs'
 import { ClientTaskQueue } from './models/client'
-import { resolveKey, setStoredKey } from './models/keys'
+import { deleteStoredKey, resolveKey, setStoredKey } from './models/keys'
+import { checkBaseUrl, keyNameOf, removeCustomProviderEntry, upsertCustomProvider } from './models/customProviders'
+import { OpenAiCompatClient } from './models/openaiCompat'
 import { ModelRegistry, guessFamily, modelDefaultsOf } from './models/registry'
 import type { ListedModel } from './models/openaiCompat'
 import type { RegistryOptions } from './models/registry'
@@ -17,7 +19,7 @@ import { ModelRouter } from './models/router'
 import type { RouterOptions } from './models/router'
 import { JobStore } from './queue/jobs'
 import { Scheduler } from './queue/scheduler'
-import { readMd, writeMd } from './store/atomic'
+import { atomicWrite, readMd, writeMd } from './store/atomic'
 import { agentSummary, modelSummaries, providerSummaries, roleDefaults, serverStatuses } from './summary'
 import { registerVnHandlers } from './vn/handlers'
 import type { VnService } from './vn/service'
@@ -343,7 +345,7 @@ export class Engine {
    * Adds a model the provider doesn't list (or that can't be listed: Anthropic, Gemini) to `picked` in config/models.md.
    * A paid provider's model needs both prices, so the budget can count it; a known model is only shown again.
    */
-  async addModel(cmd: { provider: string; id: string; priceIn?: number; priceOut?: number; context?: number }): Promise<void> {
+  async addModel(cmd: { provider: string; id: string; priceIn?: number; priceOut?: number; context?: number; vision?: boolean }): Promise<void> {
     const id = cmd.id.trim()
     const p = this.registry.providers.get(cmd.provider)
     if (!id || !p || p.kind === 'search') return this.log(`addModel: no provider "${cmd.provider}" or an empty id`)
@@ -356,9 +358,93 @@ export class Engine {
       hidden.delete(ref)
       if (this.registry.models.has(ref) || picked.some((m) => `${String(m.provider)}/${String(m.id)}` === ref)) return
       const context = typeof cmd.context === 'number' && cmd.context > 0 ? Math.round(cmd.context) : undefined
-      picked.push({ provider: cmd.provider, id, family: guessFamily(id), ...(context ? { context } : {}), price_in: priceIn, price_out: priceOut })
+      picked.push({ provider: cmd.provider, id, family: guessFamily(id), ...(context ? { context } : {}), ...(cmd.vision === true ? { vision: true } : {}), price_in: priceIn, price_out: priceOut })
       this.log(`models: added ${ref}`)
     })
+  }
+
+  // ---- custom providers (Models page: Add provider) ----
+
+  private providersFile(): string {
+    return path.join(this.dataDir, 'config', 'providers.md')
+  }
+
+  /** Adds a custom provider to config/providers.md (or edits one), stores its key, and tells the UI (`provider.saved`). */
+  async saveCustomProvider(cmd: Extract<Command, { type: 'saveCustomProvider' }>): Promise<void> {
+    try {
+      const url = checkBaseUrl(cmd.baseUrl)
+      if ('error' in url) throw new Error(url.error)
+      const concurrency = cmd.concurrency === 'auto' ? 'auto' : Math.min(64, Math.max(1, Math.round(Number(cmd.concurrency)) || 1))
+      const apiKey = cmd.apiKey?.trim() ?? ''
+      const existing = cmd.id ? this.registry.providers.get(cmd.id) : undefined
+      const hadKey = !!existing?.apiKeyEnv && !!resolveKey(existing.apiKeyEnv)
+      const { text, id } = upsertCustomProvider(await fs.readFile(this.providersFile(), 'utf8'), {
+        id: cmd.id,
+        name: cmd.name,
+        baseUrl: url.url,
+        hasKey: !!apiKey || hadKey,
+        free: cmd.free,
+        jsonSchema: cmd.jsonSchema,
+        concurrency,
+        enabled: cmd.enabled
+      })
+      // the key first: the file watcher reloads the registry as soon as the file changes, and it should find the key by then
+      if (apiKey) setStoredKey(keyNameOf(id), apiKey)
+      await atomicWrite(this.providersFile(), text)
+      await this.registry.load()
+      this.log(`models: ${cmd.id ? 'changed' : 'added'} custom provider ${id}`)
+      this.emit({ type: 'provider.saved', ok: true, id })
+      this.emit(await this.snapshot())
+      this.scheduler.kick()
+      void this.discoverModels()
+    } catch (err) {
+      this.log(`saveCustomProvider: ${(err as Error).message}`)
+      this.emit({ type: 'provider.saved', ok: false, id: cmd.id, error: (err as Error).message })
+    }
+  }
+
+  /** Removes a custom provider, its stored key, and its refs in config/models.md and config/settings.md. roles.md is left as it is. */
+  async removeCustomProvider(id: string): Promise<void> {
+    try {
+      const { text, keyEnv } = removeCustomProviderEntry(await fs.readFile(this.providersFile(), 'utf8'), id)
+      await atomicWrite(this.providersFile(), text)
+      if (keyEnv) deleteStoredKey(keyEnv)
+      await this.registry.load()
+      // models.md: the provider's picked models, hidden refs and limits
+      await this.editModelChoices((picked, hidden, limits) => {
+        for (let i = picked.length - 1; i >= 0; i--) if (picked[i]!.provider === id) picked.splice(i, 1)
+        for (const ref of [...hidden]) if (ref.startsWith(`${id}/`)) hidden.delete(ref)
+        delete limits[id]
+      })
+      // settings.md: its group default and its place in the fallback order
+      const s = this.settings
+      if (id in s.group_defaults || s.model_order.includes(id)) {
+        const { [id]: _gone, ...rest } = s.group_defaults
+        await this.writeSettings({ group_defaults: rest, model_order: s.model_order.filter((g) => g !== id) })
+      }
+      this.log(`models: removed custom provider ${id}`)
+      this.emit({ type: 'provider.saved', ok: true, id, removed: true })
+      this.emit({ type: 'secrets.updated', secretsSet: this.secretsSet(), keyNames: this.allowedSecrets() })
+    } catch (err) {
+      this.log(`removeCustomProvider: ${(err as Error).message}`)
+      this.emit({ type: 'provider.saved', ok: false, id, error: (err as Error).message })
+    }
+  }
+
+  /** Asks `GET <baseUrl>/models` and says how many models answered, or why not (`provider.tested`). Stores nothing. */
+  async testCustomProvider(cmd: { baseUrl: string; apiKey?: string; id?: string }): Promise<void> {
+    const at = new Date().toISOString()
+    try {
+      const url = checkBaseUrl(cmd.baseUrl)
+      if ('error' in url) throw new Error(url.error)
+      const env = cmd.id ? this.registry.providers.get(cmd.id)?.apiKeyEnv : undefined
+      const apiKey = cmd.apiKey?.trim() || (env ? (this.opts.registry?.keys ?? resolveKey)(env) : undefined)
+      const client = new OpenAiCompatClient({ id: cmd.id ?? 'test', baseUrl: url.url, apiKey, fetchImpl: this.opts.registry?.fetchImpl })
+      const listed = await client.listModelInfo()
+      this.emit({ type: 'provider.tested', ok: true, count: listed.length, at })
+    } catch (err) {
+      this.emit({ type: 'provider.tested', ok: false, error: (err as Error).message, at })
+    }
   }
 
   /**
@@ -524,9 +610,7 @@ export class Engine {
   settingsSummary(): SettingsSummary {
     const s = this.settings
     return {
-      defaultPaidModel: s.default_paid_model,
-      defaultStrataModel: s.default_strata_model,
-      defaultLmstudioModel: s.default_lmstudio_model,
+      groupDefaults: groupDefaultsOf(s),
       modelOrder: s.model_order,
       lmstudioParallel: s.lmstudio_parallel,
       lmstudioContext: s.lmstudio_context,
@@ -552,7 +636,14 @@ export class Engine {
     } catch {
       doc = { data: { kind: 'settings' } as Record<string, unknown>, body: '' }
     }
-    await writeMd(file, { ...doc.data, kind: 'settings', ...fields }, doc.body)
+    // the settings of before group_defaults are folded into it and not written again
+    const { default_paid_model: oldPaid, default_strata_model: oldStrata, default_lmstudio_model: oldLm, ...rest } = doc.data
+    const next: Record<string, unknown> = { ...rest, kind: 'settings', ...fields }
+    if ((oldPaid || oldStrata || oldLm) && !('group_defaults' in fields)) {
+      const own = (rest.group_defaults ?? {}) as Record<string, string>
+      next.group_defaults = { ...(oldPaid ? { paid: String(oldPaid) } : {}), ...(oldStrata ? { strata: String(oldStrata) } : {}), ...(oldLm ? { lmstudio: String(oldLm) } : {}), ...own }
+    }
+    await writeMd(file, next, doc.body)
     await this.loadSettings()
     await this.registry.load()
     this.scheduler.changeModel() // running jobs follow changed default models or their order
@@ -678,11 +769,11 @@ export class Engine {
       }
       case 'saveSettings': {
         const s = this.settings
+        const defaults = { ...groupDefaultsOf(s) }
+        for (const [g, m] of Object.entries(cmd.groupDefaults ?? {})) if (typeof m === 'string' && m.trim()) defaults[g] = m.trim()
         await this.writeSettings({
-          default_paid_model: cmd.defaultPaidModel?.trim() || s.default_paid_model,
-          default_strata_model: cmd.defaultStrataModel?.trim() || s.default_strata_model,
-          default_lmstudio_model: cmd.defaultLmstudioModel?.trim() || s.default_lmstudio_model,
-          model_order: cmd.modelOrder ? [...new Set(cmd.modelOrder.filter((g) => g === 'paid' || g === 'strata' || g === 'lmstudio'))] : s.model_order,
+          group_defaults: defaults,
+          model_order: cmd.modelOrder ? [...new Set(cmd.modelOrder.filter((g) => typeof g === 'string' && g.trim() !== '').map((g) => g.trim()))] : s.model_order,
           lmstudio_parallel: Math.min(16, Math.max(1, Math.round(cmd.lmstudioParallel ?? s.lmstudio_parallel) || 1)),
           lmstudio_context: Math.max(2048, Math.round(cmd.lmstudioContext ?? s.lmstudio_context) || 32768),
           lmstudio_ttl_minutes: Math.max(1, Math.round(cmd.lmstudioTtlMinutes ?? s.lmstudio_ttl_minutes) || 60),
@@ -702,6 +793,15 @@ export class Engine {
       case 'setProviderLimits':
         await this.setProviderLimits(cmd)
         return
+      case 'saveCustomProvider':
+        await this.saveCustomProvider(cmd)
+        return
+      case 'removeCustomProvider':
+        await this.removeCustomProvider(cmd.id)
+        return
+      case 'testCustomProvider':
+        await this.testCustomProvider(cmd)
+        return
       case 'setSecret': {
         if (!this.allowedSecrets().includes(cmd.name)) {
           this.log(`setSecret: "${cmd.name}" is not a name the app may store`)
@@ -715,7 +815,7 @@ export class Engine {
           this.log(`could not store ${cmd.name}: ${(err as Error).message}`)
         }
         await this.registry.load() // a provider key may have appeared
-        this.emit({ type: 'secrets.updated', secretsSet: this.secretsSet() })
+        this.emit({ type: 'secrets.updated', secretsSet: this.secretsSet(), keyNames: this.allowedSecrets() })
         this.scheduler.kick()
         void this.discoverModels() // and with it the models that provider lists
         return
@@ -788,6 +888,7 @@ export class Engine {
       running: this.scheduler.runningJobs(),
       settings: this.settingsSummary(),
       secretsSet: this.secretsSet(),
+      keyNames: this.allowedSecrets(),
       at: new Date().toISOString()
     }
   }

@@ -23,6 +23,9 @@ export interface SeedMigration {
 /** The context window recorded for the client's models: Claude Code's. Nothing in VN Studio sizes a prompt by it. */
 export const CLIENT_CONTEXT = 200000
 
+/** The context window recorded for the `antigravity` client model. */
+export const ANTIGRAVITY_CONTEXT = 1000000
+
 function providersOf(doc: Document): YAMLMap[] {
   const seq = doc.get('providers', true)
   return isSeq(seq) ? seq.items.filter(isMap) : []
@@ -60,6 +63,30 @@ export const SEED_MIGRATIONS: SeedMigration[] = [
         }
       }
       return changed
+    }
+  },
+  {
+    id: 'providers-acp-v1',
+    file: 'config/providers.md',
+    apply(doc, seed) {
+      if (providersOf(doc).some((p) => p.get('id') === 'acp')) return false
+      const entry = seed ? providersOf(seed).find((p) => p.get('id') === 'acp') : undefined
+      const seq = doc.get('providers', true)
+      if (!entry || !isSeq(seq)) return false
+      seq.add(entry.clone())
+      return true
+    }
+  },
+  {
+    id: 'providers-client-antigravity-v1',
+    file: 'config/providers.md',
+    apply(doc) {
+      const client = providersOf(doc).find(isClient)
+      const models = client?.get('models', true)
+      if (!client || !isSeq(models)) return false
+      if (models.items.some((m) => isMap(m) && m.get('id') === 'antigravity')) return false
+      models.add(doc.createNode({ id: 'antigravity', vision: true, context: ANTIGRAVITY_CONTEXT }))
+      return true
     }
   }
 ]

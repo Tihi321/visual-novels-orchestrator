@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { parseMdWith } from '../../shared/md'
-import { modelsConfigSchema, providersSchema, rolesSchema, settingsSchema } from '../../shared/schemas'
+import { groupDefaultsOf, modelsConfigSchema, providersSchema, rolesSchema, settingsSchema } from '../../shared/schemas'
 import type { ModelsConfig, ProviderEntry, RolesConfig, SettingsConfig } from '../../shared/schemas'
 import { promises as fs } from 'node:fs'
 import { AnthropicClient } from './anthropic'
@@ -20,6 +20,10 @@ export interface ProviderInfo {
   kind: ProviderEntry['kind']
   enabled: boolean
   local: boolean
+  /** The name shown in the UI (`name` in providers.md), else the id. */
+  name: string
+  /** Added in the Add provider form (`custom: true`): the UI may edit and remove it. Always its own group. */
+  custom: boolean
   baseUrl?: string
   apiKeyEnv?: string
   concurrency: number
@@ -100,10 +104,10 @@ export function computeCost(m: Pick<ModelInfo, 'priceIn' | 'priceOut' | 'priceCa
   return (uncached * m.priceIn + u.cachedInputTokens * m.priceCachedIn + u.outputTokens * m.priceOut) / 1_000_000
 }
 
-/** Role aliases (`paid`, `strata`, `lmstudio`) -> `provider/model`, and how LM Studio models are loaded. From config/settings.md. */
+/** Role aliases (`paid`, `strata`, `lmstudio`, a custom provider's id) -> `provider/model`, and how LM Studio models are loaded. From config/settings.md. */
 export interface ModelDefaults {
   aliases: Record<string, string>
-  /** The groups `paid`, `strata`, `lmstudio` in the order every role tries them. Empty: each role's list keeps its own order. */
+  /** The groups (`paid`, `strata`, `lmstudio`, a provider id) in the order every role tries them. Empty: each role's list keeps its own order. */
   order?: string[]
   lmLoad: { parallel: number; context: number; ttlMinutes: number }
 }
@@ -111,7 +115,7 @@ export interface ModelDefaults {
 /** The aliases and LM Studio load settings of a settings.md. */
 export function modelDefaultsOf(s: SettingsConfig): ModelDefaults {
   return {
-    aliases: { paid: s.default_paid_model, strata: s.default_strata_model, lmstudio: s.default_lmstudio_model },
+    aliases: groupDefaultsOf(s),
     order: s.model_order,
     lmLoad: { parallel: s.lmstudio_parallel, context: s.lmstudio_context, ttlMinutes: s.lmstudio_ttl_minutes }
   }
@@ -163,6 +167,8 @@ export class ModelRegistry {
         id: p.id,
         kind: p.kind,
         enabled: p.enabled,
+        name: p.name?.trim() || p.id,
+        custom: p.custom,
         local: p.kind === 'client' ? true : p.local, // a client provider has no server and no price: always local and free
         baseUrl: p.base_url,
         apiKeyEnv: p.api_key_env,
@@ -235,6 +241,11 @@ export class ModelRegistry {
       const prov = this.providers.get(d.provider.id)
       if (prov && !this.models.has(d.ref) && !skipsDiscovered(prov, d.id)) this.models.set(d.ref, { ...d, provider: prov })
     }
+  }
+
+  /** A key is found for the provider's `api_key_env` (environment, credential store). */
+  hasKey(p: ProviderInfo): boolean {
+    return !!p.apiKeyEnv && !!(this.opts.keys ?? resolveKey)(p.apiKeyEnv)
   }
 
   modelsFile(): string {
@@ -456,9 +467,16 @@ export class ModelRegistry {
     this.defaults = d
   }
 
-  /** A `provider/model`, or an alias (`paid`, `strata`, `lmstudio`) resolved to its default. */
+  /**
+   * A `provider/model`, or an alias (`paid`, `strata`, `lmstudio`, a custom provider's id such as `acp-home`) resolved to its default.
+   * A provider id with no default in the settings stands for the first ticked model of that provider.
+   */
   resolve(ref: string): string {
-    return ref.includes('/') ? ref : (this.defaults.aliases[ref] ?? ref)
+    if (ref.includes('/')) return ref
+    const alias = this.defaults.aliases[ref]
+    if (alias) return alias
+    const first = [...this.models.values()].find((m) => m.provider.id === ref && !m.embedding && this.isShown(m.ref))
+    return first?.ref ?? ref
   }
 
   /** Model refs in the roles file for a role, in order, with aliases resolved. */
@@ -483,12 +501,15 @@ export class ModelRegistry {
     return list.map((ref, i) => ({ ref, i, r: rank(ref) })).sort((a, b) => a.r - b.r || a.i - b.i).map((x) => x.ref)
   }
 
-  /** The group of an alias or a `provider/model`: `strata`, `lmstudio`, `paid` for an API provider, undefined for another local one. */
+  /**
+   * The group of an alias or a `provider/model`: `paid` for a non-local seed API provider, the provider's own id for every other
+   * one (`strata`, `lmstudio`, a custom provider, `acp`), undefined for the client provider (it stays where the role put it) or an unknown one.
+   */
   groupOf(ref: string): string | undefined {
     const provider = this.resolve(ref).split('/')[0]!
-    if (provider === 'strata' || provider === 'lmstudio') return provider
     const p = this.providers.get(provider)
-    return p && !p.local ? 'paid' : undefined
+    if (!p || p.kind === 'client') return undefined
+    return p.custom || p.local ? p.id : 'paid'
   }
 
   embeddingModel(): ModelInfo | undefined {

@@ -191,6 +191,22 @@ describe('MCP client tasks', () => {
     expect(guide.text).toMatch(/Do the model work yourself/)
   })
 
+  it('vno_get_task takes a client: without it only claude-code tasks, with client: "antigravity" only that client tasks', async () => {
+    const s = await start({ client: true })
+    const c = await connect(s.url()!)
+    const queue = env!.engine.clientQueue
+    const user = [{ role: 'user' as const, content: 'hi' }]
+    queue.add({ client: 'antigravity', messages: user }, { job: 'p--vn.art.plan--all--r1', role: 'art-director', task: 'vn.art.plan', book: 'p' })
+    expect(await call(c, 'vno_get_task')).toEqual({ none: true, waiting: 1 })
+    expect(await call(c, 'vno_get_task', { client: 'claude-code' })).toEqual({ none: true, waiting: 1 })
+    expect(((await call(c, 'vno_client_tasks')) as unknown as { tasks: { client: string }[] }).tasks[0]!.client).toBe('antigravity')
+    const got = await call(c, 'vno_get_task', { client: 'antigravity' })
+    expect(got).toMatchObject({ taskId: 'p--vn.art.plan--all--r1#1', meta: { client: 'antigravity', role: 'art-director' } })
+    const tool = (await c.listTools()).tools.find((t) => t.name === 'vno_get_task')!
+    expect(tool.description).toMatch(/client: "antigravity"/)
+    expect(Object.keys((tool.inputSchema as { properties: object }).properties)).toContain('client')
+  })
+
   it('vno_wait returns at once while a job waits for the client; get, bad submit, release and good submit work over MCP', async () => {
     const s = await start({ client: true })
     const c = await connect(s.url()!)
