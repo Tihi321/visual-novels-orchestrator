@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { emitScripts, translatableStrings } from '../src/engine/renpy/emit'
-import { defaultCues } from '../src/engine/renpy/stage'
+import { emitScripts, translatableStrings } from '../src/engine/game/emit'
+import { defaultCues } from '../src/engine/game/stage'
 import { aliasIndex, extractAliases, mergeBibleAliases } from '../src/engine/vn/aliases'
 import type { Decision } from '../src/engine/vn/agents/script-analyst'
 import { parseBible } from '../src/engine/vn/bible'

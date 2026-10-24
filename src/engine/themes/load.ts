@@ -48,7 +48,7 @@ export const themeSchema = z.object({
       textColor: color.nullable().default(null)
     })
     .default({ color: '#222222', opacity: 0.9, radius: 0, textColor: null }),
-  /** Font file names: in the theme's `fonts/` folder, or a font that ships with Ren'Py (`DejaVuSans.ttf`). A language whose script the text font lacks gets another font (see `renpy/fonts.ts`). */
+  /** Font file names: in the theme's `fonts/` folder, or a font that ships with Ren'Py (`DejaVuSans.ttf`). A language whose script the text font lacks gets another font (see `game/fonts.ts`). */
   fonts: z
     .object({
       text: z.string().default('DejaVuSans.ttf'),

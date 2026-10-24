@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { MusicPlan } from '../vn/agents/composer'
 import { TASKS } from '../vn/pipeline'
-import type { StageCues } from '../renpy/stage'
+import type { StageCues } from '../game/stage'
 import type { VnService } from '../vn/service'
 import { clientHint } from './tools'
 import type { McpOptions, Tool, ToolDef } from './tools'

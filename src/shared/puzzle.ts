@@ -4,15 +4,30 @@ import { z } from 'zod'
  * The puzzle data (format 1), shared by the engine and the renderer. It is what `templates/puzzles/game/python-packages/vno_puzzles` makes
  * and reads (see its README): plain JSON-shaped data, no classes. The puzzle core is kept apart from the flavour (`names`, `text`), which a
  * model may rewrite without touching the logic. A core has a `kind`: `murdle` (a grid of who, with what, where and why), `knights`
- * (Knights and Knaves), `logic` (a Puzzle Baron logic grid with an ordinal category), `testimony` (a cross-examination: press, then present the evidence that proves a statement false), and the kinds the later commits of VNO-14 add.
+ * (Knights and Knaves), `logic` (a Puzzle Baron logic grid with an ordinal category), `testimony` (a cross-examination: press, then present the evidence that proves a statement false),
+ * and `quiz` (multiple choice quiz).
  */
 
 export const PUZZLE_FORMAT = 1
-export const PUZZLE_KINDS = ['murdle', 'knights', 'testimony', 'logic'] as const
+export const PUZZLE_KINDS = ['murdle', 'knights', 'testimony', 'logic', 'quiz'] as const
 export type PuzzleKind = (typeof PUZZLE_KINDS)[number]
 export const PUZZLE_BANDS = ['easy', 'medium', 'hard'] as const
 
+export const LOGIC_PRESETS = {
+  bakery: {
+    intro: 'The bakery delivered one order each day. Work out which delivery was which.',
+    categories: [
+      { key: 'day', ref: 'the {n} delivery', names: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'], prefix: 'd' },
+      { key: 'customer', ref: 'the delivery to {n}', names: ['Ana', 'Boris', 'Cleo', 'Dino', 'Eva'], prefix: 'c' },
+      { key: 'cake', ref: 'the {n} delivery', names: ['lemon cake', 'poppy roll', 'plum tart', 'honey bun', 'rye loaf'], prefix: 'k' },
+      { key: 'town', ref: 'the delivery to {n}', names: ['Oakville', 'Pinebrook', 'Riverton', 'Stonegate', 'Wheatley'], prefix: 't' }
+    ],
+    unit: 'days'
+  }
+} as const
+
 const itemId = z.string().regex(/^[a-z][a-z0-9]*$/, 'an item id such as s1, w2, p3')
+const idRe = /^[a-z][a-z0-9_]*$/
 
 export const puzzleClueSchema = z.object({
   id: z.string().regex(/^c\d+$/, 'a clue id such as c1'),
@@ -39,7 +54,10 @@ export const puzzleStepSchema = z
   .passthrough()
 export type PuzzleStep = z.infer<typeof puzzleStepSchema>
 
-const difficulty = z.object({ steps: z.number().int(), score: z.number(), rules: z.record(z.string(), z.number()) })
+export const puzzleDifficultySchema = z.object({ steps: z.number().int(), score: z.number(), rules: z.record(z.string(), z.number()) })
+export type PuzzleDifficulty = z.infer<typeof puzzleDifficultySchema>
+
+const difficulty = puzzleDifficultySchema
 const common = { format: z.literal(PUZZLE_FORMAT), seed: z.number().int().optional(), band: z.enum(PUZZLE_BANDS).optional(), difficulty, steps: z.array(puzzleStepSchema) }
 
 /** Murdle: a grid of categories (suspect, weapon, place, and perhaps motive); the player accuses. */
@@ -136,16 +154,60 @@ export const logicCoreSchema = z.object({
   clues: z.array(logicClueSchema).min(1)
 })
 
-export const puzzleCoreSchema = z.discriminatedUnion('kind', [murdleCoreSchema, knightsCoreSchema, testimonyCoreSchema, logicCoreSchema])
+export const quizQuestionSchema = z.object({
+  id: z.string().regex(idRe),
+  options: z.array(z.string().regex(idRe)).min(2).max(6),
+  answer: z.string().regex(idRe)
+}).superRefine((q, ctx) => {
+  if (!q.options.includes(q.answer)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['answer'], message: `answer "${q.answer}" is not in options` })
+  }
+})
+export type QuizQuestion = z.infer<typeof quizQuestionSchema>
+
+export const quizCoreSchema = z.object({
+  format: z.literal(PUZZLE_FORMAT).optional(),
+  band: z.enum(PUZZLE_BANDS).optional(),
+  steps: z.array(puzzleStepSchema).optional(),
+  kind: z.literal('quiz'),
+  seed: z.number().int(),
+  questions: z.array(quizQuestionSchema).min(1).max(10),
+  solution: z.record(z.string(), z.string()),
+  difficulty: puzzleDifficultySchema
+}).superRefine((d, ctx) => {
+  const qIds = new Set<string>()
+  for (const q of d.questions) {
+    if (qIds.has(q.id)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['questions'], message: `duplicate question id "${q.id}"` })
+    qIds.add(q.id)
+    if (d.solution[q.id] !== q.answer) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['solution', q.id], message: `solution["${q.id}"] must match question answer "${q.answer}"` })
+    }
+  }
+})
+export type QuizCore = z.infer<typeof quizCoreSchema>
+
+export const puzzleCoreSchema = z.discriminatedUnion('kind', [
+  murdleCoreSchema,
+  knightsCoreSchema,
+  testimonyCoreSchema,
+  logicCoreSchema,
+  quizCoreSchema
+])
 export type PuzzleCore = z.infer<typeof puzzleCoreSchema>
 export type MurdleCore = z.infer<typeof murdleCoreSchema>
 export type KnightsCore = z.infer<typeof knightsCoreSchema>
 export type TestimonyCore = z.infer<typeof testimonyCoreSchema>
 export type LogicCore = z.infer<typeof logicCoreSchema>
 
-/** Every id of a core that needs a name: the items of a grid, the speakers of Knights and Knaves, the witness and the evidence of a testimony. */
+/** Every id of a core that needs a name: the items of a grid, the speakers of Knights and Knaves, the witness and the evidence of a testimony, or all options of a quiz. */
 export const puzzleEntityIds = (core: PuzzleCore): string[] =>
-  core.kind === 'knights' ? core.speakers : core.kind === 'testimony' ? [core.witness, ...core.evidence.map((e) => e.id)] : core.categories.flatMap((c) => c.items)
+  core.kind === 'knights'
+    ? core.speakers
+    : core.kind === 'testimony'
+      ? [core.witness, ...core.evidence.map((e) => e.id)]
+      : core.kind === 'quiz'
+        ? core.questions.flatMap((q) => q.options)
+        : core.categories.flatMap((c) => c.items)
 
 /** Every id of a core that needs prose: the clues and the murder note, the statements and the intro, or a testimony's statements (and what a pressed one adds), evidence and intro. */
 export const puzzleTextIds = (core: PuzzleCore): string[] =>
@@ -155,12 +217,19 @@ export const puzzleTextIds = (core: PuzzleCore): string[] =>
       ? [...core.statements.flatMap((s) => (s.press ? [s.id, `${s.id}.press`] : [s.id])), ...core.evidence.map((e) => e.id), 'intro']
       : core.kind === 'logic'
         ? [...core.clues.map((c) => c.id), 'intro']
-        : [...core.clues.map((c) => c.id), 'murder']
+        : core.kind === 'quiz'
+          ? ['intro', ...core.questions.map((q) => q.id)]
+          : [...core.clues.map((c) => c.id), 'murder']
 
 /** The ids of the things the player finds in the story (`clueAt`): a grid puzzle's clues, and a testimony's evidence (the statements of Knights and Knaves and of a testimony are all there from the start). */
-export const puzzleFindableIds = (core: PuzzleCore): string[] => (core.kind === 'murdle' || core.kind === 'logic' ? core.clues.map((c) => c.id) : core.kind === 'testimony' ? core.evidence.map((e) => e.id) : [])
+export const puzzleFindableIds = (core: PuzzleCore): string[] =>
+  core.kind === 'murdle' || core.kind === 'logic'
+    ? core.clues.map((c) => c.id)
+    : core.kind === 'testimony'
+      ? core.evidence.map((e) => e.id)
+      : []
 
-/** What the python CLI returns: the core plus the canonical English flavour. */
+/** What the puzzle engine returns: the core plus the canonical English flavour. */
 export const puzzleGeneratedSchema = z.intersection(
   puzzleCoreSchema,
   z.object({
@@ -229,6 +298,8 @@ export const readBackClueSchema = z.union([
   /** Knights and Knaves intro: the rule it states, in its own words (who always tells the truth, who always lies). */
   z.object({ id: z.string(), truthTellers: z.string(), liars: z.string() }),
   /** Testimony: the claims of a statement (`t1`, `t1.press`) or the facts of a piece of evidence (`e1`). */
-  z.object({ id: z.string(), claims: z.array(z.object({ key: z.string(), value: z.string() })).optional(), facts: z.array(z.object({ key: z.string(), value: z.string() })).optional() })
+  z.object({ id: z.string(), claims: z.array(z.object({ key: z.string(), value: z.string() })).optional(), facts: z.array(z.object({ key: z.string(), value: z.string() })).optional() }).refine((x) => x.claims !== undefined || x.facts !== undefined, 'testimony entry needs claims or facts'),
+  /** Quiz: question prompt, options and the correct answer. */
+  z.object({ id: z.string(), prompt: z.string().optional(), options: z.array(z.string()).optional(), answer: z.string().optional() }).passthrough()
 ])
 export type ReadBackClue = z.infer<typeof readBackClueSchema>

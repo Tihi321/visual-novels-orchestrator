@@ -287,10 +287,10 @@ export interface AlignReportView {
   warnings: string[]
 }
 
-/** The result of a build, lint, Android preflight or Android build. */
+/** The result of a build or lint. */
 export interface BuildResult {
   slug: string
-  action: 'build' | 'lint' | 'android' | 'preflight'
+  action: 'build' | 'lint'
   ok: boolean
   /** A step that could not run (no Ren'Py SDK): ok is false and this says why. */
   skipped?: boolean
@@ -304,8 +304,6 @@ export interface BuildResult {
   translated?: string[]
   /** Lint statistics. */
   statistics?: string
-  /** The files of an Android build. */
-  files?: string[]
 }
 
 export interface ThemeInfo {
@@ -542,8 +540,6 @@ export type Command =
   | { type: 'lintGame'; slug: string }
   /** Starts the built game. Answers with `game.started`. */
   | { type: 'runGame'; slug: string }
-  | { type: 'androidPreflight'; slug: string }
-  | { type: 'androidBuild'; slug: string; bundle?: boolean }
   | { type: 'listThemes' }
   | { type: 'comfyStatus' }
   | { type: 'comfyFree' }
@@ -622,8 +618,6 @@ export type VnCommand = Extract<
       | 'buildGame'
       | 'lintGame'
       | 'runGame'
-      | 'androidPreflight'
-      | 'androidBuild'
       | 'listThemes'
       | 'comfyStatus'
       | 'comfyFree'
@@ -677,8 +671,6 @@ const COMMAND_TYPE_SET: Record<CommandType, true> = {
   buildGame: true,
   lintGame: true,
   runGame: true,
-  androidPreflight: true,
-  androidBuild: true,
   listThemes: true,
   comfyStatus: true,
   comfyFree: true,

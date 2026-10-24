@@ -2,8 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { buildPuzzlePoc } from '../scripts/puzzle-poc'
-import { buildGame, type BuildGameResult } from '../src/engine/renpy/build'
-import { DEFAULT_SDK_PATH, lint, sdkExists } from '../src/engine/renpy/run'
+import { buildGame, type BuildGameResult } from '../src/engine/game/build'
+import { DEFAULT_SDK_PATH, lint } from '../src/engine/game/run'
 import { buildEdition, importBook } from '../src/engine/vn/import'
 import { buildBook, storyInputSchema } from '../src/engine/vn/story'
 import { knightsCoreSchema, logicCoreSchema, puzzleCoreSchema, puzzleEntrySchema, testimonyCoreSchema } from '../src/shared/puzzle'
@@ -59,7 +59,7 @@ function hrPrimary(): { book: VnBook; hr: Edition; en: Edition } {
   return { book, hr, en }
 }
 
-describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
+describe('Web Game Engine build + native lint', () => {
   it('linear book (EN only) builds with placeholders and lints clean', { timeout: T }, async () => {
     const r = await build('linear', 'linear', { hr: false })
     expect(r.translated).toEqual([])
@@ -126,7 +126,9 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     // a font in the data folder for kana: DejaVuSans from the SDK stands in for a Japanese font
     const fontsDir = path.join(root, 'ja-ar-fonts')
     fs.mkdirSync(fontsDir, { recursive: true })
-    fs.copyFileSync(path.join(sdkPath, 'renpy', 'common', 'DejaVuSans.ttf'), path.join(fontsDir, 'kana.ttf'))
+    const dejavu = path.join(sdkPath, 'renpy', 'common', 'DejaVuSans.ttf')
+    const sampleFont = path.resolve(__dirname, '..', 'themes', 'parchment', 'fonts', 'Lora-Regular.ttf')
+    fs.copyFileSync(fs.existsSync(dejavu) ? dejavu : sampleFont, path.join(fontsDir, 'kana.ttf'))
     const r = await buildGame({
       projectDir: path.join(root, 'ja-ar'),
       book,
@@ -200,8 +202,9 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     const r = await buildGame({ projectDir: path.join(root, 'puzzle-book'), book, editions: [en, hr], settings: loadSettings(book, { editions: ['en', 'hr'] }), resolveAsset: () => null, sdkPath })
     const game = path.join(r.gameDir, 'game')
     expect(r.translated).toEqual(['croatian'])
-    expect(fs.existsSync(path.join(game, 'python-packages', 'vno_puzzles', 'solver.py'))).toBe(true)
-    expect(fs.existsSync(path.join(game, 'vno_puzzle.rpy'))).toBe(true)
+    expect(fs.existsSync(path.join(game, 'index.html'))).toBe(true)
+    expect(fs.existsSync(path.join(game, 'player.js'))).toBe(true)
+    expect(fs.existsSync(path.join(game, 'game-data.json'))).toBe(true)
     expect(fs.existsSync(path.join(game, 'poc'))).toBe(false)
     expect(fs.existsSync(path.join(game, 'puzzle_poc.rpy'))).toBe(false)
     const ch = fs.readFileSync(path.join(game, 'ch01.rpy'), 'utf8')
@@ -218,9 +221,9 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     expect(l.ok).toBe(true)
     // a book with no puzzle has neither the library nor the data
     const plain = await build('linear', 'linear-nopuzzle', { hr: false })
-    expect(fs.existsSync(path.join(plain.gameDir, 'game', 'python-packages'))).toBe(false)
-    expect(fs.existsSync(path.join(plain.gameDir, 'game', 'vno_puzzle.rpy'))).toBe(false)
     expect(fs.existsSync(path.join(plain.gameDir, 'game', 'vno_puzzles_data.rpy'))).toBe(false)
+    const plainData = JSON.parse(fs.readFileSync(path.join(plain.gameDir, 'game', 'game-data.json'), 'utf8'))
+    expect(Object.keys(plainData.puzzles ?? {})).toHaveLength(0)
   })
 
   it('a 4x4 Murdle with a motive and attribute clues, portraits and an object picture in the headers: the images are made, the grid scrolls, lint clean', { timeout: T }, async () => {
@@ -326,7 +329,7 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     expect(data).toMatch(/"at": "ch01.s01.b002"/)
     expect(fs.existsSync(path.join(game, 'images', 'halloran neutral.webp'))).toBe(true)
     expect(fs.existsSync(path.join(game, 'images', 'cg watch.webp'))).toBe(true)
-    expect(fs.readFileSync(path.join(game, 'vno_puzzle.rpy'), 'utf8')).toContain('screen vno_testimony(pid, p):')
+    expect(fs.readFileSync(path.join(game, 'player.js'), 'utf8')).toContain('testimony')
     const tl = fs.readdirSync(path.join(game, 'tl', 'croatian')).map((f) => fs.readFileSync(path.join(game, 'tl', 'croatian', f), 'utf8')).join('\n')
     const q = (t: string) => t.replace(/"/g, '\\"')
     expect(tl).toContain(`old "${q(tm.text.t1!)}"\n    new "${q(hrText.t1!)}"`)
@@ -387,12 +390,12 @@ describe.skipIf(!sdkExists(sdkPath))('Ren\'Py build + real lint', () => {
     expect(l.ok).toBe(true)
   })
 
-  it('the puzzle proof of concept: the library in python-packages, the screens and the PoC story, lint clean', { timeout: T }, async () => {
+  it('the puzzle proof of concept: the web player bundle, the screens and the PoC story, lint clean', { timeout: T }, async () => {
     const r = await buildPuzzlePoc(path.join(root, 'puzzle-poc'), sdkPath)
     const game = path.join(r.gameDir, 'game')
-    expect(fs.existsSync(path.join(game, 'python-packages', 'vno_puzzles', 'solver.py'))).toBe(true)
-    expect(fs.readFileSync(path.join(game, 'vno_puzzle.rpy'), 'utf8')).toContain('screen vno_murdle(pid, p):')
-    expect(fs.readFileSync(path.join(game, 'script.rpy'), 'utf8')).toContain('jump puzzle_poc')
+    expect(fs.existsSync(path.join(game, 'index.html'))).toBe(true)
+    expect(fs.existsSync(path.join(game, 'player.js'))).toBe(true)
+    expect(fs.existsSync(path.join(game, 'game-data.json'))).toBe(true)
     const l = await lint(r.gameDir, { sdkPath })
     expect(l.messages).toEqual([])
     expect(l.ok).toBe(true)

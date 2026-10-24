@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { asciiSlug, normText, slugKey } from '../src/engine/vn/ids'
 import { projectSlug } from '../src/engine/vn/project'
-import { slugify } from '../src/engine/renpy/escape'
+import { slugify } from '../src/engine/game/escape'
 import { transliterate } from '../src/shared/translit'
 
 const slug = (s: string): string => asciiSlug(s, { sep: '-', fallback: 'book' })

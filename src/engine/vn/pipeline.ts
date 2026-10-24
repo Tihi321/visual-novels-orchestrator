@@ -24,7 +24,6 @@ export const TASKS = {
   lint: 'vn.lint',
   voicePlan: 'vn.voice.plan',
   voiceGenerate: 'vn.voice.generate',
-  android: 'vn.android',
   summary: 'vn.pipeline.summary'
 } as const
 
@@ -47,7 +46,6 @@ export const ROLE_OF: Record<VnTask, string> = {
   'vn.lint': 'director',
   'vn.voice.plan': 'voice-director',
   'vn.voice.generate': 'voice-director',
-  'vn.android': 'director',
   'vn.pipeline.summary': 'director'
 }
 

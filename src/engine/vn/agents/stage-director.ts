@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { SoundEntry, VnBook, VnChapter } from '../../../shared/vn'
-import type { BeatCue, SceneTransition, Slot, StageCues } from '../../renpy/stage'
-import { MAX_ON_SCREEN } from '../../renpy/stage'
+import type { BeatCue, SceneTransition, Slot, StageCues } from '../../game/stage'
+import { MAX_ON_SCREEN } from '../../game/stage'
 import { asJson, askJson, clip } from './common'
 import type { AgentCall } from './common'
 

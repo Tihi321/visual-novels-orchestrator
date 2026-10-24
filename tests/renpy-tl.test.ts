@@ -1,9 +1,7 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { emitScripts } from '../src/engine/renpy/emit'
-import { defaultCues } from '../src/engine/renpy/stage'
-import { buildStringTable, fillStub, newReport, stubLineMap, uiStrings, type FillContext } from '../src/engine/renpy/tl'
+import { emitScripts } from '../src/engine/game/emit'
+import { defaultCues } from '../src/engine/game/stage'
+import { buildStringTable, compileEditions, fillStub, newReport, stubLineMap, uiStrings, type FillContext } from '../src/engine/game/tl'
 import { loadBook, loadEdition } from './fixtures/vn/load'
 
 // What `renpy translate croatian` writes for ch01.rpy of the linear fixture (real output, shortened).
@@ -206,18 +204,37 @@ describe('buildStringTable', () => {
     expect(missing).toEqual(expect.arrayContaining(['chapter 1 choice 0', 'chapter 2 ending']))
   })
 
-  it('the Croatian table covers every translatable string of the template screens except the language-neutral ones', () => {
-    const NEUTRAL = new Set(['Enter', 'Ctrl', 'Tab', 'Page Up', 'Page Down', 'Test', '<', '>', '{#auto_page}A', '{#quick_page}Q', '{#file_time}%A, %B %d %Y, %H:%M', 'ending text' /* a placeholder the build replaces */])
-    const source = fs.readFileSync(path.resolve(__dirname, '../templates/renpy/game/screens.rpy'), 'utf8')
-    const hr = uiStrings('hr')!
-    const missing = [...source.matchAll(/\b_\("((?:[^"\\]|\\.)*)"\)/g)]
-      .map((m) => m[1]!)
-      .filter((s) => !NEUTRAL.has(s) && !/\[/.test(s) && !(s in hr))
-    expect([...new Set(missing)]).toEqual([])
-  })
-
   it('the UI table covers the strings the template adds', () => {
     const hr = uiStrings('hr')!
     for (const k of ['Language', 'The End', 'Start again', 'Back to main menu']) expect(hr[k]).toBeTruthy()
+  })
+})
+
+describe('compileEditions', () => {
+  it('compiles editions for game-data.json with localized beats, choices, endings, and puzzle data', () => {
+    const book = loadBook('choice')
+    const primary = loadEdition('choice', 'en')
+    const hr = loadEdition('choice', 'hr')
+    const warnings: string[] = []
+    const compiled = compileEditions(book, primary, [primary, hr], undefined, warnings)
+
+    expect(compiled['en']).toBeDefined()
+    expect(compiled['hr']).toBeDefined()
+    expect(compiled['en']!.title).toBe(book.title)
+    expect(compiled['hr']!.title).toBe(hr.title)
+    expect(compiled['hr']!.choices['1:0']).toBe(hr.choiceTexts['1:0'])
+    expect(compiled['hr']!.ui['Start']).toBe('Započni')
+  })
+
+  it('falls back to primary text and warns when beats are missing in an edition', () => {
+    const book = loadBook('linear')
+    const primary = loadEdition('linear', 'en')
+    const partialHr = { ...loadEdition('linear', 'hr'), beats: {} }
+    const warnings: string[] = []
+    const compiled = compileEditions(book, primary, [primary, partialHr], undefined, warnings)
+
+    expect(compiled['hr']!.beats['ch01.s01.b002']).toBe(primary.beats['ch01.s01.b002'])
+    expect(warnings.join(' ')).toContain('edition hr:')
+    expect(warnings.join(' ')).toContain('have no text and stay in en')
   })
 })

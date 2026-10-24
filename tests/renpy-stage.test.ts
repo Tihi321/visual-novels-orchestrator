@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addScenePlan, assignSlots, defaultCues } from '../src/engine/renpy/stage'
+import { addScenePlan, assignSlots, defaultCues } from '../src/engine/game/stage'
 import { mergeChapterCues } from '../src/engine/vn/agents/stage-director'
 import type { StageChapter } from '../src/engine/vn/agents/stage-director'
 import { loadBook } from './fixtures/vn/load'

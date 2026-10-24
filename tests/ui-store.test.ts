@@ -56,8 +56,8 @@ describe('reduceVn', () => {
     expect(s.currentSlug).toBeNull()
   })
   it('stores a build result by action, an edition beat edit and the command errors', () => {
-    let s = apply(initialVn(), { type: 'build.result', result: { slug: 'a', action: 'preflight', ok: false, messages: ['no sdk'], at: 'x' } })
-    expect(s.builds.a?.preflight?.ok).toBe(false)
+    let s = apply(initialVn(), { type: 'build.result', result: { slug: 'a', action: 'lint', ok: false, messages: ['no sdk'], at: 'x' } })
+    expect(s.builds.a?.lint?.ok).toBe(false)
     s = apply(s, { type: 'edition.loaded', slug: 'a', lang: 'hr', edition: { lang: 'hr', title: 't', chapterTitles: {}, choiceTexts: {}, endings: {}, characterNames: {}, beats: { b1: 'x' } } })
     s = apply(s, { type: 'edition.updated', slug: 'a', lang: 'hr', beatId: 'b1', text: 'y' })
     expect(s.editions.a?.hr?.beats.b1).toBe('y')

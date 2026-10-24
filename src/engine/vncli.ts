@@ -34,10 +34,9 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   asset import <slug> <id> <file> [--no-process] [--bg key|birefnet|none] [--no-trim] [--no-pixelate]   use a file you made, cut out / fitted / pixelated like a generated image
   asset lock|unlock <slug> <id>
   clear-queue [slug]                     delete the queued jobs (of a project, or all) and mark their pipeline steps skipped
-  build <slug>                           build the Ren'Py game
-  lint <slug>                            run Ren'Py lint on the built game
+  build <slug>                           build the game
+  lint <slug>                            run lint on the built game
   play <slug>                            start the built game
-  android <slug> [--preflight] [--bundle]   check the setup / build the Android package
   voice <slug> [--lang hr] [--only <beatId>] [--limit n]   generate the voice clips (only when the project's voice is on)
   voice plan <slug> [--overwrite]        assign a VibeTTS voice per character, the narrator and edition language
   voice import <slug> --lang hr (--folder <dir> | --beat <beatId> --file <clip>)   use clips you made: <beatId>.<ext> files; generation keeps them
@@ -54,9 +53,9 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
 `
 
 /** The commands the VN CLI handles (the rest of index.ts handles `probe`, `key-set` and the plain engine). */
-export const CLI_COMMANDS = new Set(['books', 'import', 'projects', 'run', 'edition', 'analyse', 'plan', 'assets', 'generate', 'asset', 'clear-queue', 'build', 'lint', 'play', 'android', 'voice', 'comfy', 'settings', 'studios', 'studio', 'themes', 'help'])
+export const CLI_COMMANDS = new Set(['books', 'import', 'projects', 'run', 'edition', 'analyse', 'plan', 'assets', 'generate', 'asset', 'clear-queue', 'build', 'lint', 'play', 'voice', 'comfy', 'settings', 'studios', 'studio', 'themes', 'help'])
 
-const BOOL_FLAGS = new Set(['force', 'preflight', 'bundle', 'run', 'verbose', 'json', 'no-build', 'refresh-prompts', 'help', 'outline', 'wait', 'sprites', 'no-process', 'no-trim', 'no-pixelate'])
+const BOOL_FLAGS = new Set(['force', 'run', 'verbose', 'json', 'no-build', 'refresh-prompts', 'help', 'outline', 'wait', 'sprites', 'no-process', 'no-trim', 'no-pixelate'])
 
 export interface ParsedCli {
   command: string
@@ -397,16 +396,6 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
       const r = await svc.runGame(slug!)
       out(`started the game (pid ${r.pid ?? '?'})`)
       return 0
-    }
-    case 'android': {
-      const [slug] = need(p, 1, 'android <slug> [--preflight] [--bundle]')
-      if (p.flags.preflight) {
-        const r = await svc.androidPreflight(slug!)
-        for (const m of r.messages) out(`${r.ok ? 'ok' : 'missing'}: ${m}`)
-        return r.ok ? 0 : 1
-      }
-      await svc.enqueueAndroid(slug!, !!p.flags.bundle)
-      return waitAndReport(svc, slug!, { timeoutMs: 70 * 60_000 })
     }
     case 'voice': {
       if (p.args[0] === 'status') {

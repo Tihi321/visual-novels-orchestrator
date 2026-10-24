@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import type { BuildResult, ProjectDetail } from '../../../shared/protocol'
 import { openFolder, sendCommand } from '../../api'
 import { projectRel, relativeToData } from '../../lib/urls'
@@ -12,12 +11,8 @@ export function BuildTab({ slug, detail }: { slug: string; detail: ProjectDetail
   const busy = jobs.running + jobs.queued > 0
   const build = builds?.build ?? detail.build
   const lint = builds?.lint ?? detail.lint
-  const preflight = builds?.preflight
-  const android = builds?.android
   const error = useRecentError(slug)
-  const [bundle, setBundle] = useState(false)
   const gameRel = (build?.gameDir && relativeToData(dataDir, build.gameDir)) || projectRel(slug, 'game')
-  const androidOk = preflight?.ok === true
 
   return (
     <div className="stack" data-testid="tab-build-body">
@@ -35,6 +30,9 @@ export function BuildTab({ slug, detail }: { slug: string; detail: ProjectDetail
           </button>
           {busy && <Pill tone="accent">{jobs.running} running, {jobs.queued} queued</Pill>}
         </div>
+        <div className="dim" style={{ marginTop: 6 }}>
+          Compiles a self-contained HTML5/Web Visual Novel &amp; Puzzle bundle into <code>game/index.html</code> (playable directly via <b>Play</b> or in any browser, and ready to wrap with Capacitor for mobile).
+        </div>
         {error && <div className="bad-text">{error}</div>}
         <ResultView title="Build" result={build} testId="build-result" />
         <ResultView title="Lint" result={lint} testId="lint-result" />
@@ -45,38 +43,6 @@ export function BuildTab({ slug, detail }: { slug: string; detail: ProjectDetail
             Open folder
           </button>
         </div>
-      </div>
-
-      <div className="card" data-testid="android-card">
-        <h3>Android</h3>
-        <div className="row">
-          <button onClick={() => sendCommand({ type: 'androidPreflight', slug })} data-testid="preflight-go">
-            Check (preflight)
-          </button>
-          <label className="inline">
-            <input type="checkbox" checked={bundle} onChange={(e) => setBundle(e.target.checked)} />
-            Bundle (.aab) instead of .apk
-          </label>
-          <button
-            className="primary"
-            disabled={!androidOk}
-            title={androidOk ? undefined : 'Run the preflight check first; it has to pass'}
-            onClick={() => sendCommand({ type: 'androidBuild', slug, bundle })}
-            data-testid="android-go"
-          >
-            Build Android
-          </button>
-        </div>
-        {!preflight && <div className="dim">Run the check to see what is missing for an Android build.</div>}
-        <ResultView title="Preflight" result={preflight} testId="preflight-result" actionable />
-        <ResultView title="Android build" result={android} testId="android-result" />
-        {android?.files && android.files.length > 0 && (
-          <div className="row">
-            <span className="dim">Output:</span>
-            <code className="ellipsis">{android.files.join(', ')}</code>
-            <button onClick={() => void openFolder(projectRel(slug, 'android'))}>Open folder</button>
-          </div>
-        )}
       </div>
     </div>
   )

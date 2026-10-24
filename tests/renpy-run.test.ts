@@ -2,8 +2,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { androidBuildArgs, androidConfigure, androidPreflight } from '../src/engine/renpy/android'
-import { parseLint, renpyExe } from '../src/engine/renpy/run'
+import { lint, parseLint } from '../src/engine/game/lint'
+import { run } from '../src/engine/game/run'
 
 const REPORT_OK = `\uFEFFRen'Py 8.5.3.26051504 lint report, generated at: Thu Oct 15 14:44:47 2026
 
@@ -41,47 +41,100 @@ describe('parseLint', () => {
   })
 })
 
-describe('android', () => {
-  it('the build command line (verified against launcher/game/android.rpy of SDK 8.5.3)', () => {
-    const args = androidBuildArgs('C:/sdk', 'C:/p/game', { destination: 'C:/out', bundle: true })
-    expect(args).toEqual([path.join('C:/sdk', 'launcher'), 'android_build', 'C:/p/game', '--bundle', '--destination', 'C:/out'])
-    expect(androidBuildArgs('C:/sdk', 'C:/p/game', { destination: 'C:/out' })).not.toContain('--bundle')
-    expect(renpyExe('C:/sdk')).toMatch(/renpy\.(exe|sh)$/)
-  })
-
-  it('the preflight tells what is missing, with the action to take', () => {
-    const sdk = fs.mkdtempSync(path.join(os.tmpdir(), 'vno-sdk-'))
-    const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'vno-proj-'))
+describe('native lint and run', () => {
+  it('lint on an unbuilt directory reports missing game-data.json', async () => {
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vno-lint-empty-'))
     try {
-      fs.writeFileSync(path.join(sdk, process.platform === 'win32' ? 'renpy.exe' : 'renpy.sh'), '')
-      const r = androidPreflight(proj, { sdkPath: sdk, java: { found: false } })
-      expect(r.ok).toBe(false)
-      const text = r.problems.join('\n')
-      expect(text).toContain('RAPT')
-      expect(text).toContain('JDK 21')
-      expect(text).toContain('Generate Keys')
-      expect(text).toContain('.android.json')
-
-      fs.mkdirSync(path.join(sdk, 'rapt', 'Sdk', 'platform-tools'), { recursive: true })
-      fs.writeFileSync(path.join(sdk, 'rapt', 'Sdk', 'platform-tools', process.platform === 'win32' ? 'adb.exe' : 'adb'), '')
-      fs.writeFileSync(path.join(proj, 'android.keystore'), '')
-      fs.writeFileSync(path.join(proj, 'bundle.keystore'), '')
-      androidConfigure(proj, { name: 'Book', package: 'com.example.book' })
-      const ok = androidPreflight(proj, { sdkPath: sdk, java: { found: true, major: 21, raw: 'openjdk version "21.0.1"' } })
-      expect(ok.problems).toEqual([])
-      expect(ok.ok).toBe(true)
-
-      const old = androidPreflight(proj, { sdkPath: sdk, java: { found: true, major: 17, raw: 'openjdk version "17"' } })
-      expect(old.problems.join('\n')).toContain('needs JDK 21')
+      const res = await lint(emptyDir)
+      expect(res.ok).toBe(false)
+      expect(res.code).toBe(1)
+      expect(res.messages.join(' ')).toContain('game-data.json not found')
     } finally {
-      fs.rmSync(sdk, { recursive: true, force: true })
-      fs.rmSync(proj, { recursive: true, force: true })
+      fs.rmSync(emptyDir, { recursive: true, force: true })
     }
   })
 
-  it('a missing SDK is reported first', () => {
-    const r = androidPreflight('C:/nowhere', { sdkPath: 'C:/definitely/not/here' })
-    expect(r.ok).toBe(false)
-    expect(r.problems[0]).toContain('sdkPath')
+  it('lint validates a clean game bundle and computes statistics', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vno-lint-bundle-'))
+    try {
+      fs.writeFileSync(path.join(dir, 'index.html'), '<!DOCTYPE html>')
+      fs.writeFileSync(path.join(dir, 'player.js'), '// player')
+      fs.writeFileSync(path.join(dir, 'player.css'), '/* css */')
+      fs.writeFileSync(
+        path.join(dir, 'game-data.json'),
+        JSON.stringify({
+          title: 'Test Game',
+          chapters: [
+            {
+              number: 1,
+              title: 'Chapter 1',
+              scenes: [
+                {
+                  id: 'sc1',
+                  beats: [
+                    { id: 'b1', type: 'narration', text: 'Once upon a time.' },
+                    { id: 'b2', type: 'line', text: 'Hello world.' }
+                  ]
+                }
+              ]
+            }
+          ]
+        })
+      )
+      const res = await lint(dir)
+      expect(res.ok).toBe(true)
+      expect(res.code).toBe(0)
+      expect(res.messages).toEqual([])
+      expect(res.statistics).toContain('The game contains 2 dialogue blocks')
+      expect(res.statistics).toContain('6 words and 29 characters')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('lint reports missing referenced asset files', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vno-lint-missing-'))
+    try {
+      fs.writeFileSync(path.join(dir, 'index.html'), '')
+      fs.writeFileSync(path.join(dir, 'player.js'), '')
+      fs.writeFileSync(path.join(dir, 'player.css'), '')
+      fs.writeFileSync(
+        path.join(dir, 'game-data.json'),
+        JSON.stringify({
+          title: 'Test Game',
+          chapters: [
+            {
+              number: 1,
+              title: 'Chapter 1',
+              scenes: [
+                {
+                  id: 'sc1',
+                  bgPath: 'images/bg_missing.webp',
+                  beats: [{ id: 'b1', type: 'narration', text: 'Darkness.' }]
+                }
+              ]
+            }
+          ]
+        })
+      )
+      const res = await lint(dir)
+      expect(res.ok).toBe(false)
+      expect(res.messages.join(' ')).toContain('background file missing: images/bg_missing.webp')
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('run fails when game is not built and returns URL when built', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'vno-run-'))
+    try {
+      expect(() => run(dir)).toThrow(/Game not built/)
+      fs.writeFileSync(path.join(dir, 'index.html'), '<!DOCTYPE html>')
+      const res = run(dir)
+      expect(res.url).toMatch(/^file:\/\//)
+      expect(res.indexHtml).toBe(path.join(dir, 'index.html'))
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

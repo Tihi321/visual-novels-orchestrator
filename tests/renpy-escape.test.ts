@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { escapeRenpy, renpyPlainString, renpyString, renpyText, slugify } from '../src/engine/renpy/escape'
+import { escapeRenpy, renderHtmlEmphasis, renpyPlainString, renpyString, renpyText, slugify } from '../src/engine/game/escape'
 
 describe('escapeRenpy', () => {
   it('escapes backslash, quote, bracket and brace', () => {
@@ -69,5 +69,14 @@ describe('renpyString / renpyPlainString / slugify', () => {
     expect(slugify('Mr. Šarić')).toBe('mr_saric')
     expect(slugify('Đuro')).toBe('duro')
     expect(slugify('???')).toBe('x')
+  })
+})
+
+describe('renderHtmlEmphasis', () => {
+  it('converts markdown bold and italic to HTML tags with escaping', () => {
+    expect(renderHtmlEmphasis('a **b** and *c*')).toBe('a <strong>b</strong> and <em>c</em>')
+    expect(renderHtmlEmphasis('say "hi" & <bye>')).toBe('say &quot;hi&quot; &amp; &lt;bye&gt;')
+    expect(renderHtmlEmphasis('line 1\nline 2')).toBe('line 1<br/>line 2')
+    expect(renderHtmlEmphasis('_italic_')).toBe('<em>italic</em>')
   })
 })

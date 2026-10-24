@@ -2,16 +2,16 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildTools, callTool } from '../src/engine/mcp/tools'
 import type { ToolResult } from '../src/engine/mcp/tools'
-import { checkPuzzleText, generatePuzzle, packagesDirOf, renderPuzzleText, solvePuzzle } from '../src/engine/puzzles/python'
+import { checkPuzzleText, generatePuzzle, packagesDirOf, renderPuzzleText, solvePuzzle, PuzzleToolError, PuzzleCliError } from '../src/engine/puzzles/python'
 import type { PuzzlePython } from '../src/engine/puzzles/python'
-import { DEFAULT_SDK_PATH, sdkPython } from '../src/engine/renpy/run'
-import { knightsCoreSchema, murdleCoreSchema, puzzleCoreSchema, puzzleGeneratedSchema, testimonyCoreSchema, logicCoreSchema } from '../src/shared/puzzle'
+import { DEFAULT_SDK_PATH } from '../src/engine/game/run'
+import { knightsCoreSchema, murdleCoreSchema, puzzleCoreSchema, puzzleGeneratedSchema, testimonyCoreSchema, logicCoreSchema, quizCoreSchema } from '../src/shared/puzzle'
 import type { KnightsClaim, MurdleCore, PuzzleEntry, PuzzleGenerated } from '../src/shared/puzzle'
 import { makeVnEnv } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
 
 /**
- * The Python bridge and the `vno_puzzle_*` tools, with the SDK's real Python. Skipped when the SDK is not there.
+ * The Python bridge and the `vno_puzzle_*` tools, with native TypeScript engine.
  */
 
 const sdkPath = process.env.VNO_RENPY_SDK ?? DEFAULT_SDK_PATH
@@ -29,7 +29,7 @@ const genMurdle = async (o: { size?: number; band: string; seed: number; motive?
 
 const faithful = (p: Murdle): GridRead[] => p.clues.map((c) => ({ id: c.id, type: c.type, a: p.names[c.a]!, b: Array.isArray(c.b) ? c.b.map((x) => p.names[x]!) : p.names[c.b]! }))
 
-describe.skipIf(!sdkPython(sdkPath))('the Python bridge (contract)', () => {
+describe('the Python bridge (contract)', () => {
   it('generate answers with a shape the zod schema reads, and one call takes under 2 s', async () => {
     const t0 = Date.now()
     const p = await genMurdle({ size: 3, band: 'hard', seed: 11 })
@@ -48,7 +48,7 @@ describe.skipIf(!sdkPython(sdkPath))('the Python bridge (contract)', () => {
     expect(proof.steps).toHaveLength(27)
     const loose = { ...murdleCoreSchema.parse(core), clues: core.clues.slice(0, 1) }
     expect(await solvePuzzle(py, loose)).toMatchObject({ unique: false, deducible: false, band: null })
-    await expect(solvePuzzle(py, { ...murdleCoreSchema.parse(core), clues: [{ id: 'c1', type: 'is', a: 's1', b: 'zz' }] })).rejects.toThrow(/unknown item zz/)
+    await expect(solvePuzzle(py, { ...murdleCoreSchema.parse(core), clues: [{ id: 'c1', type: 'is' as const, a: 's1', b: 'zz' }] })).rejects.toThrow(/unknown item zz/)
   })
 
   it('render-text writes the canonical sentences for new names', async () => {
@@ -84,12 +84,15 @@ describe.skipIf(!sdkPython(sdkPath))('the Python bridge (contract)', () => {
     expect((await checkPuzzleText(py, rest, rb.slice(1), text)).problems[0]!.problem).toMatch(/gave no clue/)
   })
 
-  it('without the SDK the bridge says what to set', async () => {
-    await expect(generatePuzzle({ ...py, sdkPath: path.join(__dirname, 'no-sdk-here') }, { kind: 'murdle', size: 3, band: 'easy', seed: 1 })).rejects.toThrow(/need the Ren'Py SDK.*sdkPath in config\/renpy.md/)
+  it('native engine generates directly and exports PuzzleToolError', async () => {
+    const p = await generatePuzzle(py, { kind: 'murdle', size: 3, band: 'easy', seed: 1 })
+    expect(p).toBeDefined()
+    expect(new PuzzleToolError('test')).toBeInstanceOf(Error)
+    expect(new PuzzleCliError('cli test')).toBeInstanceOf(PuzzleToolError)
   })
 })
 
-describe.skipIf(!sdkPython(sdkPath))('the vno_puzzle_* tools', () => {
+describe('the vno_puzzle_* tools', () => {
   let env: VnEnv
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type Data = Record<string, any>
@@ -206,7 +209,7 @@ describe.skipIf(!sdkPython(sdkPath))('the vno_puzzle_* tools', () => {
   })
 })
 
-describe.skipIf(!sdkPython(sdkPath))('bigger Murdle through the bridge and the tools', () => {
+describe('bigger Murdle through the bridge and the tools', () => {
   let env: VnEnv
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type Data = Record<string, any>
@@ -248,7 +251,7 @@ describe.skipIf(!sdkPython(sdkPath))('bigger Murdle through the bridge and the t
   })
 })
 
-describe.skipIf(!sdkPython(sdkPath))('Knights and Knaves through the bridge and the tools', () => {
+describe('Knights and Knaves through the bridge and the tools', () => {
   let env: VnEnv
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type Data = Record<string, any>
@@ -334,7 +337,7 @@ describe.skipIf(!sdkPython(sdkPath))('Knights and Knaves through the bridge and 
   })
 })
 
-describe.skipIf(!sdkPython(sdkPath))('a testimony through the bridge and the tools', () => {
+describe('a testimony through the bridge and the tools', () => {
   let env: VnEnv
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type Data = Record<string, any>
@@ -394,7 +397,7 @@ describe.skipIf(!sdkPython(sdkPath))('a testimony through the bridge and the too
   })
 })
 
-describe.skipIf(!sdkPython(sdkPath))('a logic grid through the bridge and the tools', () => {
+describe('a logic grid through the bridge and the tools', () => {
   let env: VnEnv
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type Data = Record<string, any>
@@ -441,5 +444,55 @@ describe.skipIf(!sdkPython(sdkPath))('a logic grid through the bridge and the to
     const failed = await call('vno_puzzle_check_text', { slug, key: 'bakery', readBack: bad })
     expect(failed.ok).toBe(false)
     expect(failed.differing).toEqual([before.id])
+  })
+})
+
+describe('a quiz through the bridge and the tools', () => {
+  let env: VnEnv
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type Data = Record<string, any>
+  const call = async (name: string, args: object): Promise<Data> => {
+    const r: ToolResult = await callTool(buildTools(env.engine.vn), name, args)
+    if (r.isError) throw new Error(r.content[0]?.text)
+    return r.structuredContent as Data
+  }
+  beforeEach(async () => {
+    env = await makeVnEnv({ sdk: undefined })
+  })
+  afterEach(async () => {
+    await env.cleanup()
+  })
+
+  it('generate in under 2 s in every band; solve proves it; options and questions are there', async () => {
+    for (const band of ['easy', 'medium', 'hard']) {
+      const t0 = Date.now()
+      const g = await call('vno_puzzle_generate', { kind: 'quiz', band, seed: 10 })
+      expect(Date.now() - t0).toBeLessThan(2000)
+      const core = quizCoreSchema.parse(g.core)
+      expect(core.questions.length).toBeGreaterThanOrEqual(3)
+      expect(Object.keys(g.text).sort()).toEqual([...core.questions.map((q) => q.id), 'intro'].sort())
+      expect(await solvePuzzle(py, core)).toMatchObject({ unique: true, deducible: true, band })
+    }
+  })
+
+  it('vno_puzzle_set with generate, the read-back task, a faithful read-back, a flipped answer and an edition', async () => {
+    const r = await call('vno_create_project', { book: { title: 'Trivia', characters: [{ name: 'Hartley', looks: 'a host' }], places: [{ name: 'Stage', looks: 'a stage' }], chapters: [{ title: 'c', scenes: [{ place: 'stage', beats: [{ text: 'Hi.' }] }] }] } })
+    const slug = r.slug as string
+    await call('vno_beat_add', { slug, sceneId: 'ch01.s01', beats: [{ puzzle: 'trivia' }] })
+    const set = await call('vno_puzzle_set', { slug, key: 'trivia', generate: { kind: 'quiz', band: 'easy', seed: 5 } })
+    expect(set.verified).toMatchObject({ unique: true, deducible: true, textChecked: true })
+    const got = await call('vno_puzzle_get', { slug, key: 'trivia' })
+    expect(got.readBackTask).toMatch(/multiple-choice quiz/)
+    expect(got.readBackTask).toContain('q1:')
+    const p = (await env.engine.vn.store.loadBook(slug)).puzzles![0]!
+    const core = quizCoreSchema.parse(p.data)
+    const rb = core.questions.map((q) => ({ id: q.id, answer: p.names[q.answer] ?? q.answer }))
+    expect(await call('vno_puzzle_check_text', { slug, key: 'trivia', readBack: rb })).toMatchObject({ ok: true, textChecked: true })
+    const firstQ = core.questions[0]!
+    const wrongOpt = firstQ.options.find((o) => o !== firstQ.answer)!
+    const bad = rb.map((x) => (x.id === firstQ.id ? { ...x, answer: p.names[wrongOpt] ?? wrongOpt } : x))
+    const failed = await call('vno_puzzle_check_text', { slug, key: 'trivia', readBack: bad })
+    expect(failed.ok).toBe(false)
+    expect(failed.differing).toEqual([firstQ.id])
   })
 })
