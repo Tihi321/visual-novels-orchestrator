@@ -260,6 +260,15 @@ export interface ProjectSummary {
   updatedAt: string
 }
 
+export type StageSlotView = 'left' | 'center' | 'right'
+export type SceneTransitionView = 'dissolve' | 'fade' | 'none'
+
+export interface SceneCuesView {
+  transition?: SceneTransitionView
+  pause?: number
+  casts: Record<string, Record<string, StageSlotView>>
+}
+
 /** The whole project for the Book page. `book` is vn.json (structure and the primary text). */
 export interface ProjectDetail {
   summary: ProjectSummary
@@ -272,6 +281,8 @@ export interface ProjectDetail {
   resolvedTheme: string
   /** Queued, running, done and failed jobs of this project. */
   jobs: { queued: number; running: number; done: number; failed: number }
+  /** Scene and cast cues from `cues.json` (keyed by scene ID). */
+  cues: Record<string, SceneCuesView>
 }
 
 /** An asset for the gallery: the entry, the path of its current file (relative to the project folder) and whether the book still needs it. */
@@ -397,6 +408,8 @@ export type EngineEvent =
   | { type: 'assets.listed'; slug: string; assets: AssetView[] }
   /** One asset changed: a version was added, it was locked, replaced, a version was picked, a review finished. */
   | { type: 'asset.updated'; slug: string; asset: AssetView }
+  /** A prompt suggestion generated (or derived) for the Regenerate dialog. */
+  | { type: 'asset.prompt.suggested'; slug: string; id: string; prompt: string; source: 'ai' | 'fallback' }
   /** A pipeline step changed state or counted a unit of work. */
   | { type: 'pipeline.progress'; slug: string; step: PipelineStep; status: StepStatus }
   | { type: 'build.result'; result: BuildResult }
@@ -529,6 +542,8 @@ export type Command =
   | { type: 'deleteProject'; slug: string }
   /** Enqueues the pipeline from a step (default: analyse, or import when there is no vn.json). `force` plans and generates again. */
   | { type: 'runPipeline'; slug: string; from?: PipelineStep; force?: boolean }
+  /** Aborts running jobs for this project and drops its queued jobs. */
+  | { type: 'stopPipeline'; slug: string }
   /** Adds a translated edition from a book folder (or Scriptorium slug). */
   | { type: 'addEdition'; slug: string; source: string; lang: Lang }
   | { type: 'getEdition'; slug: string; lang: Lang }
@@ -537,6 +552,8 @@ export type Command =
   | { type: 'listAssets'; slug: string }
   /** Generates the asset again as a new version (selected). `prompt`, `engine` and `seed` change the entry first. */
   | { type: 'regenerateAsset'; slug: string; id: string; prompt?: string; engine?: string; seed?: number }
+  /** Generates a suggested prompt for an asset in the Regenerate modal without saving or queueing a job. Answers with `asset.prompt.suggested`. */
+  | { type: 'suggestAssetPrompt'; slug: string; id: string; instructions?: string }
   /** Uses this file for the asset: it becomes `custom` and locked. */
   | { type: 'replaceAsset'; slug: string; id: string; file: string }
   | { type: 'pickAssetVersion'; slug: string; id: string; n: number }
@@ -575,6 +592,24 @@ export type Command =
   | { type: 'setVoice'; slug: string; speakerKey: string; lang: Lang; voice: string }
   /** Makes a short preview clip of a VibeTTS voice in a language. Answers with `voice.preview`. */
   | { type: 'previewVoice'; slug: string; speakerKey: string; voice: string; lang?: Lang }
+  /** Updates stage cues (scene transitions/pauses and cast slot positions) for one or more scenes/beats. */
+  | {
+      type: 'updateSceneCues'
+      slug: string
+      scenes?: { id: string; transition?: SceneTransitionView | null; pause?: number | null }[]
+      casts?: { beatId: string; slots: Record<string, StageSlotView> }[]
+      /** Queue a build afterwards. */
+      rebuild?: boolean
+    }
+  /** Updates scene metadata (place, time, music, ambience, description) and/or beat fields (cast, speaker, expression, image, sfx, ambience). */
+  | {
+      type: 'updateSceneStory'
+      slug: string
+      scenes?: { id: string; placeKey?: string | null; time?: string | null; music?: string | null; ambience?: string | null; description?: string }[]
+      beats?: { id: string; cast?: string[]; speakerKey?: string | null; expression?: string; image?: string | null; sfx?: string | null; ambience?: string | null }[]
+      /** Queue a build afterwards. */
+      rebuild?: boolean
+    }
 
 /** The settings an `updateProjectSettings` command may change (each part is merged into the current one). */
 export interface ProjectSettingsPatch {
@@ -639,6 +674,10 @@ export type VnCommand = Extract<
       | 'previewVoice'
       | 'getRenpyConfig'
       | 'saveRenpyConfig'
+      | 'stopPipeline'
+      | 'suggestAssetPrompt'
+      | 'updateSceneCues'
+      | 'updateSceneStory'
   }
 >
 
@@ -692,6 +731,10 @@ const COMMAND_TYPE_SET: Record<CommandType, true> = {
   previewVoice: true,
   getRenpyConfig: true,
   saveRenpyConfig: true,
+  stopPipeline: true,
+  suggestAssetPrompt: true,
+  updateSceneCues: true,
+  updateSceneStory: true,
   mcpStatus: true,
   saveMcpConfig: true,
   saveSettings: true,

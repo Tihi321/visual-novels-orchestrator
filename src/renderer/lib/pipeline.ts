@@ -98,3 +98,8 @@ export function lastLines(text: string, n: number): string[] {
     .filter((l) => l.trim() !== '')
     .slice(-n)
 }
+
+/** True when the build step finished with status 'done'. */
+export function isProjectFinished(project: { pipeline?: PipelineStatus | null }): boolean {
+  return project.pipeline?.steps.build?.status === 'done'
+}

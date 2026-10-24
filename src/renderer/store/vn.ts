@@ -67,6 +67,8 @@ export interface VnData {
   assets: Record<string, Record<string, AssetView>>
   /** slug:id -> counter that grows with every `asset.updated`, to refresh a replaced file under the same name. */
   assetRev: Record<string, number>
+  /** `<slug>:<assetId>` -> latest prompt suggestion from `suggestAssetPrompt`. */
+  promptSuggestions: Record<string, { prompt: string; source: 'ai' | 'fallback'; rev: number }>
   editions: Record<string, Partial<Record<Lang, Edition>>>
   alignReports: Record<string, Partial<Record<Lang, AlignReportView | null>>>
   /** Live step statuses from `pipeline.progress`, over the saved ones in the project summary. */
@@ -106,6 +108,7 @@ export function initialVn(): VnData {
     details: {},
     assets: {},
     assetRev: {},
+    promptSuggestions: {},
     editions: {},
     alignReports: {},
     progress: {},
@@ -195,6 +198,15 @@ export function reduceVn(s: VnData, e: EngineEvent, now = Date.now()): Partial<V
       return {
         assets: { ...s.assets, [e.slug]: { ...(s.assets[e.slug] ?? {}), [e.asset.id]: e.asset } },
         assetRev: { ...s.assetRev, [key]: (s.assetRev[key] ?? 0) + 1 }
+      }
+    }
+    case 'asset.prompt.suggested': {
+      const key = `${e.slug}:${e.id}`
+      return {
+        promptSuggestions: {
+          ...s.promptSuggestions,
+          [key]: { prompt: e.prompt, source: e.source, rev: (s.promptSuggestions[key]?.rev ?? 0) + 1 }
+        }
       }
     }
     case 'pipeline.progress':

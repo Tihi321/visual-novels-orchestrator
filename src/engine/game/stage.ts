@@ -187,14 +187,14 @@ function nextExpression(scene: VnScene, idx: number, charKey: string): string {
 /**
  * Computes the stage plan for a scene, tracking sprite slots, CGs, and audio cues.
  */
-export function planScene(scene: VnScene, cues: StageCues, knownChars: Set<string> = new Set()): SceneStagePlan {
-  const cue = cues.scenes[scene.id] ?? { transition: scene.breakBefore ? 'fade' : 'dissolve' }
+export function planScene(scene: VnScene, cues?: Partial<StageCues>, knownChars: Set<string> = new Set()): SceneStagePlan {
+  const cue = cues?.scenes?.[scene.id] ?? { transition: scene.breakBefore ? 'fade' : 'dissolve' }
   const currentShown = new Map<string, { expression: string; slot: Slot }>()
   let currentCg: string | null = null
   const beats: Record<string, BeatStagePlan> = {}
 
   scene.beats.forEach((beat: VnBeat, idx: number) => {
-    const bc = cues.beats?.[beat.id]
+    const bc = cues?.beats?.[beat.id]
     const image = bc?.image !== undefined ? bc.image : beat.image
     const sfx = bc?.sfx ?? beat.sfx ?? null
     const ambience = bc?.ambience !== undefined ? bc.ambience : (beat.ambience ?? undefined)
@@ -219,8 +219,30 @@ export function planScene(scene: VnScene, cues: StageCues, knownChars: Set<strin
     }
 
     if (beat.type === 'cast') {
-      const keys = [...new Set(beat.cast.map((c) => c.charKey))].filter((k) => knownChars.size === 0 || knownChars.has(k))
-      const slots = cues.casts[beat.id] ?? assignSlots(keys).slots
+      const seenKeys = new Set<string>()
+      const dedupedCast = beat.cast.filter((c) => {
+        if (seenKeys.has(c.charKey)) return false
+        seenKeys.add(c.charKey)
+        return knownChars.size === 0 || knownChars.has(c.charKey)
+      })
+      const keys = dedupedCast.map((c) => c.charKey)
+      const rawSlots = cues?.casts?.[beat.id] ?? assignSlots(keys).slots
+      const usedSlots = new Set<Slot>()
+      const slots: Record<string, Slot> = {}
+      for (const k of keys) {
+        const desired = rawSlots[k]
+        if (!desired) continue
+        if (!usedSlots.has(desired)) {
+          slots[k] = desired
+          usedSlots.add(desired)
+        } else {
+          const free = STAGE_SLOTS.find((s) => !usedSlots.has(s))
+          if (free) {
+            slots[k] = free
+            usedSlots.add(free)
+          }
+        }
+      }
       
       // Characters to hide
       for (const [k] of currentShown) {

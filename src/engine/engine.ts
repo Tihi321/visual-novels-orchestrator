@@ -156,6 +156,7 @@ export class Engine {
       getSettings: () => this.settings,
       getScriptoriumDir: () => this.scriptoriumDataPath(),
       kick: () => this.scheduler.kick(),
+      stopBook: (slug, reason) => this.scheduler.stopBook(slug, reason),
       comfy: opts.comfy,
       vibetts: opts.vibetts,
       pixel: opts.pixel,
@@ -910,6 +911,10 @@ export class Engine {
       case 'openInStudio':
       case 'getRenpyConfig':
       case 'saveRenpyConfig':
+      case 'stopPipeline':
+      case 'suggestAssetPrompt':
+      case 'updateSceneCues':
+      case 'updateSceneStory':
         await this.vn.handle(cmd)
         this.scheduler.kick()
         return

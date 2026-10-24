@@ -4,6 +4,7 @@ import { hasText } from '../../shared/vn'
 import { languageInfo } from '../../shared/languages'
 import type { Theme } from '../themes/load'
 import { aliasIndex } from '../vn/aliases'
+import { expressionsOf } from '../vn/expressions'
 import { ambId, sfxId } from '../vn/ids'
 import { renderHtmlEmphasis, renpyPlainString, renpyString, renpyText, slugify } from './escape'
 import { bgImageName, cgImageName, imageFile, pickColor, spriteImageName, type ImageFormat, type Resolution, type UsedImages } from './images'
@@ -616,8 +617,9 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
   const primaryNames = inp.primaryEdition?.characterNames ?? {}
   const usedSpriteKeys = inp.used ? new Set(inp.used.sprites.map((s) => `${s.charKey}/${s.expression}`)) : null
   for (const c of book.characters) {
-    const expressions = [...new Set([...(book.expressions ?? ['neutral']), ...(c.expressions ?? [])])]
-    if (!expressions.includes('neutral')) expressions.unshift('neutral')
+    const usedExprs = inp.used ? inp.used.sprites.filter((s) => s.charKey === c.key).map((s) => s.expression) : []
+    const expressions = [...new Set(['neutral', ...expressionsOf(book, c), ...usedExprs])]
+
 
     const sprites: Record<string, string> = {}
     for (const expr of expressions) {
