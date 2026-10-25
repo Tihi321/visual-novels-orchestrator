@@ -1,4 +1,4 @@
-import { FLOW_ENGINE, FLOW_MUSIC_ENGINE } from '../../shared/vn'
+import { FLOW_ENGINE, FLOW_MUSIC_ENGINE, resolveSfxEngine } from '../../shared/vn'
 import type { AssetEntry, AssetKind, ImageEntry, ProjectSettings, SoundEntry, VnBook, VnScene } from '../../shared/vn'
 import { ambId, cgId, coverId, musicId, normText, sfxId, sheetId, spriteId, voiceRefId } from '../vn/ids'
 
@@ -127,7 +127,7 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
   }
   out.push(stub({ id: assetIds.cover(), kind: 'cover', engine: gen, size: { ...LANDSCAPE } }))
   for (let n = 1; n <= settings.music.tracks; n++) out.push(stub({ id: assetIds.music(n), kind: 'music', engine: settings.music.provider === 'flow' ? FLOW_MUSIC_ENGINE : settings.music.engine, size: null }))
-  for (const k of effects) if (book.sounds?.some((s) => s.key === k && s.kind === 'sfx')) out.push(stub({ id: assetIds.sfx(k), kind: 'sfx', engine: settings.sound.sfxEngine ?? '', size: null }))
+  for (const k of effects) if (book.sounds?.some((s) => s.key === k && s.kind === 'sfx')) out.push(stub({ id: assetIds.sfx(k), kind: 'sfx', engine: resolveSfxEngine(settings), size: null }))
   for (const k of ambiences) if (book.sounds?.some((s) => s.key === k && s.kind === 'ambience')) out.push(stub({ id: assetIds.amb(k), kind: 'ambience', engine: settings.sound.ambienceEngine, size: null }))
   if (settings.voice.enabled) {
     const engine = settings.voice.engines[settings.primaryLang] ?? settings.voice.engines[book.primaryLang] ?? ''

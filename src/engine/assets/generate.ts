@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
-import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, SFX_IMPORT_ONLY, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider, resolveSfxEngine } from '../../shared/vn'
 import type { AssetEntry, AssetManifest, AssetVersion, ProjectSettings, VnBook } from '../../shared/vn'
 import type { ComfyClient, ComfyProgress, ComfyResult } from '../comfy/client'
 import { randomSeed } from '../comfy/graphs'
@@ -361,6 +361,8 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     if (resolveArtProvider(ctx.settings.art) === 'flow') edited.engine = FLOW_ENGINE
     else if (edited.engine === FLOW_ENGINE) edited.engine = edited.kind === 'sprite' || (edited.kind === 'cg' && (edited.refs?.length ?? 0) > 0) ? ctx.settings.art.editor : ctx.settings.art.generator
   }
+  // A sound effect made before the project had an engine follows the project's audio engine now (an older manifest may say '').
+  if (edited.kind === 'sfx' && !edited.engine) edited.engine = resolveSfxEngine(ctx.settings)
   const viaFlow = IMAGE_KINDS.has(edited.kind) && edited.engine === FLOW_ENGINE
   try {
     progress('start', `${entry.kind} with ${edited.engine}`)
@@ -505,13 +507,15 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
         break
       }
       case 'sfx': {
-        // there is no sound-effect engine by default: Chiptune Studio (`chiptune`) or a custom ComfyUI workflow (sound.sfxEngine) makes it, else the file is imported
+        // Chiptune Studio's compose_sfx, a custom ComfyUI workflow, or any audio engine (the fallback: the music/ambience engine).
         if (edited.engine === CHIPTUNE_ENGINE) {
           chiptune = await chipSound('sfx', undefined)
           out = { bytes: Buffer.alloc(0), ext: path.extname(chiptune.file).slice(1) }
           break
         }
-        if (!edited.engine.startsWith('custom:')) return { ok: true, skipped: true, entry, reason: 'no SFX engine: import a file (vno_asset_import)' }
+        if (!edited.engine || edited.engine === SFX_IMPORT_ONLY) {
+          return { ok: true, skipped: true, entry, reason: `SFX generation is off (sound.sfxEngine: ${SFX_IMPORT_ONLY}): import a file (vno_asset_import)` }
+        }
         const r: ComfyResult = await ctx.comfy.generate({ engine: edited.engine, prompt, seed, seconds: sizes.sfxSeconds ?? 5, format: sizes.musicFormat, onProgress, signal: ctx.signal })
         out = { bytes: r.bytes, ext: r.ext }
         break

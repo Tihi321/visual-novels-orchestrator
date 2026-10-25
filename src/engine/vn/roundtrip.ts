@@ -10,9 +10,9 @@ import { launchPlan, launchStudio, watchFile } from '../studios/launch'
 import type { OpenArgs } from '../studios/launch'
 import type { VnService } from './service'
 
-/** The studio that edits a kind of asset: Pixel Studio for the images, Chiptune Studio for the music. */
+/** The studio that edits a kind of asset: Pixel Studio for the images, Chiptune Studio for the audio (music, sound effects, ambiences). */
 export function studioFor(kind: AssetEntry['kind']): StudioId {
-  if (kind === 'music') return 'chiptune'
+  if (kind === 'music' || kind === 'sfx' || kind === 'ambience') return 'chiptune'
   if (kind === 'voiceRef') throw new Error('voice references have no studio: upload a clip instead')
   return 'pixel'
 }

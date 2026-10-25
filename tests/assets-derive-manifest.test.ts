@@ -179,7 +179,7 @@ describe('deriveAssets: media cues and expression sets', () => {
     expect(byId.get('cg_letter')).toMatchObject({ kind: 'cg', engine: 'qwen-image-2.1' })
     expect(byId.get('cg_letter')!.refs).toBeUndefined()
     expect(byId.get('cg_letter')!.size).toEqual({ w: byId.get('cg_letter')!.size!.w, h: byId.get('cg_letter')!.size!.w }) // an insert is square
-    expect(byId.get('sfx_bell')).toMatchObject({ kind: 'sfx', engine: '', size: null })
+    expect(byId.get('sfx_bell')).toMatchObject({ kind: 'sfx', engine: 'ace-step-v1-instrumental', size: null })
     expect(byId.get('amb_waves')).toMatchObject({ kind: 'ambience', engine: 'ace-step-v1-instrumental', size: null })
     expect(byId.get('sprite_petra_smug')).toMatchObject({ kind: 'sprite', refs: ['sheet_petra'] })
     // a custom sfx engine is kept on the stub; an entry no beat uses gets no asset
@@ -188,6 +188,21 @@ describe('deriveAssets: media cues and expression sets', () => {
     const unused = mediaBook()
     unused.chapters[0]!.scenes[0]!.beats[2]!.image = undefined
     expect(deriveAssets(unused, settings()).some((a) => a.id === 'cg_letter')).toBe(false)
+  })
+
+  it('derives the sfx engine from the project: default audio engine, chiptune for pixel, custom and "none" as written', () => {
+    const pixel = settings({ art: { style: 'pixel', generator: 'z-image-turbo', editor: 'qwen-image-2.1-edit', review: false, bgRemoval: 'birefnet' } })
+    const engine = (s: ReturnType<typeof settings>) => deriveAssets(mediaBook(), s).find((a) => a.id === 'sfx_bell')!.engine
+    expect(engine(settings())).toBe('ace-step-v1-instrumental')
+    // a pixel book with no music provider composes its effects in Chiptune Studio
+    expect(engine(pixel)).toBe('chiptune')
+    // no sfx engine: the ambience engine answers
+    expect(engine(settings({ sound: { ambienceEngine: 'yue2' } }))).toBe('yue2')
+    // an explicit engine is used as written, including the import-only marker
+    expect(engine(settings({ sound: { ambienceEngine: 'yue2', sfxEngine: 'custom:foley' } }))).toBe('custom:foley')
+    expect(engine(settings({ sound: { ambienceEngine: 'yue2', sfxEngine: 'none' } }))).toBe('none')
+    // the ambience ignores the sfx engine
+    expect(deriveAssets(mediaBook(), settings({ sound: { ambienceEngine: 'yue2', sfxEngine: 'none' } })).find((a) => a.id === 'amb_waves')!.engine).toBe('yue2')
   })
 
   it('the fallback prompts of a cg and an ambience', () => {

@@ -1,4 +1,5 @@
 import type { AssetView } from '../../shared/protocol'
+import { IMAGE_KINDS, SFX_IMPORT_ONLY } from '../../shared/vn'
 
 export interface CharacterGroup {
   key: string
@@ -102,4 +103,22 @@ export function reviewBadge(a: Pick<AssetView, 'review' | 'fileRel'>): { label: 
 /** Counts for a group header: ready of total. */
 export function readyCount(assets: readonly AssetView[]): { ready: number; total: number } {
   return { ready: assets.filter((a) => !!a.fileRel).length, total: assets.length }
+}
+
+/**
+ * The assets that still have no file. `all` matches the project summary's missing count (the unused ones and, with hand-made art,
+ * the character sheets are left out); `generatable` keeps only what the generate step may make: locked, custom and voice-reference
+ * assets need an import or an upload, hand-made art is never generated, and a sound effect set to `none` is import-only.
+ */
+export function missingAssets(assets: readonly AssetView[], opts: { handArt: boolean }): { all: AssetView[]; generatable: AssetView[] } {
+  const all = assets.filter((a) => !a.orphaned && !a.fileRel && !(opts.handArt && a.kind === 'sheet'))
+  const generatable = all.filter(
+    (a) =>
+      a.kind !== 'voiceRef' &&
+      !a.locked &&
+      a.source !== 'custom' &&
+      !(opts.handArt && IMAGE_KINDS.has(a.kind)) &&
+      !(a.kind === 'sfx' && a.engine === SFX_IMPORT_ONLY)
+  )
+  return { all, generatable }
 }

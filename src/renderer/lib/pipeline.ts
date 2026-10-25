@@ -67,19 +67,26 @@ export function failedStep(rows: readonly StepRow[]): StepRow | null {
   return rows.find((r) => r.state === 'failed') ?? null
 }
 
+/** The steps after generate: a run from one of them does not make the assets that are still missing. */
+const AFTER_GENERATE: ReadonlySet<PipelineStep> = new Set(['voice', 'stage', 'build', 'lint'])
+
 /**
  * The step to continue from: the failed one, else the one that was running or queued, else the step after the last finished one
- * (steps before it that never ran, like import after a run from analyse, are not repeated), else analyse.
+ * (steps before it that never ran, like import after a run from analyse, are not repeated), else analyse. With missing assets, a
+ * result that would skip the generate step (or a pipeline that finished) starts at generate instead: unrun analyse/art/music
+ * are never skipped, and the pipeline then tails into voice/stage/build/lint as usual.
  */
-export function suggestedStart(rows: readonly StepRow[]): PipelineStep {
+export function suggestedStart(rows: readonly StepRow[], opts: { missingAssets?: number } = {}): PipelineStep {
   const stuck = rows.find((r) => r.state === 'failed') ?? rows.find((r) => r.state === 'running' || r.state === 'queued')
   if (stuck) return stuck.id
   let lastDone = -1
   rows.forEach((r, i) => {
     if (r.state === 'done') lastDone = i
   })
-  if (lastDone < 0) return 'analyse'
-  return rows[lastDone + 1]?.id ?? rows[lastDone]!.id
+  const next: PipelineStep = lastDone < 0 ? 'analyse' : rows[lastDone + 1]?.id ?? rows[lastDone]!.id
+  const finished = rows.length > 0 && rows.every((r) => r.state === 'done')
+  if ((opts.missingAssets ?? 0) > 0 && (finished || AFTER_GENERATE.has(next))) return 'generate'
+  return next
 }
 
 export const STATE_TONE: Record<RowState, 'good' | 'bad' | 'warn' | 'dim' | 'accent'> = {

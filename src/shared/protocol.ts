@@ -263,10 +263,30 @@ export interface ProjectSummary {
 export type StageSlotView = 'left' | 'center' | 'right'
 export type SceneTransitionView = 'dissolve' | 'fade' | 'none'
 
+/** A stage cue on one beat: the picture shown (null hides it), an effect played, an ambience started (null stops it). */
+export interface BeatCueView {
+  image?: string | null
+  sfx?: string
+  ambience?: string | null
+}
+
 export interface SceneCuesView {
   transition?: SceneTransitionView
   pause?: number
+  /** Music of this scene: a track id, null for silence. Missing: the story's `scene.music`, else the chapter track. */
+  music?: string | null
+  /** Ambience of this scene: a sound key, null to stop it. Missing: the story's `scene.ambience`, else what plays. */
+  ambience?: string | null
   casts: Record<string, Record<string, StageSlotView>>
+  /** Beat cues of this scene (picture, sound effect, ambience). */
+  beats?: Record<string, BeatCueView>
+}
+
+/** The stage music outside the scenes: the main menu track and the track of each chapter. */
+export interface StageMusicView {
+  menu: string | null
+  /** Chapter number (as a string) -> music asset id, or null for no music. */
+  chapters: Record<string, string | null>
 }
 
 /** The whole project for the Book page. `book` is vn.json (structure and the primary text). */
@@ -283,6 +303,8 @@ export interface ProjectDetail {
   jobs: { queued: number; running: number; done: number; failed: number }
   /** Scene and cast cues from `cues.json` (keyed by scene ID). */
   cues: Record<string, SceneCuesView>
+  /** The menu and chapter tracks from `cues.json`, used by the Scenes preview. */
+  stageMusic: StageMusicView
 }
 
 /** An asset for the gallery: the entry, the path of its current file (relative to the project folder) and whether the book still needs it. */

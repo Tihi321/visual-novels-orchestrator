@@ -18,13 +18,14 @@ import type {
   RenpyConfigView,
   SceneCuesView,
   SceneTransitionView,
+  StageMusicView,
   StageSlotView,
   StepStatus,
   ThemeInfo,
   VnCommand
 } from '../../shared/protocol'
 import { assertKnownLang } from '../../shared/languages'
-import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, hasText, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, hasText, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider, resolveSfxEngine } from '../../shared/vn'
 import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets, fallbackPrompt as derivedFallbackPrompt, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
 import { runsOnFlow } from '../assets/flow-image'
@@ -143,7 +144,7 @@ export function engineFor(kind: AssetEntry['kind'], settings: ProjectSettings, r
     case 'ambience':
       return settings.sound.ambienceEngine
     case 'sfx':
-      return settings.sound.sfxEngine ?? null
+      return resolveSfxEngine(settings) || null
     case 'background':
     case 'sheet':
     case 'cover':
@@ -534,7 +535,8 @@ export class VnService {
       lint: await this.store.readJson<BuildResult>(slug, 'lint.json'),
       resolvedTheme: pickTheme(book, settings, themes),
       jobs: await this.jobCounts(slug),
-      cues: await this.loadSceneCues(slug)
+      cues: await this.loadSceneCues(slug),
+      stageMusic: await this.loadStageMusic(slug)
     }
   }
 
@@ -551,6 +553,8 @@ export class VnService {
       out[sceneId] = {
         ...(sc.transition ? { transition: sc.transition } : {}),
         ...(sc.pause !== undefined ? { pause: sc.pause } : {}),
+        ...('music' in sc ? { music: sc.music } : {}),
+        ...('ambience' in sc ? { ambience: sc.ambience } : {}),
         casts: { ...inlineCasts }
       }
     }
@@ -562,11 +566,23 @@ export class VnService {
             if (beat.type === 'cast' && base.casts?.[beat.id]) {
               out[scene.id]!.casts[beat.id] = { ...base.casts[beat.id] }
             }
+            const cue = base.beats?.[beat.id]
+            if (cue) out[scene.id]!.beats = { ...(out[scene.id]!.beats ?? {}), [beat.id]: { ...cue } }
           }
         }
       }
     }
     return out
+  }
+
+  /** The menu and chapter tracks from `cues.json` (the Scenes tab needs them: a scene with no own track plays its chapter's). */
+  async loadStageMusic(slug: string): Promise<StageMusicView> {
+    const raw = await this.store.readJson<StageCues>(slug, 'cues.json').catch(() => null)
+    const book = await this.store.loadBook(slug).catch(() => null)
+    const base = raw ?? (book ? defaultCues(book) : null)
+    const chapters: Record<string, string | null> = {}
+    for (const [n, c] of Object.entries(base?.chapters ?? {})) chapters[String(n)] = c.music ?? null
+    return { menu: base?.menuMusic ?? null, chapters }
   }
 
   async jobCounts(slug: string): Promise<JobCounts> {
