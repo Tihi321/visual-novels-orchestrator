@@ -87,7 +87,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     def('vno_list_books', 'List the books in the Scriptorium library that can become visual novels (slug, title, format, folder).', z.object({}), async () => ({ scriptoriumData: svc.scriptoriumDir(), books: await svc.listSourceBooks() })),
     def(
       'vno_import',
-      'Import a book (a book folder, or a Scriptorium library slug) into a new VN Studio project. The language is detected; pass lang to override it. Returns the project slug and the detected language.',
+      'Import a book (a book folder, or a Scriptorium library slug) into a new VN Studio project. A folder with vn/pack.json is read as a language-independent pack (template + vn/text/<lang>.json); other folders use the legacy parser. The language is detected; pass lang to override it (a pack keeps its primary language). Returns the project slug and the detected language.',
       z.object({ source: z.string().describe('A book folder path or a library slug'), lang: lang.optional(), run: z.boolean().optional().describe('Start the pipeline after the import') }),
       async (a) => {
         const r = await svc.importProject(a.source, { lang: a.lang })
@@ -141,7 +141,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     def(
       'vno_build',
-      "Build the Ren'Py game of a project (waits for the build by default). Returns the game folder, the theme, which assets are still placeholders and the build warnings.",
+      'Build the HTML5 web game of a project (waits for the build by default) into its game/ folder. Returns the game folder, the theme, which assets are still placeholders and the build warnings (including primary-text or stale pack-edition problems).',
       z.object({ slug, wait }),
       async (a) => {
         const job = await svc.enqueueBuild(a.slug)
@@ -151,7 +151,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     def(
       'vno_lint',
-      "Run Ren'Py lint on the built game (waits by default). Returns ok and the problems; skipped when the SDK is missing or the game is not built.",
+      'Lint the built web game (waits by default): the player files, images, audio, choices and puzzle references, plus the project checks that vn.json primary text agrees with editions/<primary>.json and that pack editions were made for the current pack hash.',
       z.object({ slug, wait }),
       async (a) => {
         const job = await svc.enqueueLint(a.slug)
@@ -161,13 +161,19 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     def(
       'vno_add_edition',
-      'Add a translated edition (a book folder in the same format, translated by a person or by Book Translator) to a project. It reuses every asset and only adds text. Without lang the language of the folder is detected. Returns the alignment report.',
-      z.object({ slug, source: z.string().describe('The translated book folder (or library slug)'), lang: lang.optional(), wait }),
+      'Add a translated edition to a project; it reuses every asset and only adds text. A project imported from a pack (vn/pack.json) takes a vn-text catalogue JSON file or an edition bundle folder (edition.json + vn/text/<lang>.json): it is validated by key set and pack hash against the book, with no alignment and no model (force allows missing keys, which stay in the primary language; unknown keys are always refused). Other projects take a translated book folder (legacy, aligned beat by beat); without lang its language is detected. Returns the report (for a pack edition: keyCount, packHash, missing/extra).',
+      z.object({ slug, source: z.string().describe('A translated book folder (legacy), or a vn-text catalogue / edition bundle folder (pack)'), lang: lang.optional(), force: z.boolean().optional().describe('A pack catalogue: allow missing keys (they stay in the primary language)'), wait }),
       async (a) => {
-        const r = await svc.addEdition(a.slug, a.source, a.lang)
+        const r = await svc.addEdition(a.slug, a.source, a.lang, { force: a.force })
         const w = await settle(a.slug, a.wait ?? true)
-        return { job: r.job, lang: r.lang, detected: r.detected, ...w, report: await svc.alignReport(a.slug, r.lang) }
+        return { job: r.job, lang: r.lang, kind: r.kind, detected: r.detected, ...w, report: await svc.alignReport(a.slug, r.lang) }
       }
+    ),
+    def(
+      'vno_sync_editions',
+      'A pack project: scan vn/text/*.json in its source folder (or source) and add every non-primary catalogue as an edition. Key sets and pack hash are checked exactly as vno_add_edition; nothing is aligned and no model, asset or voice job is queued. Returns added (lang, keyCount, missing), skipped (the primary) and failed (lang, error).',
+      z.object({ slug, source: z.string().optional().describe('A pack folder with vn/text/*.json (default: the project source folder)') }),
+      async (a) => ({ ...(await svc.syncEditions(a.slug, a.source)), editions: (await svc.detail(a.slug)).summary.editions })
     ),
 
     // ---- projects and settings ----

@@ -108,8 +108,15 @@ export function pickVoices(speakers: readonly VoiceWish[], candidates: readonly 
   return out
 }
 
-/** The languages a project speaks: `voice.langs`, else its primary language. */
-export const voiceLangsOf = (settings: Pick<ProjectSettings, 'primaryLang' | 'voice'>): Lang[] => (settings.voice.langs.length ? settings.voice.langs : [settings.primaryLang])
+/**
+ * The languages a project speaks: `voice.langs`, else its primary language, plus every edition language (voices are per
+ * language by design: adding an edition does not need `voice.langs` to be edited first). The primary language is kept.
+ */
+export const voiceLangsOf = (settings: Pick<ProjectSettings, 'primaryLang' | 'voice'> & { editions?: readonly Lang[] }): Lang[] => {
+  const langs: Lang[] = settings.voice.langs.length ? [...settings.voice.langs] : [settings.primaryLang]
+  for (const lang of [settings.primaryLang, ...(settings.editions ?? [])]) if (!langs.includes(lang)) langs.push(lang)
+  return langs
+}
 
 /** The voice list as the voice-director prompt shows it: per language, the voices that can read it with their gender. */
 export function describeVoices(voices: readonly VibeVoice[], langs: readonly Lang[], englishEngine: EnglishEngine = 'kokoro'): string {

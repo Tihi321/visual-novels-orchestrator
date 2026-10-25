@@ -18,6 +18,12 @@ export interface AlignReport {
   placeMap: Record<string, string>
   /** Other differences (cast counts, speaker mismatches, missing chapters or titles). */
   warnings: string[]
+  /** A pack edition (VNO-46): the pack hash and version it was validated against, and how many catalogue keys it had. */
+  packHash?: string
+  packVersion?: number
+  keyCount?: number
+  /** The catalogue file or bundle folder it came from. */
+  source?: string
 }
 
 export interface AlignResult {

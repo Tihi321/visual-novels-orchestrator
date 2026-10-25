@@ -25,6 +25,7 @@ import { lint } from '../game/run'
 import { addScenePlan, defaultCues, fillCues } from '../game/stage'
 import type { StageCues } from '../game/stage'
 import { alignEdition } from './align'
+import { primaryEditionProblems } from './pack'
 import { planArt } from './agents/art-director'
 import { reviewImage } from './agents/art-critic'
 import { chipOptionsFor, fallbackChipPlans, planMusic } from './agents/composer'
@@ -218,9 +219,14 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
   reg(
     TASKS.editionAdd,
     async (ctx, slug) => {
-      const body = bodyOf<{ source: string; lang: Lang }>(ctx.jobBody)
+      const body = bodyOf<{ source: string; lang: Lang; pack?: boolean; force?: boolean }>(ctx.jobBody)
       const lang = body.lang ?? (ctx.job.unit as Lang)
       if (!body.source) throw new Error('vn.edition.add has no source folder')
+      if (body.pack) {
+        // a pack catalogue: key-set validation only; no alignEdition, no edition-aligner, no asset job
+        const r = await svc.importPackEdition(slug, body.source, lang, { force: body.force })
+        return `${lang} pack edition added: ${r.report.keyCount ?? 0} key(s), ${r.report.missing.length} missing${r.warnings.length ? `; ${r.warnings.length} warning(s)` : ''}`
+      }
       const book = await store.loadBook(slug)
       const { edition, report } = await alignEdition(book, body.source, lang)
       await store.withLock(slug, async () => {
@@ -784,11 +790,11 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
 
   // ---- build, lint ----
 
-  /** The voice clips of the project, for the Ren'Py emitter. */
+  /** The voice clips of the project, for the web game emitter. Voices are per language: every edition language is included. */
   const voiceSource = async (slug: string, settings: ProjectSettings): Promise<VoiceSource | undefined> => {
     if (!settings.voice.enabled) return undefined
     const indexes = new Map<Lang, Record<string, VoiceIndexEntry>>()
-    for (const lang of new Set<Lang>([settings.primaryLang, ...settings.voice.langs])) indexes.set(lang, await readVoiceIndex(slug, lang))
+    for (const lang of new Set<Lang>(voiceLangsOf(settings))) indexes.set(lang, await readVoiceIndex(slug, lang))
     return {
       has: (lang, beatId) => {
         const e = indexes.get(lang)?.[beatId]
@@ -833,6 +839,9 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         fontsDir: dataFolders(deps.dataDir).fonts
       })
       const messages = [...r.warnings]
+      const primary = editions.find((e) => e.lang === settings.primaryLang)
+      if (primary) for (const p of primaryEditionProblems(book, primary)) messages.push(`primary text: ${p}`)
+      for (const s of await svc.staleEditions(slug)) messages.push(`edition ${s.lang} was made for pack ${s.editionPackHash}, the project uses ${settings.packHash}: re-add it from the translated catalogue`)
       const result: BuildResult = { slug, action: 'build', ok: true, messages, at: nowIso(), gameDir: r.gameDir, theme: r.theme, placeholders: r.placeholders, translated: r.translated }
       await store.writeJson(slug, 'build.json', result)
       deps.emit({ type: 'build.result', result })
@@ -852,7 +861,13 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         result = { slug, action: 'lint', ok: false, skipped: true, messages: ['lint skipped: the game has not been built yet'], at: nowIso(), gameDir }
       } else {
         const l = await lint(gameDir, { sdkPath: renpy.sdkPath })
-        result = { slug, action: 'lint', ok: l.ok, messages: l.messages, statistics: l.statistics, at: nowIso(), gameDir }
+        const { settings } = await store.loadSettings(slug)
+        const book = await store.loadBook(slug)
+        const primary = await store.loadEdition(slug, settings.primaryLang).catch(() => null)
+        const projectProblems = primary ? primaryEditionProblems(book, primary) : []
+        for (const s of await svc.staleEditions(slug)) projectProblems.push(`edition ${s.lang} was made for pack ${s.editionPackHash}, the project uses ${settings.packHash}: re-add it from the translated catalogue`)
+        const messages = [...l.messages, ...projectProblems]
+        result = { slug, action: 'lint', ok: l.ok && !projectProblems.length, messages, statistics: l.statistics, at: nowIso(), gameDir }
       }
       await store.writeJson(slug, 'lint.json', result)
       deps.emit({ type: 'build.result', result })

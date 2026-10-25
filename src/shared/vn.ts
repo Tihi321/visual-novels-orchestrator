@@ -193,7 +193,9 @@ export const editionSchema = z.object({
   /** Beat id -> text. */
   beats: z.record(z.string(), z.string()),
   /** Puzzle key -> the names and clue texts in this language. */
-  puzzles: z.record(z.string(), editionPuzzleSchema).optional()
+  puzzles: z.record(z.string(), editionPuzzleSchema).optional(),
+  /** Scene id -> the title shown for the scene, when an edition (a pack catalogue) carries one. Missing: the scene's place text. */
+  sceneTitles: z.record(z.string(), z.string()).optional()
 })
 export type Edition = z.infer<typeof editionSchema>
 
@@ -242,6 +244,12 @@ export const projectSettingsSchema = z.object({
   primaryLang: langSchema,
   /** The languages that have an edition (the primary one included). */
   editions: z.array(langSchema).default([]),
+  /** A project imported from a VN Studio pack (HUB-16): the pack hash the project was imported with, its format version and the authored source hash. Missing: a legacy folder import. */
+  packHash: z.string().optional(),
+  packVersion: z.number().int().optional(),
+  sourceHash: z.string().optional(),
+  /** Where `vn/pack.json` and `vn/text/*.json` live (the source book folder). Empty: no pack. */
+  packDir: z.string().optional(),
   /** The game theme, or null to pick one from the format, genre and style. */
   theme: z.string().nullable().default(null),
   /** Models this project uses, per role (`art-director: client/claude-code`): they go before the agent's model and the role's list in config/roles.md, which stay as the fallback. */

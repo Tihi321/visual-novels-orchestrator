@@ -459,6 +459,7 @@ describe('Web Game Engine player runtime', () => {
       title: 'Das Laternenrätsel',
       characterNames: { mara: 'Mara', 'mara#1': 'Die Fremde' },
       chapterTitles: { 1: 'Kapitel Eins: Der Nebel', 2: 'Kapitel Zwei: Das Urteil' },
+      sceneTitles: { 'ch01.s01': 'Hafen, Nacht' },
       choiceTexts: { '1:0': 'Frage den Hafenmeister', '1:1': 'Untersuche das Boot' },
       endings: { 2: 'Der Fall wurde gelöst.' },
       beats: {
@@ -479,6 +480,7 @@ describe('Web Game Engine player runtime', () => {
       title: 'The Lantern Mystery',
       characterNames: { mara: 'Mara', 'mara#1': 'The Stranger' },
       chapterTitles: { 1: 'Chapter One: The Fog', 2: 'Chapter Two: The Verdict' },
+      sceneTitles: { 'ch01.s01': 'The harbour, night' },
       choiceTexts: { '1:0': 'Ask the harbourmaster', '1:1': 'Inspect the boat' },
       endings: { 2: 'The case was solved.' },
       beats: {
@@ -499,6 +501,7 @@ describe('Web Game Engine player runtime', () => {
       title: 'Zagonetka lanterne',
       characterNames: { mara: 'Mara', 'mara#1': 'Tuđinka' },
       chapterTitles: { 1: 'Prvo poglavlje: Magla', 2: 'Drugo poglavlje: Presuda' },
+      sceneTitles: { 'ch01.s01': 'Luka, noć' },
       choiceTexts: { '1:0': 'Pitaj lučkog kapetana', '1:1': 'Pregledaj čamac' },
       endings: { 2: 'Slučaj je riješen.' },
       beats: {
@@ -566,11 +569,15 @@ describe('Web Game Engine player runtime', () => {
     expect(chapterCard.classList.contains('vno-hidden')).toBe(true)
     expect(h.getById('vno-speaker-name').textContent).toBe('The Stranger')
     expect(h.getById('vno-dialogue-text').innerHTML).toBe('Good evening. It is <strong>very</strong> cold.')
+    // the scene title pill is the edition's sceneTitles[scene.id]
+    expect(h.getById('vno-scene-title').textContent).toBe('The harbour, night')
+    expect(h.getById('vno-scene-title').classList.contains('vno-hidden')).toBe(false)
 
-    // Switch language mid-dialogue to Croatian ('hr') -> immediately updates current line and alias name
+    // Switch language mid-dialogue to Croatian ('hr') -> immediately updates current line, alias name and scene title
     stageLang.change('hr')
     expect(h.getById('vno-speaker-name').textContent).toBe('Tuđinka')
     expect(h.getById('vno-dialogue-text').innerHTML).toBe('Dobra večer. <strong>Jako</strong> je hladno.')
+    expect(h.getById('vno-scene-title').textContent).toBe('Luka, noć')
 
     // Switch to German ('de') and back to English ('en') on the same beat
     stageLang.change('de')
@@ -620,6 +627,16 @@ describe('Web Game Engine player runtime', () => {
     stageLang.change('hr')
     expect(puzzleBody.querySelectorAll('.vno-clue-item')[0]!.textContent).toBe('Grof Viktor bio je u salonu.')
     expect(puzzleBody.querySelectorAll('.vno-puzzle-name-item').map((n) => n.textContent)).toContain('Grof Viktor')
+    // the five runtime keys the Croatian table now has (others fall back to English)
+    const cluesTitle = (): string | undefined => puzzleBody.children[0]!.children.find((c) => c.tagName === 'H3')?.textContent
+    expect(cluesTitle()).toBe('Tragovi')
+    expect(h.getById('vno-puzzle-btn-submit').textContent).toBe('Optuži')
+    expect(h.getById('vno-puzzle-btn-hint').textContent).toBe('Natuknica')
+    expect(h.getById('vno-puzzle-btn-giveup').textContent).toBe('Odustani')
+    stageLang.change('en')
+    expect(cluesTitle()).toBe('Clues')
+    expect(h.getById('vno-puzzle-btn-submit').textContent).toBe('Accuse')
+    stageLang.change('hr')
 
     // 9. Solve puzzle -> Chapter 1 ends with Branching Choices in Croatian ('hr')
     h.getById('vno-puzzle-btn-submit').click()

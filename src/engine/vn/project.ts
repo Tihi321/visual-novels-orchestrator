@@ -2,7 +2,7 @@ import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
 import { parseMdWith } from '../../shared/md'
-import { editionSchema, projectSettingsSchema, vnBookSchema } from '../../shared/vn'
+import { editionSchema, langSchema, projectSettingsSchema, vnBookSchema } from '../../shared/vn'
 import type { AssetEntry, AssetManifest, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { assetDir, loadManifest, resolveFile, saveManifest } from '../assets/manifest'
 import { loadComfyConfig } from '../comfy/client'
@@ -168,7 +168,14 @@ export class ProjectStore {
 
   async editionLangs(slug: string): Promise<Lang[]> {
     try {
-      return (await fs.readdir(this.file(slug, 'editions'))).filter((f) => /^[a-z]{2}\.json$/.test(f)).map((f) => f.slice(0, 2) as Lang).sort()
+      return (await fs.readdir(this.file(slug, 'editions')))
+        .filter((f) => {
+          if (!f.endsWith('.json')) return false
+          const code = f.slice(0, -'.json'.length)
+          return langSchema.safeParse(code).success
+        })
+        .map((f) => f.slice(0, -'.json'.length) as Lang)
+        .sort()
     } catch {
       return []
     }

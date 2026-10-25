@@ -370,6 +370,8 @@ export function compileEditions(
   const primaryBeats: Record<string, string> = {}
   const primaryPuzzles: Record<string, CompiledPuzzleEdition> = {}
   const primaryVoice: Record<string, string> = {}
+  const primarySceneTitles: Record<string, string> = {}
+  for (const [id, title] of Object.entries(primaryEdition?.sceneTitles ?? {})) if (title.trim()) primarySceneTitles[id] = title.trim()
 
   for (const ch of book.chapters) {
     primaryChapterTitles[ch.n] = primaryEdition?.chapterTitles[ch.n]?.trim() || ch.title
@@ -407,6 +409,7 @@ export function compileEditions(
     title: primaryEdition?.title?.trim() || book.title,
     characterNames: primaryCharNames,
     chapterTitles: primaryChapterTitles,
+    ...(Object.keys(primarySceneTitles).length ? { sceneTitles: primarySceneTitles } : {}),
     endings: primaryEndings,
     choices: primaryChoices,
     beats: primaryBeats,
@@ -439,6 +442,11 @@ export function compileEditions(
     const choices: Record<string, string> = { ...primaryChoices }
     for (const [k, v] of Object.entries(ed.choiceTexts)) {
       if (v && v.trim()) choices[k] = v.trim()
+    }
+
+    const sceneTitles: Record<string, string> = { ...primarySceneTitles }
+    for (const [k, v] of Object.entries(ed.sceneTitles ?? {})) {
+      if (v && v.trim()) sceneTitles[k] = v.trim()
     }
 
     const beats: Record<string, string> = {}
@@ -481,6 +489,7 @@ export function compileEditions(
       title: ed.title?.trim() || primaryCompiled.title,
       characterNames: charNames,
       chapterTitles,
+      ...(Object.keys(sceneTitles).length ? { sceneTitles } : {}),
       endings,
       choices,
       beats,

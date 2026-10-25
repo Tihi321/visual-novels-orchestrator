@@ -1,15 +1,16 @@
 # VN Studio MCP guide
 
-VN Studio turns books from the Scriptorium library, or a story you write straight into it, into Ren'Py visual novels. These tools run the same pipeline as the app and the command line. If the app is open it shows everything you do live.
+VN Studio turns books from the Scriptorium library, or a story you write straight into it, into HTML5 web visual novels (a self-contained web player; no Ren'Py SDK is needed). These tools run the same pipeline as the app and the command line. If the app is open it shows everything you do live.
 
 ## Workflow: from a book
 
 1. `vno_list_books` shows the books you can use (`vno_set_library {path}` points it at another Scriptorium folder). `vno_import {source}` makes a project (the language is detected; pass `lang` to override it) and returns its `slug`.
-2. `vno_run_pipeline {slug}` runs the pipeline: analyse, art, music, generate, stage, build, lint. It is restartable from any step (`from`), and `force` plans and generates again. It returns at once with job ids; pass `wait: true` or call `vno_wait {slug}` to wait for the end.
-3. `vno_status {slug}` shows each step, the jobs and the failures. It answers while another call is waiting.
-4. `vno_asset_list {slug}` shows the assets. Change one with `vno_asset_regen` (new prompt, engine or seed), `vno_asset_replace` (your own file), `vno_asset_pick` (another version), `vno_asset_lock` or `vno_asset_unlock`. `vno_asset_generate` makes the assets that still have no file.
-5. `vno_build {slug}` writes the Ren'Py game and `vno_lint` checks it. The build result lists the assets that are still placeholders.
-6. `vno_add_edition {slug, source, lang?}` adds a translated edition (a book folder translated by a person or by Book Translator; without `lang` its language is detected). Assets are reused; only the text is added. `vno_get_edition`, `vno_update_beat` and `vno_align_report` edit and check the text.
+2. A book folder with `vn/pack.json` is a **language-independent pack**: the template (ids, structure, art fields) and `vn/text/<lang>.json` (the only translatable document) are validated and read directly. `vno_add_edition {slug, source}` adds a translated catalogue JSON file or a bundle (`edition.json` + `vn/text/<lang>.json`) by key, and `vno_sync_editions {slug, source?}` adds every non-primary catalogue in a pack's `vn/text/`. Key sets and pack hashes must match exactly; nothing is aligned, no model is asked, and every asset is reused unchanged (art, music, SFX and ambience are shared; voices are per language). A project imported from an ordinary book folder keeps the legacy translated-folder alignment.
+3. `vno_run_pipeline {slug}` runs the pipeline: analyse, art, music, generate, stage, build, lint. It is restartable from any step (`from`), and `force` plans and generates again. It returns at once with job ids; pass `wait: true` or call `vno_wait {slug}` to wait for the end.
+4. `vno_status {slug}` shows each step, the jobs and the failures. It answers while another call is waiting.
+5. `vno_asset_list {slug}` shows the assets. Change one with `vno_asset_regen` (new prompt, engine or seed), `vno_asset_replace` (your own file), `vno_asset_pick` (another version), `vno_asset_lock` or `vno_asset_unlock`. `vno_asset_generate` makes the assets that still have no file.
+6. `vno_build {slug}` writes the HTML5 web game and `vno_lint` checks it. The build result lists the assets that are still placeholders; lint also checks that the primary edition agrees with `vn.json` and that pack editions are current.
+7. `vno_add_edition {slug, source, lang?}` adds a translated edition (a pack catalogue/bundle, or for a legacy project a translated book folder; without `lang` its language is detected). Assets are reused; only the text is added. `vno_get_edition`, `vno_update_beat` and `vno_align_report` edit and check the text.
 
 Long calls return job ids at once. A client that times out on a long call should poll `vno_wait` with a short `timeoutSeconds` instead.
 
@@ -199,8 +200,9 @@ A task nobody asks for waits without a limit, so put a role back on its normal m
 ## Languages
 
 - `vno_languages` lists the languages a project or edition can use: the 31 that VibeTTS Supertonic reads plus Book Translator's (37 in all, for example en, hr, de, fr, es, it, pt, nl, pl, cs, ru, uk, sr, ja, ko, zh, ar, he, fa, hi). More, or changes, go in `config/languages.md` in the data folder.
-- The primary language is detected on import and on `vno_create_project`; `vno_add_edition` detects the language of a translated folder when `lang` is left out.
-- Each edition is a Ren'Py language; the game has a language picker and starts in the primary language.
+- The primary language is detected on import and on `vno_create_project`; a pack keeps its `book.primaryLang` (a translated catalogue must have another `lang`). `vno_add_edition` detects the language of a legacy translated folder when `lang` is left out.
+- With a pack, an edition is a `vn-text` catalogue (or a bundle) and its key set must equal the source catalogue exactly: missing or unknown keys are refused (MCP `force: true` allows missing keys, which stay in the primary language). `vno_sync_editions` adds the project's non-primary catalogues in one call.
+- Each edition is a language of the web game; the game has a language picker and starts in the primary language. Art, music, SFX and ambience are shared; voice is per language.
 - The game menus are translated for every built-in language (49 strings each, and Croatian also the help screen; written by a language model: native review is welcome). A `ui` table in `config/languages.md` overrides single strings; a language you add without `ui` keeps the English menus and the build says so.
 - Fonts. A theme's text font covers some scripts (`fonts.scripts` in `theme.yaml`). For a language in another script the build gives that language a font of its own, in `game/vno_fonts.rpy`: the `font` of the language in `config/languages.md`, else `<data>/fonts/<script>.ttf` (or `.otf`, `.ttc`; `<script>-bold.ttf` is the bold face), else an installed system font, else DejaVuSans for Cyrillic, Greek, Arabic and Hebrew. A system font is copied into the game with a warning to check its license before you share the game. With no font the build warns and says what to do. `vno_fonts_fetch {script}` downloads a free Noto Sans font (SIL Open Font License) for `han` (Chinese), `kana` (Japanese), `hangul` (Korean), `devanagari` or `thai` into `<data>/fonts/`. It never runs by itself.
 - Right-to-left. For Arabic, Hebrew and Persian the build turns on Ren'Py's right-to-left text and mirrors the menu layout (the name box, the dialogue, the navigation buttons, the history) for those languages only, in `game/vno_rtl.rpy`. The other languages of the game keep the normal layout. The layout cannot be checked by the Ren'Py lint: look at it once in the game.
@@ -214,7 +216,7 @@ A task nobody asks for waits without a limit, so put a role back on its normal m
 | Languages and fonts | `vno_languages`, `vno_fonts_fetch` |
 | Pipeline | `vno_run_pipeline`, `vno_plan`, `vno_status`, `vno_wait`, `vno_pause_all`, `vno_resume_all`, `vno_stop_now`, `vno_clear_queue` |
 | Model work by you (`client/claude-code`) | `vno_client_tasks`, `vno_get_task`, `vno_submit_task`, `vno_release_task` |
-| Editions | `vno_add_edition`, `vno_edition_set`, `vno_get_edition`, `vno_update_beat`, `vno_align_report` |
+| Editions | `vno_add_edition`, `vno_sync_editions`, `vno_edition_set`, `vno_get_edition`, `vno_update_beat`, `vno_align_report` |
 | Assets, music, staging | `vno_asset_list`, `vno_asset_set`, `vno_asset_replace`, `vno_asset_import`, `vno_asset_regen`, `vno_asset_pick`, `vno_asset_lock`, `vno_asset_unlock`, `vno_asset_generate`, `vno_set_music`, `vno_set_cues` |
 | Puzzles | `vno_puzzle_generate`, `vno_puzzle_set`, `vno_puzzle_get`, `vno_puzzle_check_text`, `vno_puzzle_remove` (the beat: `vno_beat_add {puzzle: key}`) |
 | Voice | `vno_voice_status`, `vno_voice_plan`, `vno_voice_set`, `vno_voice_preview`, `vno_voice_generate`, `vno_voice_import` |
@@ -233,7 +235,7 @@ Spoken lines come from VibeTTS (a local text-to-speech app that has to be runnin
 - `vno_voice_status` shows whether VibeTTS is reachable and lists the voices with their languages.
 - `vno_voice_plan` assigns a voice per character and language (existing ones are kept unless `overwrite`).
 - `vno_voice_set` gives one speaker a voice in one language and makes a preview clip; `vno_voice_preview` only makes the clip.
-- `vno_voice_generate` makes the clips of the project (all languages, or one `lang`). Nothing is made when the project's voice is off (`vno_update_settings` with `voice: {enabled: true}`).
+- `vno_voice_generate` makes the clips of the project (every edition language, or one `lang`). Nothing is made when the project's voice is off (`vno_update_settings` with `voice: {enabled: true}`). Voices are never reused across languages; the images, music, SFX and ambience of every edition are the same files.
 
 ## Notes
 

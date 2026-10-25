@@ -90,7 +90,13 @@ export const UI_STRINGS: Readonly<Record<string, Readonly<Record<string, string>
     'D-Pad, Sticks': 'Smjerne tipke, štapići',
     'Start, Guide, B/Right Button': 'Start, Guide, B/desna tipka',
     'Y/Top Button': 'Y/gornja tipka',
-    'Calibrate': 'Kalibriraj'
+    'Calibrate': 'Kalibriraj',
+    // Runtime keys the web player shows (the puzzle overlay): Croatian; other languages fall back to the English literal.
+    'Clues': 'Tragovi',
+    'Accuse': 'Optuži',
+    'Submit': 'Pošalji',
+    'Hint': 'Natuknica',
+    'Give Up': 'Odustani'
   },
   de: {
     'Language': 'Sprache',

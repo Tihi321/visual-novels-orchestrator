@@ -65,6 +65,20 @@ import { applyStoryOps, buildBook, storySummary, syncEdition, validateBook } fro
 import type { StoryInput, StoryOp } from './story'
 import { listBooks } from './reader'
 import type { BookSummary } from './reader'
+import {
+  catalogValueProblems,
+  checkBundlePack,
+  compareCatalogKeys,
+  editionFromCatalog,
+  importPackBook,
+  isPackFolder,
+  listCatalogs,
+  readBundleMeta,
+  readCatalog,
+  resolveCatalogSource
+} from './pack'
+import type { CatalogSource } from './pack'
+import { voiceLangsOf } from '../voice/catalog'
 import { ProjectStore, assertSlug, dataFolders, loadComfyConfigFor, loadRenpyConfig, projectSlug, renpyConfigSchema } from './project'
 import { readMd, writeMd } from '../store/atomic'
 import { jobId, ROLE_OF, runOf, STEP_OF_TASK, stepIndex, TASKS } from './pipeline'
@@ -259,7 +273,7 @@ export class VnService {
 
   async previewImport(source: string): Promise<ImportPreview> {
     const folder = await this.resolveSource(source)
-    const r = await importBook(folder, { prove: await this.importProver() })
+    const r = isPackFolder(folder) ? await importPackBook(folder) : await importBook(folder, { prove: await this.importProver() })
     return {
       source,
       path: folder,
@@ -278,13 +292,15 @@ export class VnService {
 
   /**
    * Imports a book into a project (new, or the same book again: the settings, other editions and assets are kept).
-   * `lang` is the language you confirmed; without it the detected one is used.
+   * `lang` is the language you confirmed; without it the detected one is used. A folder with `vn/pack.json` is read as a
+   * language-independent pack (HUB-16): its template and primary catalogue are validated first.
    */
   async importProject(source: string, opts: { lang?: Lang } = {}): Promise<{ slug: string; preview: ImportPreview }> {
     if (opts.lang !== undefined) await this.knownLang(opts.lang)
     else await loadLanguageConfig(this.dataDir, (m) => this.log(m))
     const folder = await this.resolveSource(source)
-    const r = await importBook(folder, { lang: opts.lang, prove: await this.importProver() })
+    const pack = isPackFolder(folder) ? await importPackBook(folder, { lang: opts.lang }) : null
+    const r = pack ?? (await importBook(folder, { lang: opts.lang, prove: await this.importProver() }))
     let slug = projectSlug(r.book.slug)
     let existing: ProjectSettings | undefined
     // the same slug from another folder is another book: it gets a number
@@ -299,19 +315,32 @@ export class VnService {
     }
     const book: VnBook = { ...r.book, slug }
     const editions = new Set<Lang>([...(existing?.editions ?? []), book.primaryLang])
-    const settings: ProjectSettings = projectSettingsSchema.parse({
-      ...(existing ?? {}),
-      slug,
-      source: folder,
-      primaryLang: book.primaryLang,
-      editions: [...editions].sort()
-    })
+    const base: Record<string, unknown> = { ...(existing ?? {}), slug, source: folder, primaryLang: book.primaryLang, editions: [...editions].sort() }
+    if (pack) {
+      base.packHash = pack.packHash
+      base.packVersion = pack.packVersion
+      base.packDir = pack.folder
+      if (pack.sourceHash) base.sourceHash = pack.sourceHash
+    } else {
+      delete base.packHash
+      delete base.packVersion
+      delete base.sourceHash
+      delete base.packDir
+    }
+    const settings: ProjectSettings = projectSettingsSchema.parse(base)
     await this.store.withLock(slug, async () => {
       await this.store.saveSettings(settings)
       await this.store.saveBook(slug, book)
       await this.store.saveEdition(slug, { ...r.edition, lang: book.primaryLang })
       await this.store.saveUncertain(slug, r.uncertain)
-      await this.store.writeJson(slug, 'import.json', { at: nowIso(), source: folder, detected: r.detected, uncertain: r.uncertain.length, ...(r.aliases.length ? { aliases: r.aliases } : {}) })
+      await this.store.writeJson(slug, 'import.json', {
+        at: nowIso(),
+        source: folder,
+        detected: r.detected,
+        uncertain: r.uncertain.length,
+        ...(r.aliases.length ? { aliases: r.aliases } : {}),
+        ...(pack ? { pack: { hash: pack.packHash, version: pack.packVersion, ...(pack.sourceHash ? { sourceHash: pack.sourceHash } : {}) } } : {})
+      })
     })
     const preview: ImportPreview = {
       source,
@@ -327,7 +356,9 @@ export class VnService {
       uncertain: r.uncertain.length,
       warnings: book.warnings
     }
-    this.log(`imported ${slug} from ${folder}: ${book.primaryLang} (detected ${r.detected.lang}, confidence ${r.detected.confidence}), ${book.chapters.length} chapter(s), ${r.uncertain.length} item(s) for the script-analyst`)
+    this.log(
+      `imported ${slug} from ${folder}${pack ? ` as a pack (${pack.packHash}, v${pack.packVersion})` : ''}: ${book.primaryLang} (detected ${r.detected.lang}, confidence ${r.detected.confidence}), ${book.chapters.length} chapter(s), ${r.uncertain.length} item(s) for the script-analyst`
+    )
     this.emit({ type: 'import.done', slug, preview })
     await this.emitProject(slug)
     return { slug, preview }
@@ -862,7 +893,8 @@ export class VnService {
     let voiceDone: string[] = []
     if (at <= stepIndex('voice') && settings.voice.enabled) {
       const plan = await add(TASKS.voicePlan, 'all', deps)
-      const langs = settings.voice.langs.length ? settings.voice.langs : [settings.primaryLang]
+      // voices are per language: every edition language (and every voice.langs entry) gets clips, not only voice.langs
+      const langs = voiceLangsOf(settings)
       voiceDone = [plan]
       const gens: string[] = []
       for (const lang of langs) gens.push(await add(TASKS.voiceGenerate, lang, [plan]))
@@ -939,15 +971,41 @@ export class VnService {
     return assertKnownLang(code)
   }
 
+  /** A folder, a book folder, a translated book folder or a pack file/folder for addEdition: files are allowed here (a catalogue JSON). */
+  async resolveEditionSource(source: string): Promise<string> {
+    const direct = path.resolve(source)
+    try {
+      const st = statSync(direct)
+      if (st.isDirectory() || st.isFile()) return direct
+    } catch {
+      /* not a path: maybe a library slug */
+    }
+    return this.resolveSource(source)
+  }
+
   /**
-   * Adds an edition from a translated book folder. Without `lang` the language of that folder is detected (`detected` says
-   * how sure); with it nothing is detected.
+   * Adds an edition: a translated book folder (legacy, aligned beat by beat) or, for a project imported from a pack, a
+   * `vn-text` catalogue file or a bundle folder (`edition.json` + `vn/text/<lang>.json`). Pack editions are validated by
+   * key set and the edition-aligner is never asked.
    */
-  async addEdition(slug: string, source: string, lang?: Lang): Promise<{ job: string; lang: Lang; detected: { lang: Lang; confidence: number } | null }> {
+  async addEdition(slug: string, source: string, lang?: Lang, opts: { force?: boolean } = {}): Promise<{ job: string; lang: Lang; detected: { lang: Lang; confidence: number } | null; kind: 'pack' | 'legacy' }> {
     const { settings } = await this.store.loadSettings(slug)
+    const resolved = await this.resolveEditionSource(source)
+    const packSrc = await resolveCatalogSource(resolved)
+    if (packSrc) {
+      const catalog = await readCatalog(packSrc.file)
+      const chosen = await this.knownLang(lang ?? catalog.lang)
+      if (chosen !== catalog.lang) throw new Error(`the catalogue ${packSrc.file} is ${catalog.lang}, not ${chosen}`)
+      if (chosen === settings.primaryLang) throw new Error(`${chosen} is the primary language of ${slug}: an edition is another language`)
+      if (!settings.packHash) throw new Error(`${slug} was not imported from a pack: import the book folder (with vn/pack.json) first, or add a translated book folder`)
+      if (catalog.packHash !== settings.packHash) throw new Error(`the ${chosen} catalogue was made for pack ${catalog.packHash}, but ${slug} uses ${settings.packHash}: translate the current pack again`)
+      const run = await this.nextRun(slug)
+      const job = await this.enqueue(slug, TASKS.editionAdd, chosen, run, { body: { source: resolved, lang: chosen, pack: true, ...(opts.force ? { force: true } : {}) }, label: `add ${chosen} pack edition`, priority: 1 })
+      return { job, lang: chosen, detected: null, kind: 'pack' }
+    }
     if (lang !== undefined) await this.knownLang(lang)
     else await loadLanguageConfig(this.dataDir, (m) => this.log(m))
-    const folder = await this.resolveSource(source)
+    const folder = resolved
     let detected: { lang: Lang; confidence: number } | null = null
     if (lang === undefined) {
       const d = (await importBook(folder)).detected
@@ -959,7 +1017,126 @@ export class VnService {
     }
     const run = await this.nextRun(slug)
     const job = await this.enqueue(slug, TASKS.editionAdd, lang, run, { body: { source: folder, lang }, label: `add ${lang} edition`, priority: 1 })
-    return { job, lang, detected }
+    return { job, lang, detected, kind: 'legacy' }
+  }
+
+  /** Total catalogue keys of an edition (the report's `keyCount`). */
+  private catalogKeyCount(edition: Edition): number {
+    return (
+      1 +
+      Object.keys(edition.chapterTitles).length +
+      Object.keys(edition.choiceTexts).length +
+      Object.keys(edition.endings).length +
+      Object.keys(edition.characterNames).length +
+      Object.keys(edition.beats).length +
+      Object.keys(edition.sceneTitles ?? {}).length +
+      Object.entries(edition.puzzles ?? {}).reduce((n, [, w]) => n + 1 + Object.keys(w.names).length + Object.keys(w.text).length, 0)
+    )
+  }
+
+  /**
+   * Adds a pack catalogue by id (no alignment, no model, no asset or voice job). Keys are checked against the book: an
+   * unknown key is always refused, a missing key is refused unless `force` (then the build falls back to the primary
+   * text for those beats). The report goes to `align-<lang>.json` together with the pack hash it was validated against.
+   */
+  async importPackEdition(slug: string, source: string, lang: Lang, opts: { force?: boolean } = {}): Promise<{ edition: Edition; report: AlignReport; warnings: string[] }> {
+    await this.knownLang(lang)
+    const out = await this.store.withLock(slug, async () => {
+      const { settings } = await this.store.loadSettings(slug)
+      if (!settings.packHash) throw new Error(`${slug} was not imported from a pack (no packHash): use a translated book folder`)
+      if (lang === settings.primaryLang) throw new Error(`${lang} is the primary language of ${slug}: edit its text with the story tools`)
+      const book = await this.store.loadBook(slug)
+      const src: CatalogSource | null = await resolveCatalogSource(source)
+      if (!src) throw new Error(`${source} is not a vn-text catalogue or an edition bundle`)
+      const warnings: string[] = []
+      const meta = await readBundleMeta(src)
+      if (meta) {
+        if (meta.lang !== lang) throw new Error(`the bundle is ${meta.lang}, not ${lang}`)
+        if (meta.packHash !== settings.packHash) throw new Error(`the bundle was made for pack ${meta.packHash}, but ${slug} uses ${settings.packHash}`)
+        warnings.push(...(await checkBundlePack(src, settings.packHash, settings.packDir ?? settings.source)))
+      }
+      const catalog = await readCatalog(src.file)
+      if (catalog.lang !== lang) throw new Error(`the catalogue ${src.file} is ${catalog.lang}, not ${lang}`)
+      if (catalog.packHash !== settings.packHash) throw new Error(`the ${lang} catalogue was made for pack ${catalog.packHash}, but ${slug} uses ${settings.packHash}: translate the current pack again`)
+      const diff = compareCatalogKeys(book, catalog)
+      const problems = catalogValueProblems(catalog)
+      if (diff.extra.length) throw new Error(`the ${lang} catalogue has keys the book does not have:\n- ${diff.extra.slice(0, 25).join('\n- ')}${diff.extra.length > 25 ? `\n… ${diff.extra.length - 25} more` : ''}`)
+      if (problems.length) throw new Error(`the ${lang} catalogue has empty, multi-line or structural values:\n- ${problems.slice(0, 25).join('\n- ')}${problems.length > 25 ? `\n… ${problems.length - 25} more` : ''}`)
+      if (diff.missing.length && !opts.force) {
+        throw new Error(`the ${lang} catalogue is missing ${diff.missing.length} key(s):\n- ${diff.missing.slice(0, 25).join('\n- ')}${diff.missing.length > 25 ? `\n… ${diff.missing.length - 25} more` : ''}\nPass force to add it anyway (those beats stay in the primary language)`)
+      }
+      if (diff.missing.length) warnings.push(`missing ${diff.missing.length} key(s) stay in the primary language: ${diff.missing.slice(0, 8).join(', ')}${diff.missing.length > 8 ? ' …' : ''}`)
+      const edition = editionFromCatalog(catalog)
+      const report: AlignReport = {
+        matched: Object.keys(edition.beats).length,
+        missing: diff.missingBeats,
+        extra: [],
+        nameMap: {},
+        placeMap: {},
+        warnings,
+        packHash: settings.packHash,
+        ...(settings.packVersion !== undefined ? { packVersion: settings.packVersion } : {}),
+        keyCount: this.catalogKeyCount(edition),
+        source
+      }
+      await this.store.saveEdition(slug, edition)
+      await this.store.saveAlignReport(slug, lang, report)
+      if (!settings.editions.includes(lang)) await this.store.saveSettings({ ...settings, editions: [...settings.editions, lang].sort() })
+      return { edition, report, warnings }
+    })
+    await this.emitProject(slug)
+    this.log(`added the ${lang} pack edition of ${slug}: ${this.catalogKeyCount(out.edition)} key(s), ${out.report.missing.length} missing`)
+    return out
+  }
+
+  /**
+   * Scans a pack folder's `vn/text/*.json` (the project's source folder by default) and adds every non-primary
+   * catalogue as an edition. Idempotent: running it again replaces the editions with the catalogues' text.
+   */
+  async syncEditions(slug: string, source?: string): Promise<{ folder: string; added: { lang: Lang; keyCount: number; missing: string[] }[]; skipped: Lang[]; failed: { lang: Lang; error: string }[] }> {
+    const { settings } = await this.store.loadSettings(slug)
+    if (!settings.packHash) throw new Error(`${slug} was not imported from a pack: vno_sync_editions reads vn/text/*.json of a pack`)
+    const folder = source ? path.resolve(source) : (settings.packDir ?? settings.source)
+    let isDir: boolean
+    try {
+      isDir = statSync(folder).isDirectory()
+    } catch {
+      isDir = false
+    }
+    if (!isDir) throw new Error(`${folder} is not a folder`)
+    const catalogs = await listCatalogs(folder)
+    if (!catalogs.length) throw new Error(`${folder} has no vn/text/<lang>.json catalogues`)
+    const added: { lang: Lang; keyCount: number; missing: string[] }[] = []
+    const skipped: Lang[] = []
+    const failed: { lang: Lang; error: string }[] = []
+    for (const c of catalogs) {
+      if (c.lang === settings.primaryLang) {
+        skipped.push(c.lang)
+        continue
+      }
+      try {
+        const r = await this.importPackEdition(slug, c.file, c.lang)
+        added.push({ lang: c.lang, keyCount: r.report.keyCount ?? this.catalogKeyCount(r.edition), missing: r.report.missing })
+      } catch (e) {
+        failed.push({ lang: c.lang, error: (e as Error).message })
+      }
+    }
+    this.log(`synced ${added.length} pack edition(s) of ${slug} from ${folder}`)
+    await this.emitProject(slug)
+    return { folder, added, skipped, failed }
+  }
+
+  /** Pack editions whose align report was made for another pack hash (the pack changed after they were added). */
+  async staleEditions(slug: string): Promise<{ lang: Lang; editionPackHash: string }[]> {
+    const { settings } = await this.store.loadSettings(slug)
+    if (!settings.packHash) return []
+    const out: { lang: Lang; editionPackHash: string }[] = []
+    for (const lang of await this.store.editionLangs(slug)) {
+      if (lang === settings.primaryLang) continue
+      const report = await this.store.loadAlignReport(slug, lang)
+      if (report?.packHash && report.packHash !== settings.packHash) out.push({ lang, editionPackHash: report.packHash })
+    }
+    return out
   }
 
   async getEdition(slug: string, lang: Lang): Promise<Edition> {

@@ -1,14 +1,15 @@
 # VN Studio
 
-An Electron + TypeScript desktop app that takes a visual-novel book written in [Scriptorium](../scriptorium) (or any folder in the same format), has a small team of AI agents plan and generate its art, music and optional voice with ComfyUI, and builds a Ren'Py game for desktop and Android.
+An Electron + TypeScript desktop app that takes a visual-novel book written in [Scriptorium](../scriptorium) (or any folder in the same format, including a language-independent VN pack), has a small team of AI agents plan and generate its art, music and optional voice with ComfyUI, and builds a self-contained HTML5 web game for desktop and Android.
 
-- A book can be in any of 37 languages (the 31 that VibeTTS Supertonic reads plus Book Translator's; more in `config/languages.md`), and the language is detected. A translated edition (a translated book folder, or text written over MCP) reuses every asset and only replaces the text. There is no machine translation inside VN Studio.
+- A book can be in any of 37 languages (the 31 that VibeTTS Supertonic reads plus Book Translator's; more in `config/languages.md`), and the language is detected. A translated edition (a translated book folder, a vn-text catalogue or a translated pack bundle, or text written over MCP) reuses every asset and only replaces the text. There is no machine translation inside VN Studio.
+- A pack (HUB-16) is a book folder with `vn/pack.json` (the immutable template: ids, structure, art fields) and `vn/text/<lang>.json` (the only translatable document). `vno_import` reads it directly, `vno_add_edition` adds a translated catalogue by key, and `vno_sync_editions` adds every catalogue in `vn/text/`; art, music, SFX and ambience are shared, voice is per language, and no asset key ever comes from a translation.
 - A story can also be written straight into VN Studio over MCP (`vno_create_project` and the story tools), with no Scriptorium folder.
 - A story can stop for a logic puzzle (a 3x3 Murdle so far): code makes and proves it, a `puzzle` beat plays it (`vno_puzzle_*` tools, `docs/mcp-guide.md` "Puzzles").
 - Models: local ones (LM Studio, Strata) plus every Scriptorium provider (DeepSeek, Anthropic, Gemini, OpenRouter, other OpenAI-compatible APIs), any OpenAI-compatible server you add yourself in the Models page (Add provider, see Providers below), a seeded but switched-off `acp` entry for the ACP proxy, and the `client` provider (on by default, used only when you pick it): set a role to `client/claude-code` (or `client/antigravity`) and an MCP client (Claude Code, Antigravity CLI) answers its model calls itself, for free (`vno_get_task` / `vno_submit_task`). Pick the models on the Models page and a model per agent on the Agents page.
 - The engine core (model router, job queue, agents) is a plain copy of Scriptorium's. The plan is in `.claude/tickets/VNO-01-visual-novel-studio-scriptorium-book-ren/plan.md`.
 
-Status: working end to end (VNO-01 to VNO-04): import a Scriptorium book or write the story over MCP, the agent pipeline, ComfyUI / Pixel Studio / Chiptune Studio assets, editions, VibeTTS voices, the Ren'Py and Android build, and an MCP server (HTTP, or headless with no window).
+Status: working end to end (VNO-01 to VNO-04, web engine VNO-40, packs VNO-46): import a Scriptorium book or write the story over MCP, the agent pipeline, ComfyUI / Pixel Studio / Chiptune Studio assets, editions, VibeTTS voices, the HTML5 web game and Android build, and an MCP server (HTTP, or headless with no window). The build still writes a few `.rpy` compatibility files, but the game is the web player and no Ren'Py SDK is needed.
 
 ## Setup
 
@@ -41,13 +42,14 @@ Google Flow (through the hub's `flow-music-mcp`) can make a project's images (`a
 
 ## Command line and MCP
 
-The same engine runs headless: `yarn engine -- <command>` (`yarn engine -- help` lists everything). It starts the scheduler and the agents, enqueues the jobs, prints the progress and exits when the project has nothing left to run. Exit codes: 0 ok, 1 a job failed or lint found problems, 3 lint could not run (no Ren'Py SDK, not built).
+The same engine runs headless: `yarn engine -- <command>` (`yarn engine -- help` lists everything). It starts the scheduler and the agents, enqueues the jobs, prints the progress and exits when the project has nothing left to run. Exit codes: 0 ok, 1 a job failed or lint found problems, 3 lint could not run (the game is not built).
 
 ```
 yarn engine -- books                                    # the Scriptorium library
-yarn engine -- import <folder|slug> [--lang hr]         # make a project (shows the detected language)
+yarn engine -- import <folder|slug> [--lang hr]         # make a project (shows the detected language; a vn/pack.json folder is a pack)
 yarn engine -- run <slug> [--from art] [--force]        # the pipeline: import analyse art music generate voice stage build lint
-yarn engine -- edition add <slug> <folder> --lang hr    # a translated edition (you translated it; no machine translation)
+yarn engine -- edition add <slug> <folder|catalog.json> # a translated edition (legacy folder, or a pack catalogue/bundle)
+yarn engine -- edition sync <slug> [folder]             # add every vn/text/*.json catalogue of a pack
 yarn engine -- analyse|plan|assets|generate <slug> ...  # single steps: settle the script, write prompts, list, generate (--only id, --kind k)
 yarn engine -- asset replace|pick|regen|lock|unlock <slug> <id> ...
 yarn engine -- build|lint|play|android|voice <slug>
@@ -72,7 +74,7 @@ claude mcp add --transport http vn-studio http://127.0.0.1:7459/mcp
   - story (no book folder): `vno_create_project`, `vno_get_story`, `vno_story_edit`, `vno_book_update`, `vno_character_set`, `vno_character_remove`, `vno_place_set`, `vno_place_remove`, `vno_chapter_add`, `vno_chapter_update`, `vno_chapter_remove`, `vno_scene_add`, `vno_scene_update`, `vno_scene_remove`, `vno_beat_add`, `vno_beat_update`, `vno_beat_remove`, `vno_image_set`, `vno_image_remove`, `vno_sound_set`, `vno_sound_remove`
   - pipeline and queue: `vno_run_pipeline`, `vno_plan`, `vno_status`, `vno_wait`, `vno_pause_all`, `vno_resume_all`, `vno_stop_now`, `vno_clear_queue`
   - model work done by the client (`client/claude-code`): `vno_client_tasks`, `vno_get_task`, `vno_submit_task`, `vno_release_task`
-  - editions: `vno_add_edition`, `vno_edition_set`, `vno_get_edition`, `vno_update_beat`, `vno_align_report`
+  - editions: `vno_add_edition`, `vno_sync_editions`, `vno_edition_set`, `vno_get_edition`, `vno_update_beat`, `vno_align_report`
   - assets, music and staging: `vno_asset_list`, `vno_asset_set`, `vno_asset_replace`, `vno_asset_import`, `vno_asset_regen`, `vno_asset_pick`, `vno_asset_lock`, `vno_asset_unlock`, `vno_asset_generate`, `vno_set_music`, `vno_set_cues`
   - voice: `vno_voice_status`, `vno_voice_plan`, `vno_voice_set`, `vno_voice_preview`, `vno_voice_generate`, `vno_voice_import`
   - generators and build: `vno_studios_status`, `vno_comfy_status`, `vno_comfy_free`, `vno_themes`, `vno_build`, `vno_lint`, `vno_android_preflight`, `vno_android_build`, `vno_renpy_config_get`, `vno_renpy_config_set`

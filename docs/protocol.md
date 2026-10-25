@@ -15,8 +15,8 @@ Rules that hold for every command:
 | Command | Answer |
 | --- | --- |
 | `{ type: 'listSourceBooks' }` | `books.listed { books: SourceBook[], scriptoriumData }`: the books of `<scriptoriumData>/books` that can become visual novels (`script: true` formats, and the prose choice formats). |
-| `{ type: 'previewImport', source }` | `import.preview { preview: ImportPreview }`. `source` is a book folder (any folder in the Scriptorium layout) or a library slug. The preview has the detected language with its `confidence` (0..1), the counts, the parser warnings and `uncertain` (items the script-analyst will settle). Use it for the import dialog: show the language, let the user confirm or pick EN/HR. |
-| `{ type: 'importProject', source, lang?, run? }` | `import.done { slug, preview }` and `project.updated`. `lang` is a language code (`en`, `hr`, `de`, `ja`, ...: the built-in table plus `config/languages.md`) the user confirmed, else the detected one. Importing the same folder again keeps the project's settings, other editions and assets. `run: true` also starts the pipeline from `analyse`. |
+| `{ type: 'previewImport', source }` | `import.preview { preview: ImportPreview }`. `source` is a book folder (any folder in the Scriptorium layout, or a v2 pack folder with `vn/pack.json`) or a library slug. The preview has the language with its `confidence` (0..1; 1 for a pack, whose `book.primaryLang` is authoritative), the counts, the parser warnings and `uncertain` (items the script-analyst will settle; empty for a pack). Use it for the import dialog: show the language, let the user confirm or pick EN/HR. |
+| `{ type: 'importProject', source, lang?, run? }` | `import.done { slug, preview }` and `project.updated`. `lang` is a language code (`en`, `hr`, `de`, `ja`, ...: the built-in table plus `config/languages.md`) the user confirmed, else the detected one; a pack must keep its `book.primaryLang`. A folder with `vn/pack.json` is read as a pack: `vn/pack.json` and `vn/text/<primary>.json` are validated (format/version/packHash/key set) and the project stores `packHash`, `packVersion`, `sourceHash` and `packDir` in `project.md`. Importing the same folder again keeps the project's settings, other editions and assets (their ids, versions and files). `run: true` also starts the pipeline from `analyse`. |
 | `{ type: 'listProjects' }` | `projects.listed { projects: ProjectSummary[] }` |
 | `{ type: 'getProject', slug }` | `project.loaded { slug, project: ProjectDetail }`: `summary`, `settings` (project.md), `book` (vn.json: structure and the primary text), the last `build` and `lint` results, `resolvedTheme` (the chosen theme, or the automatic pick), the job counts, `cues` (per scene: transition, pause, music, ambience, cast slots and beat cues) and `stageMusic` (`{ menu, chapters }`, the tracks of the menu and each chapter). The Scenes tab uses all three for its stage and audio preview. |
 | `{ type: 'updateProjectSettings', slug, patch }` | `project.updated`. `patch` is `{ theme?: string \| null, art?: { style, generator, editor, palette, stylePrompt, review }, music?: { engine, tracks }, voice?: { enabled, langs, provider, engines, voices } }`, each part merged. In `art`, `palette: null` and `stylePrompt: null` clear the field. The asset list follows (new voice references, engines of assets that have no file yet). |
@@ -56,12 +56,12 @@ Jobs that never need a model run without a provider slot. Jobs for one project a
 
 | Command | Answer |
 | --- | --- |
-| `{ type: 'addEdition', slug, source, lang }` | `lang` is a language code (see `config/languages.md`; the MCP tool `vno_add_edition` also accepts none and detects it). Enqueues `vn.edition.add` (align deterministically) and, when beats are missing or extra, `vn.edition.align` (the edition-aligner). Announced by `project.updated` (`editions`). There is no machine translation: the edition is a book folder you translated. |
-| `{ type: 'getEdition', slug, lang }` | `edition.loaded { slug, lang, edition }`: title, chapter titles, choice texts (`"<chapter>:<index>"`), endings, character names and `beats` (beat id -> text). |
+| `{ type: 'addEdition', slug, source, lang }` | `lang` is a language code (see `config/languages.md`; the MCP tool `vno_add_edition` also accepts none and detects it). A project imported from a pack takes a `vn-text` catalogue JSON file or a bundle folder (`edition.json` + `vn/text/<lang>.json`): the catalogue is validated against the book by exact key set and pack hash, saved as `editions/<lang>.json`, and its report is written; no alignment, no edition-aligner and no asset or voice job is queued. Any other project takes a translated book folder: enqueues `vn.edition.add` (align deterministically) and, when beats are missing or extra, `vn.edition.align` (the edition-aligner). Announced by `project.updated` (`editions`). There is no machine translation: the edition is a translated catalogue or book folder. |
+| `{ type: 'getEdition', slug, lang }` | `edition.loaded { slug, lang, edition }`: title, chapter titles, choice texts (`"<chapter>:<index>"`), endings, character names, `beats` (beat id -> text), the optional `sceneTitles` and `puzzles`. |
 | `{ type: 'updateEditionBeat', slug, lang, beatId, text }` | `edition.updated { slug, lang, beatId, text }`. Also keeps vn.json in step when `lang` is the primary language, and takes the beat off the missing list of the report. |
-| `{ type: 'getAlignReport', slug, lang }` | `align.report { slug, lang, report: AlignReportView \| null }`: `matched`, `missing` (primary beat ids with no text), `extra` (translated texts with no beat), `nameMap`, `placeMap`, `warnings`. |
+| `{ type: 'getAlignReport', slug, lang }` | `align.report { slug, lang, report: AlignReportView \| null }`: `matched`, `missing` (primary beat ids with no text), `extra` (translated texts with no beat), `nameMap`, `placeMap`, `warnings`; a pack edition also has `packHash`, `packVersion`, `keyCount` and `source`. |
 
-An edition never changes the asset list.
+An edition never changes the asset list. The MCP tool `vno_sync_editions` scans a pack's `vn/text/*.json` and adds every non-primary catalogue through the same validation (idempotent).
 
 ## Assets
 
@@ -85,8 +85,8 @@ At most one build job waits in the queue after edits, so several quick edits cau
 
 | Command | Effect |
 | --- | --- |
-| `{ type: 'buildGame', slug }` | `vn.build` job. The result arrives as `build.result { result: BuildResult }` (`action: 'build'`, `ok`, `messages` = warnings, `gameDir`, `theme`, `placeholders` = asset ids drawn as placeholders, `translated`). Without the Ren'Py SDK the primary language is still built; `messages` says what was skipped. |
-| `{ type: 'lintGame', slug }` | `vn.lint` job. `build.result` with `action: 'lint'`; `ok`, `messages` (the lint problems), `statistics`; `skipped: true` when the SDK is missing or the game is not built. |
+| `{ type: 'buildGame', slug }` | `vn.build` job. The result arrives as `build.result { result: BuildResult }` (`action: 'build'`, `ok`, `messages` = warnings, `gameDir`, `theme`, `placeholders` = asset ids drawn as placeholders, `translated`). The build writes the HTML5 web player (`game/index.html`, `game/game-data.json`, `player.js`); no Ren'Py SDK is needed. `messages` also reports a primary edition that disagrees with `vn.json` and pack editions made for a different `packHash`. |
+| `{ type: 'lintGame', slug }` | `vn.lint` job. `build.result` with `action: 'lint'`; `ok`, `messages` (the lint problems), `statistics`; `skipped: true` when the game is not built. Besides the game files, lint checks that `vn.json` primary text agrees with `editions/<primary>.json` and that pack editions were made for the project's current `packHash`. |
 | `{ type: 'runGame', slug }` | Starts the game. `game.started { slug, pid }`. |
 | `{ type: 'androidPreflight', slug }` | `build.result` with `action: 'preflight'`: `ok`, and `messages` = what is missing (each with the action to take) or what was found. |
 | `{ type: 'androidBuild', slug, bundle? }` | `vn.android` job. `build.result` with `action: 'android'`, `files` = the .apk / .aab in `projects/<slug>/android/`. |
@@ -132,11 +132,11 @@ The CLI: `yarn engine -- voice status`, `voice plan <slug> [--overwrite]`, `voic
 
 ## Project folder
 
-`projects/<slug>/`: `project.md` (settings), `vn.json`, `editions/<lang>.json`, `align-<lang>.json`, `uncertain.json`, `assets.json`, `assets/<id>/v<n>.<ext>` and `custom.<ext>`, `music.json` (the composer's plan), `cues.json` (the stage-director's cues), `pipeline.json`, `build.json`, `lint.json`, `summary.json` (the director's run summary), `voice/<lang>/`, `game/` (the Ren'Py project) and `log.md` (agent and job log of this project).
+`projects/<slug>/`: `project.md` (settings; a pack import also has `packHash`, `packVersion`, `sourceHash` and `packDir`), `vn.json`, `editions/<lang>.json`, `align-<lang>.json`, `uncertain.json`, `assets.json`, `assets/<id>/v<n>.<ext>` and `custom.<ext>`, `music.json` (the composer's plan), `cues.json` (the stage-director's cues), `pipeline.json`, `build.json`, `lint.json`, `summary.json` (the director's run summary), `voice/<lang>/`, `game/` (the built web game) and `log.md` (agent and job log of this project).
 
 ## CLI and MCP
 
-The same operations run headless: `yarn engine -- help` lists the CLI (`books`, `import`, `projects`, `run`, `edition add`, `plan`, `generate`, `asset ...`, `build`, `lint`, `play`, `android`, `voice`, `comfy`, `themes`) and `yarn engine -- mcp` serves the MCP tools on stdio. See the README.
+The same operations run headless: `yarn engine -- help` lists the CLI (`books`, `import`, `projects`, `run`, `edition add`, `edition sync`, `plan`, `generate`, `asset ...`, `build`, `lint`, `play`, `android`, `voice`, `comfy`, `themes`) and `yarn engine -- mcp` serves the MCP tools on stdio. See the README.
 
 **MCP over HTTP.** The long-lived engine (the app's, or `node out/engine/index.js --mcp-only [--port N]` headless) serves the same tools at `http://127.0.0.1:7459/mcp` (Streamable HTTP, `src/engine/mcp/`; the tool list and the guide `vn-studio://guide` are in `docs/mcp-guide.md`). Its settings are `config/mcp.md` (`enabled`, `port`, `token`; `VNO_MCP_PORT` and `VNO_MCP_TOKEN` override), reloaded when the file changes.
 

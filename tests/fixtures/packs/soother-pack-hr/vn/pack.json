@@ -1,0 +1,216 @@
+{
+  "format": "vn-pack",
+  "version": 2,
+  "book": {
+    "slug": "soother-pack",
+    "format": "kids-choice-visual-story",
+    "kind": "choice",
+    "primaryLang": "en",
+    "genre": "Fantasy",
+    "style": "Warm watercolour, gentle light, storybook.",
+    "author": "Mara Quill",
+    "coverBrief": "A tiny orange dragon and a girl in a yellow raincoat sit among sunflowers under a warm evening sky.",
+    "sourceHash": "sha256:267778bea5bc62afd2510a1e0d5c3e090b9dda29c88e68f9bba84211799402fe"
+  },
+  "characters": [
+    {
+      "key": "petra",
+      "looks": "Twelve, small and wiry, dark braids, a yellow raincoat, muddy boots. Brave and quick.",
+      "voice": "bright and quick."
+    },
+    {
+      "key": "mango",
+      "looks": "A tiny orange dragon with round wings and a chipped horn.",
+      "voice": "squeaky, excited."
+    }
+  ],
+  "places": [
+    {
+      "key": "petra_s_house",
+      "name": "Petra's House",
+      "looks": "A small blue cottage with a red door, a garden of tall sunflowers, a crooked fence."
+    },
+    {
+      "key": "dragon_s_cave",
+      "name": "Dragon's Cave",
+      "looks": "A warm cave full of shiny stones, a small fire, a pile of golden coins."
+    }
+  ],
+  "chapters": [
+    {
+      "n": 1,
+      "isEnding": false,
+      "choices": [
+        {
+          "index": 0,
+          "to": 2
+        },
+        {
+          "index": 1,
+          "to": 3
+        }
+      ],
+      "scenes": [
+        {
+          "id": "ch01.s01",
+          "placeKey": "petra_s_house",
+          "placeText": "Petra's House",
+          "time": "morning",
+          "description": "",
+          "breakBefore": false,
+          "beats": [
+            {
+              "id": "ch01.s01.b001",
+              "type": "narration"
+            },
+            {
+              "id": "ch01.s01.b002",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "petra",
+                  "look": "yellow raincoat"
+                }
+              ]
+            },
+            {
+              "id": "ch01.s01.b003",
+              "type": "line",
+              "speakerKey": "petra",
+              "expression": "happy"
+            },
+            {
+              "id": "ch01.s01.b004",
+              "type": "line",
+              "speakerKey": "petra",
+              "expression": "worried",
+              "image": {
+                "display": "full",
+                "text": "The soother spinning in the sky above the garden"
+              }
+            },
+            {
+              "id": "ch01.s01.b005",
+              "type": "line",
+              "speakerKey": "petra",
+              "expression": "worried",
+              "sfx": {
+                "text": "A tiny bell chimes"
+              },
+              "ambience": {
+                "text": "Wind in the sunflowers"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "isEnding": true,
+      "scenes": [
+        {
+          "id": "ch02.s01",
+          "placeKey": "dragon_s_cave",
+          "placeText": "Dragon's Cave",
+          "time": "night",
+          "description": "",
+          "breakBefore": false,
+          "beats": [
+            {
+              "id": "ch02.s01.b001",
+              "type": "narration"
+            },
+            {
+              "id": "ch02.s01.b002",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "petra",
+                  "look": "muddy boots"
+                },
+                {
+                  "charKey": "mango",
+                  "look": "out of breath"
+                }
+              ]
+            },
+            {
+              "id": "ch02.s01.b003",
+              "type": "line",
+              "speakerKey": "mango",
+              "expression": "happy"
+            },
+            {
+              "id": "ch02.s01.b004",
+              "type": "line",
+              "speakerKey": "petra",
+              "expression": "happy"
+            },
+            {
+              "id": "ch02.s01.b005",
+              "type": "line",
+              "speakerKey": "petra",
+              "expression": "happy",
+              "image": {
+                "display": "full",
+                "text": "A tiny dragon curled up asleep on a pile of golden coins"
+              }
+            },
+            {
+              "id": "ch02.s01.b006",
+              "type": "line",
+              "speakerKey": "petra",
+              "expression": "happy",
+              "image": {
+                "display": "insert",
+                "text": "A note written in shaky letters"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "isEnding": true,
+      "scenes": [
+        {
+          "id": "ch03.s01",
+          "placeKey": "petra_s_house",
+          "placeText": "Petra's House",
+          "time": "evening",
+          "description": "",
+          "breakBefore": false,
+          "beats": [
+            {
+              "id": "ch03.s01.b001",
+              "type": "narration"
+            },
+            {
+              "id": "ch03.s01.b002",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "petra",
+                  "look": "in her nightdress"
+                }
+              ]
+            },
+            {
+              "id": "ch03.s01.b003",
+              "type": "line",
+              "speakerKey": "petra",
+              "expression": "sad"
+            },
+            {
+              "id": "ch03.s01.b004",
+              "type": "narration"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "packHash": "sha256:2a16692893b8724dc482af3207092356bf7373b889b8a436203dcfc48cb1c870"
+}
