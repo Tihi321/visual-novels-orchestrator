@@ -279,7 +279,7 @@ describe('language table for other languages', () => {
     expect(languageWarnings(['en', 'hr'])).toEqual([])
     expect(languageWarnings(['de', 'ja', 'he', 'ar'])).toEqual([])
     registerLanguages([{ code: 'pt-br', name: 'Brazilian Portuguese' }])
-    expect(languageWarnings(['de', 'pt-br'])).toEqual(['the menus of Brazilian Portuguese stay in English (no UI strings for pt-br; add them in config/languages.md)'])
+    expect(languageWarnings(['de', 'pt-br'])).toEqual(['the interface has no Brazilian Portuguese strings (no UI strings for pt-br; add them in config/languages.md)'])
     resetLanguages()
   })
 })

@@ -148,7 +148,7 @@ ${extraCss}
         <div class="vno-screen-panel">
           <div class="vno-screen-header">
             <h2 id="vno-history-title">History</h2>
-            <button class="vno-screen-close">&times;</button>
+            <button type="button" class="vno-screen-close" aria-label="Close"><span aria-hidden="true">&times;</span></button>
           </div>
           <div id="vno-history-list" class="vno-screen-body vno-history-list"></div>
         </div>
@@ -159,7 +159,7 @@ ${extraCss}
         <div class="vno-screen-panel">
           <div class="vno-screen-header">
             <h2 id="vno-save-screen-title">Save Game</h2>
-            <button class="vno-screen-close">&times;</button>
+            <button type="button" class="vno-screen-close" aria-label="Close"><span aria-hidden="true">&times;</span></button>
           </div>
           <div class="vno-save-pages">
             <button class="vno-page-btn" data-page="1">1</button>
@@ -183,51 +183,81 @@ ${extraCss}
         <div class="vno-screen-panel">
           <div class="vno-screen-header">
             <h2 id="vno-prefs-title">Preferences</h2>
-            <button class="vno-screen-close">&times;</button>
+            <button type="button" class="vno-screen-close" aria-label="Close"><span aria-hidden="true">&times;</span></button>
           </div>
           <div class="vno-screen-body vno-prefs-body">
-            <div class="vno-pref-group">
-              <label id="vno-pref-label-display">Display</label>
-              <div class="vno-pref-control">
-                <button id="vno-pref-fullscreen" class="vno-button">Toggle Fullscreen</button>
+            <section class="vno-pref-section">
+              <h3 id="vno-pref-h-display">Display</h3>
+              <div class="vno-pref-group">
+                <label id="vno-pref-label-display" for="vno-pref-fullscreen">Display</label>
+                <div class="vno-pref-control">
+                  <button id="vno-pref-fullscreen" class="vno-button">Toggle Fullscreen</button>
+                </div>
               </div>
-            </div>
-            <div class="vno-pref-group">
-              <label id="vno-pref-label-language">Language</label>
-              <div class="vno-pref-control">
-                <select id="vno-pref-language" class="vno-select"></select>
+            </section>
+            <section class="vno-pref-section">
+              <h3 id="vno-pref-h-language">Language</h3>
+              <div id="vno-pref-row-ui-language" class="vno-pref-group">
+                <label id="vno-pref-label-ui-language" for="vno-pref-ui-language">Interface Language</label>
+                <div class="vno-pref-control">
+                  <select id="vno-pref-ui-language" class="vno-select" aria-label="Interface Language"></select>
+                </div>
               </div>
-            </div>
-            <div class="vno-pref-group">
-              <label id="vno-pref-label-text-speed">Text Speed</label>
-              <div class="vno-pref-control">
-                <input id="vno-pref-text-speed" type="range" min="1" max="100" value="50">
+              <div class="vno-pref-group">
+                <label id="vno-pref-label-language" for="vno-pref-language">Story Language</label>
+                <div class="vno-pref-control">
+                  <select id="vno-pref-language" class="vno-select" aria-label="Story Language"></select>
+                </div>
               </div>
-            </div>
-            <div class="vno-pref-group">
-              <label id="vno-pref-label-auto-delay">Auto-Forward Delay</label>
-              <div class="vno-pref-control">
-                <input id="vno-pref-auto-delay" type="range" min="1" max="10" value="4">
+            </section>
+            <section class="vno-pref-section">
+              <h3 id="vno-pref-h-text">Text</h3>
+              <div class="vno-pref-group">
+                <label id="vno-pref-label-text-speed" for="vno-pref-text-speed">Text Speed</label>
+                <div class="vno-pref-control">
+                  <input id="vno-pref-text-speed" type="range" min="1" max="100" value="50" aria-describedby="vno-pref-text-speed-value">
+                  <output id="vno-pref-text-speed-value" class="vno-pref-value" for="vno-pref-text-speed">50</output>
+                </div>
               </div>
-            </div>
-            <div class="vno-pref-group">
-              <label id="vno-pref-label-vol-music">Music Volume</label>
-              <div class="vno-pref-control">
-                <input id="vno-pref-vol-music" type="range" min="0" max="100" value="80">
+              <div class="vno-pref-group">
+                <label id="vno-pref-label-auto-delay" for="vno-pref-auto-delay">Auto-Forward Delay</label>
+                <div class="vno-pref-control">
+                  <input id="vno-pref-auto-delay" type="range" min="1" max="10" value="4" aria-describedby="vno-pref-auto-delay-value">
+                  <output id="vno-pref-auto-delay-value" class="vno-pref-value" for="vno-pref-auto-delay">4</output>
+                </div>
               </div>
-            </div>
-            <div class="vno-pref-group">
-              <label id="vno-pref-label-vol-sfx">Sound Effects Volume</label>
-              <div class="vno-pref-control">
-                <input id="vno-pref-vol-sfx" type="range" min="0" max="100" value="80">
+              <div class="vno-pref-group">
+                <label id="vno-pref-label-story-text-size" for="vno-pref-story-text-size">Story Text Size</label>
+                <div class="vno-pref-control">
+                  <input id="vno-pref-story-text-size" type="range" min="80" max="140" step="10" value="100" aria-describedby="vno-pref-story-text-size-value">
+                  <output id="vno-pref-story-text-size-value" class="vno-pref-value" for="vno-pref-story-text-size">100%</output>
+                </div>
               </div>
-            </div>
-            <div class="vno-pref-group">
-              <label id="vno-pref-label-vol-voice">Voice Volume</label>
-              <div class="vno-pref-control">
-                <input id="vno-pref-vol-voice" type="range" min="0" max="100" value="90">
+            </section>
+            <section class="vno-pref-section">
+              <h3 id="vno-pref-h-audio">Audio</h3>
+              <div class="vno-pref-group">
+                <label id="vno-pref-label-vol-music" for="vno-pref-vol-music">Music Volume</label>
+                <div class="vno-pref-control">
+                  <input id="vno-pref-vol-music" type="range" min="0" max="100" value="48" aria-describedby="vno-pref-vol-music-value">
+                  <output id="vno-pref-vol-music-value" class="vno-pref-value" for="vno-pref-vol-music">48</output>
+                </div>
               </div>
-            </div>
+              <div class="vno-pref-group">
+                <label id="vno-pref-label-vol-sfx" for="vno-pref-vol-sfx">Sound Effects Volume</label>
+                <div class="vno-pref-control">
+                  <input id="vno-pref-vol-sfx" type="range" min="0" max="100" value="80" aria-describedby="vno-pref-vol-sfx-value">
+                  <output id="vno-pref-vol-sfx-value" class="vno-pref-value" for="vno-pref-vol-sfx">80</output>
+                </div>
+              </div>
+              <div class="vno-pref-group">
+                <label id="vno-pref-label-vol-voice" for="vno-pref-vol-voice">Voice Volume</label>
+                <div class="vno-pref-control">
+                  <input id="vno-pref-vol-voice" type="range" min="0" max="100" value="90" aria-describedby="vno-pref-vol-voice-value">
+                  <output id="vno-pref-vol-voice-value" class="vno-pref-value" for="vno-pref-vol-voice">90</output>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
       </div>
@@ -237,7 +267,7 @@ ${extraCss}
         <div class="vno-screen-panel">
           <div class="vno-screen-header">
             <h2 id="vno-about-title">About</h2>
-            <button class="vno-screen-close">&times;</button>
+            <button type="button" class="vno-screen-close" aria-label="Close"><span aria-hidden="true">&times;</span></button>
           </div>
           <div class="vno-screen-body">
             <h3 id="vno-about-book-title">${escapeHtml(title)}</h3>
@@ -496,7 +526,7 @@ body.vno-body {
 
 .vno-dialogue-text {
   font-family: var(--vno-font-text);
-  font-size: var(--vno-size-text, 33px);
+  font-size: calc(var(--vno-size-text, 33px) * var(--vno-story-text-scale, 1));
   line-height: 1.4;
   color: var(--vno-color-text, #fff);
   word-wrap: break-word;
@@ -628,14 +658,15 @@ body.vno-body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0,0,0,0.85);
+  background: var(--vno-ui-scrim, rgba(0,0,0,0.85));
 }
 
 .vno-screen-panel {
-  width: 1400px;
-  height: 850px;
-  background: var(--vno-color-bg, #181824);
-  border: 2px solid var(--vno-color-accent, #333);
+  width: min(1400px, 92%);
+  height: min(900px, 92%);
+  background: var(--vno-ui-surface, #181824);
+  color: var(--vno-ui-text, #fff);
+  border: 2px solid var(--vno-ui-border, #333);
   border-radius: 12px;
   display: flex;
   flex-direction: column;
@@ -645,23 +676,48 @@ body.vno-body {
 
 .vno-screen-header {
   padding: 20px 30px;
-  border-bottom: 1px solid rgba(255,255,255,0.1);
+  border-bottom: 1px solid var(--vno-ui-border, rgba(255,255,255,0.1));
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
 }
 
 .vno-screen-header h2 {
-  font-size: var(--vno-size-title, 48px);
-  color: var(--vno-color-accent, #fff);
+  font-size: min(48px, var(--vno-size-title, 48px));
+  color: var(--vno-ui-text, #e8e8f2);
 }
 
+/* The close × reads on a light and on a dark theme: the theme's own text colour, a real hit target, a visible focus ring. */
 .vno-screen-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  min-height: 52px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--vno-ui-border, #555);
   background: transparent;
-  border: none;
-  color: #fff;
-  font-size: 40px;
+  color: var(--vno-ui-text, #e8e8f2);
+  font-family: var(--vno-font-interface, sans-serif);
+  font-size: 30px;
+  line-height: 1;
   cursor: pointer;
+}
+
+.vno-screen-close:hover {
+  background: var(--vno-ui-surface-2, rgba(255,255,255,0.14));
+}
+
+.vno-screen-close:focus-visible {
+  outline: 3px solid var(--vno-ui-focus, #8ab4ff);
+  outline-offset: 2px;
+}
+
+.vno-screen-close span {
+  pointer-events: none;
 }
 
 .vno-screen-body {
@@ -790,36 +846,121 @@ body.vno-body {
 .vno-prefs-body {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 14px;
+  overflow-y: auto;
+  padding: 16px 24px 22px;
+}
+
+.vno-pref-section {
+  background: var(--vno-ui-surface-2, rgba(255,255,255,0.06));
+  border: 1px solid var(--vno-ui-border, #444);
+  border-radius: 10px;
+  padding: 10px 18px;
+}
+
+.vno-pref-section h3 {
+  font-family: var(--vno-font-interface, var(--vno-font-text));
+  /* a theme's label size is meant for headings on the stage: cap it so all settings stay visible in one panel */
+  font-size: min(26px, var(--vno-size-label, 28px));
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--vno-ui-text-muted, #bbb);
+  margin-bottom: 2px;
 }
 
 .vno-pref-group {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 26px;
-  padding: 10px 0;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+  gap: 18px;
+  font-size: min(30px, var(--vno-size-interface, 26px));
+  color: var(--vno-ui-text, #e8e8f2);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--vno-ui-border, rgba(255,255,255,0.12));
+}
+
+.vno-pref-section .vno-pref-group:last-child {
+  border-bottom: none;
+}
+
+.vno-pref-group label {
+  color: var(--vno-ui-text, #e8e8f2);
 }
 
 .vno-pref-control {
-  width: 500px;
+  width: min(520px, 48%);
   display: flex;
   align-items: center;
+  gap: 14px;
 }
 
 .vno-pref-control input[type="range"] {
+  flex: 1 1 auto;
+  min-width: 0;
   width: 100%;
+  accent-color: var(--vno-color-accent, #4b8bff);
+  height: 24px;
+  cursor: pointer;
+}
+
+.vno-pref-control input[type="range"]:focus-visible {
+  outline: 3px solid var(--vno-ui-focus, #8ab4ff);
+  outline-offset: 2px;
+}
+
+.vno-pref-value {
+  min-width: 76px;
+  text-align: right;
+  color: var(--vno-ui-text-muted, #bbb);
+  font-variant-numeric: tabular-nums;
+}
+
+[dir="rtl"] .vno-pref-value {
+  text-align: left;
 }
 
 .vno-select {
   width: 100%;
-  padding: 8px 12px;
-  background: #222;
-  color: #fff;
-  border: 1px solid #555;
-  border-radius: 4px;
-  font-size: 22px;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 10px 40px 10px 14px;
+  background-color: var(--vno-ui-control-bg, #222);
+  color: var(--vno-ui-control-text, #fff);
+  border: 1px solid var(--vno-ui-border, #555);
+  border-radius: 8px;
+  font-family: var(--vno-font-interface, sans-serif);
+  font-size: var(--vno-size-interface, 26px);
+  cursor: pointer;
+  text-overflow: ellipsis;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23707080' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 16px;
+}
+
+.vno-select:focus-visible {
+  outline: 3px solid var(--vno-ui-focus, #8ab4ff);
+  outline-offset: 2px;
+}
+
+.vno-select option {
+  background: var(--vno-ui-control-bg, #222);
+  color: var(--vno-ui-control-text, #fff);
+}
+
+[dir="rtl"] .vno-select {
+  padding: 10px 14px 10px 40px;
+  background-position: left 14px center;
+}
+
+@media (max-width: 900px) {
+  .vno-pref-group {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .vno-pref-control {
+    width: 100%;
+  }
 }
 
 /* Puzzle UI Styles */
@@ -937,8 +1078,8 @@ body.vno-body {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(16, 18, 28, 0.85);
-  border: 1px solid var(--vno-color-idle, #555);
+  background: var(--vno-ui-surface, rgba(0,0,0,0.7));
+  border: 1px solid var(--vno-ui-border, #555);
   border-radius: 6px;
   padding: 6px 12px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.5);
@@ -952,24 +1093,31 @@ body.vno-body {
 .vno-lang-bar-label {
   font-size: 20px;
   line-height: 1;
-  color: var(--vno-color-accent, #fff);
+  color: var(--vno-ui-text, #e8e8f2);
   cursor: pointer;
 }
 
 .vno-lang-select {
   background: transparent;
-  color: var(--vno-color-text, #fff);
+  color: var(--vno-ui-text, #e8e8f2);
   border: none;
   font-family: var(--vno-font-interface, sans-serif);
   font-size: 20px;
   cursor: pointer;
   outline: none;
   padding-right: 4px;
+  max-width: 380px;
+  text-overflow: ellipsis;
+}
+
+.vno-lang-select:focus-visible {
+  outline: 3px solid var(--vno-ui-focus, #8ab4ff);
+  outline-offset: 2px;
 }
 
 .vno-lang-select option {
-  background: #181824;
-  color: #fff;
+  background: var(--vno-ui-control-bg, #181824);
+  color: var(--vno-ui-control-text, #fff);
 }
 
 /* Picture book (one full illustration on top, the page's caption below, page turns). Nothing of the visual-novel stage is visible. */
@@ -995,15 +1143,16 @@ body.vno-picturebook #vno-quick-menu {
 }
 
 body.vno-picturebook .vno-page-layer {
-  display: block;
+  display: flex;
+  flex-direction: column;
 }
 
 .vno-page-image-area {
-  position: absolute;
-  top: 0;
-  left: 0;
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
-  height: 800px;
+  height: auto;
   overflow: hidden;
   background: var(--vno-color-bg, #101018);
   cursor: pointer;
@@ -1038,36 +1187,38 @@ body.vno-picturebook .vno-page-layer {
 }
 
 .vno-page-caption-area {
-  position: absolute;
-  top: 800px;
-  left: 0;
-  width: 100%;
-  height: 280px;
-  padding: 14px 200px 92px;
+  position: static;
+  flex: 0 0 auto;
+  max-height: 46%;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  padding: 20px 140px 0;
+  border-top: 1px solid var(--vno-ui-border, #555);
   background: var(--vno-color-bg, #101018);
   color: var(--vno-color-text, #fff);
   cursor: pointer;
 }
 
 .vno-page-caption {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   width: 100%;
   max-width: 1500px;
+  overflow: hidden;
   font-family: var(--vno-font-text, serif);
-  font-size: 64px;
+  font-size: calc(var(--vno-page-caption-size, 52px) * var(--vno-story-text-scale, 1));
   line-height: 1.45;
   text-align: center;
   word-wrap: break-word;
 }
 
-.vno-page-caption.vno-page-caption-medium {
-  font-size: 56px;
-}
-
-.vno-page-caption.vno-page-caption-long {
-  font-size: 48px;
+/* the fitter could not shrink the caption enough: it scrolls instead of covering the illustration */
+.vno-page-caption-area.vno-caption-scroll .vno-page-caption {
+  justify-content: flex-start;
+  overflow-y: auto;
 }
 
 .vno-page-caption .vno-page-line + .vno-page-line {
@@ -1084,14 +1235,13 @@ body.vno-picturebook .vno-page-layer {
 }
 
 .vno-page-footer {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 16px;
+  position: static;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 28px;
+  padding: 10px 0 18px;
   font-family: var(--vno-font-interface, var(--vno-font-text));
   font-size: 26px;
   color: var(--vno-color-idle, #aaa);
@@ -1128,10 +1278,10 @@ body.vno-picturebook .vno-page-layer {
   left: 28px;
   z-index: 6;
   padding: 8px 18px;
-  background: rgba(16, 18, 28, 0.85);
-  border: 1px solid var(--vno-color-idle, #555);
+  background: var(--vno-ui-surface, rgba(0,0,0,0.7));
+  border: 1px solid var(--vno-ui-border, #555);
   border-radius: 6px;
-  color: var(--vno-color-text, #fff);
+  color: var(--vno-ui-text, #e8e8f2);
   font-family: var(--vno-font-interface, var(--vno-font-text));
   font-size: 22px;
   cursor: pointer;
@@ -1186,14 +1336,20 @@ export function generatePlayerJs(): string {
   let pageVoices = [];
   let pageVoiceIdx = 0;
 
+  // Player preferences. The schema field versions the stored shape: schema 2 is the balanced-audio default (music 48, perceptual gain curve).
   let settings = {
     textSpeed: 50,
     autoDelay: 4,
-    volMusic: 80,
+    volMusic: 48,
     volSfx: 80,
     volVoice: 90,
-    skipUnseen: false
+    storyTextSize: 100,
+    uiLang: 'en',
+    schema: 2
   };
+
+  // True while a voice clip plays: the music and the ambience duck under it (VNO-48).
+  let voiceActive = false;
 
   const stateHistory = [];
   const dialogueHistory = [];
@@ -1252,6 +1408,7 @@ export function generatePlayerJs(): string {
     dom.pageImage = document.getElementById('vno-page-image');
     dom.pagePlaceholder = document.getElementById('vno-page-placeholder');
     dom.pageCaption = document.getElementById('vno-page-caption');
+    dom.pageCaptionArea = document.getElementById('vno-page-caption-area');
     dom.pageCounter = document.getElementById('vno-page-counter');
     dom.pagePrev = document.getElementById('vno-page-prev');
     dom.pageNext = document.getElementById('vno-page-next');
@@ -1277,6 +1434,9 @@ export function generatePlayerJs(): string {
     dom.langBar = document.getElementById('vno-lang-bar');
     dom.stageLanguage = document.getElementById('vno-stage-language');
     dom.prefLanguage = document.getElementById('vno-pref-language');
+    dom.prefUiLanguage = document.getElementById('vno-pref-ui-language');
+    dom.prefUiLanguageRow = document.getElementById('vno-pref-row-ui-language');
+    dom.prefStoryTextSize = document.getElementById('vno-pref-story-text-size');
     dom.audioMusic = document.getElementById('vno-audio-music');
     dom.audioAmbience = document.getElementById('vno-audio-ambience');
     dom.audioSfx = document.getElementById('vno-audio-sfx');
@@ -1322,6 +1482,56 @@ export function generatePlayerJs(): string {
     });
   }
 
+  /** The interface (menu) languages a game-data.json ships: English first, then every language with menu strings. Empty in an old payload. */
+  function getUiLanguages() {
+    if (!gameData) return [];
+    const list = gameData.uiLanguages;
+    if (!Array.isArray(list)) return [];
+    return list.filter(l => Boolean(l && l.code));
+  }
+
+  /** The Preferences screen's Interface language select. Hidden (and not bound) when the payload has no interface languages (an old game-data.json). */
+  function populateUiLanguageSelect(selectEl) {
+    const row = dom.prefUiLanguageRow || document.getElementById('vno-pref-row-ui-language');
+    const list = getUiLanguages();
+    if (!list.length) {
+      if (row && row.classList) row.classList.add('vno-hidden');
+      return;
+    }
+    if (row && row.classList) row.classList.remove('vno-hidden');
+    if (!selectEl) return;
+    selectEl.innerHTML = '';
+    list.forEach(l => {
+      const opt = document.createElement('option');
+      opt.value = l.code;
+      opt.textContent = l.nativeName && l.nativeName !== l.name ? (l.nativeName + ' (' + l.name + ')') : (l.nativeName || l.name || l.code);
+      if (l.code === settings.uiLang) opt.selected = true;
+      selectEl.appendChild(opt);
+    });
+    const label = ui('Interface Language', 'Interface Language');
+    selectEl.title = label;
+    selectEl.setAttribute('aria-label', label);
+  }
+
+  /** An unknown or vanished interface language falls back to English (the built-in literals). */
+  function normalizeUiLang() {
+    const list = getUiLanguages();
+    if (!list.length) {
+      settings.uiLang = 'en';
+      return;
+    }
+    const known = list.some(l => l.code === settings.uiLang);
+    if (!known) settings.uiLang = 'en';
+  }
+
+  /** The persistent language chip is only useful when the book has more than one edition. */
+  function updateLangBarVisibility() {
+    if (!dom.langBar || !dom.langBar.classList) return;
+    const count = gameData && gameData.languages ? gameData.languages.length : 0;
+    if (count < 2) dom.langBar.classList.add('vno-hidden');
+    else dom.langBar.classList.remove('vno-hidden');
+  }
+
   function loadGameData(data) {
     gameData = data;
     currentLang = gameData.primaryLang || 'en';
@@ -1336,10 +1546,14 @@ export function generatePlayerJs(): string {
     }
     if (pictureBook && dom.pageLayer) dom.pageLayer.classList.add('vno-hidden');
 
+    normalizeUiLang();
     populateLanguageSelect(dom.stageLanguage);
     populateLanguageSelect(dom.prefLanguage);
+    populateUiLanguageSelect(dom.prefUiLanguage);
+    updateLangBarVisibility();
 
     applyLanguageTypography();
+    applyTextScale();
     updateUiStrings();
     applyAudioVolumes();
 
@@ -1349,6 +1563,7 @@ export function generatePlayerJs(): string {
     }
   }
 
+  /** Story language only: the edition, the typography, the title and the ending. The menus keep the interface language. */
   function switchLanguage(langCode) {
     if (!gameData || !gameData.editions || !gameData.editions[langCode]) return;
     currentLang = langCode;
@@ -1362,6 +1577,23 @@ export function generatePlayerJs(): string {
     }
 
     applyLanguageTypography();
+    updateUiStrings();
+    refreshActiveScreens();
+  }
+
+  /** Interface (menu) language: re-labels every open screen; the story keeps its own language. */
+  function switchUiLanguage(code) {
+    const list = getUiLanguages();
+    if (list.length) {
+      if (!list.some(l => l.code === code)) return;
+    } else if (code !== 'en') {
+      return;
+    }
+    settings.uiLang = code;
+    saveSettings();
+    if (dom.prefUiLanguage && dom.prefUiLanguage.value !== code) {
+      dom.prefUiLanguage.value = code;
+    }
     updateUiStrings();
     refreshActiveScreens();
   }
@@ -1381,10 +1613,23 @@ export function generatePlayerJs(): string {
     if (dom.dialogueText) dom.dialogueText.style.fontFamily = fontFamily;
   }
 
-  function ui(key, fallback) {
-    if (currentEdition && currentEdition.ui && currentEdition.ui[key]) {
-      return currentEdition.ui[key];
+  /**
+   * The menu strings of the chosen interface language: the shipped uiLanguages table, else (an old game-data.json without it) the edition's
+   * legacy table, else nothing (the English literals).
+   */
+  function uiTable() {
+    const list = getUiLanguages();
+    if (list.length) {
+      const entry = list.find(l => l.code === settings.uiLang);
+      return entry && entry.ui ? entry.ui : {};
     }
+    if (currentEdition && currentEdition.ui) return currentEdition.ui;
+    return {};
+  }
+
+  function ui(key, fallback) {
+    const table = uiTable();
+    if (table && table[key]) return table[key];
     return fallback !== undefined ? fallback : key;
   }
 
@@ -1395,6 +1640,11 @@ export function generatePlayerJs(): string {
 
   function updateUiStrings() {
     if (!gameData) return;
+    // The story keeps lang/dir (applyLanguageTypography); the menus advertise their own language here.
+    if (document.documentElement && document.documentElement.setAttribute) {
+      document.documentElement.setAttribute('data-ui-lang', settings.uiLang);
+    }
+
     const bookTitle = (currentEdition && currentEdition.title) || gameData.title || 'Visual Novel';
     document.title = bookTitle;
     setElemText('vno-mm-title', bookTitle);
@@ -1433,23 +1683,135 @@ export function generatePlayerJs(): string {
       if (dom.pageNext) dom.pageNext.title = ui('Next', 'Next');
     }
 
-    // Modal Headers & Preferences Labels
+    // Modal Headers
     setElemText('vno-history-title', ui('History', 'History'));
     setElemText('vno-prefs-title', ui('Preferences', 'Preferences'));
     setElemText('vno-about-title', ui('About', 'About'));
+
+    // Preferences section headings and rows
+    setElemText('vno-pref-h-display', ui('Display', 'Display'));
+    setElemText('vno-pref-h-language', ui('Language', 'Language'));
+    setElemText('vno-pref-h-text', ui('Text', 'Text'));
+    setElemText('vno-pref-h-audio', ui('Audio', 'Audio'));
     setElemText('vno-pref-label-display', ui('Display', 'Display'));
     setElemText('vno-pref-fullscreen', ui('Fullscreen', 'Toggle Fullscreen'));
-    setElemText('vno-pref-label-language', ui('Language', 'Language'));
+    setElemText('vno-pref-label-ui-language', ui('Interface Language', 'Interface Language'));
+    setElemText('vno-pref-label-language', ui('Story Language', 'Story Language'));
     setElemText('vno-pref-label-text-speed', ui('Text Speed', 'Text Speed'));
     setElemText('vno-pref-label-auto-delay', ui('Auto-Forward Time', 'Auto-Forward Delay'));
+    setElemText('vno-pref-label-story-text-size', ui('Story Text Size', 'Story Text Size'));
     setElemText('vno-pref-label-vol-music', ui('Music Volume', 'Music Volume'));
     setElemText('vno-pref-label-vol-sfx', ui('Sound Volume', 'Sound Effects Volume'));
     setElemText('vno-pref-label-vol-voice', ui('Voice Volume', 'Voice Volume'));
 
-    // Stage Language Bar tooltip & aria-label
+    // Close buttons: the × is decorative, the accessible name is the localized Close
+    const closeLabel = ui('Close', 'Close');
+    document.querySelectorAll('.vno-screen-close').forEach(btn => {
+      if (btn && btn.setAttribute) btn.setAttribute('aria-label', closeLabel);
+    });
+
+    // Interface language select tooltip (the story select and the stage bar keep the story language label)
+    const uiLanguageLabel = ui('Interface Language', 'Interface Language');
+    if (dom.prefUiLanguage) {
+      dom.prefUiLanguage.title = uiLanguageLabel;
+      dom.prefUiLanguage.setAttribute('aria-label', uiLanguageLabel);
+    }
+
+    // Stage Language Bar tooltip & aria-label (it switches the story language)
     const langLabel = ui('Language', 'Language');
     if (dom.langBar) dom.langBar.title = langLabel;
     if (dom.stageLanguage) dom.stageLanguage.setAttribute('aria-label', langLabel);
+  }
+
+  // ---- story text size and the caption/dialogue auto-fit (VNO-48) ----
+
+  function storyTextScale() {
+    return settingsNumber(settings.storyTextSize, 80, 140, 100) / 100;
+  }
+
+  /** The Story text size slider (80-140 %): one custom property scales the caption and the dialogue; the auto-fit below still wins on overflow. */
+  function applyTextScale() {
+    const scale = storyTextScale();
+    const root = document.documentElement;
+    if (root && root.style) {
+      if (typeof root.style.setProperty === 'function') {
+        root.style.setProperty('--vno-story-text-scale', String(scale));
+      } else {
+        root.style['--vno-story-text-scale'] = String(scale);
+      }
+    }
+    fitCaption();
+    fitDialogue();
+  }
+
+  /** The rendered base size of a text block, or the theme fallback when the DOM cannot measure (a test DOM has no layout). */
+  function baseFontPx(el, fallbackPx) {
+    if (el && el.style) el.style.fontSize = '';
+    if (typeof getComputedStyle === 'function') {
+      try {
+        const measured = parseFloat(getComputedStyle(el).fontSize);
+        if (measured && isFinite(measured)) return measured;
+      } catch (err) {
+        // no computed style in this DOM: fall through to the fallback
+      }
+    }
+    return fallbackPx;
+  }
+
+  /**
+   * Shrink a text block step by step until it fits its container; when even the smallest step does not fit, scrollHost scrolls instead of the
+   * text spilling over the illustration. Returns early (without touching the DOM) when the environment has no layout to measure.
+   */
+  /** The container's own vertical padding, which the text cannot use (0 when the DOM cannot measure). */
+  function verticalPaddingPx(el) {
+    if (!el || typeof getComputedStyle !== 'function') return 0;
+    try {
+      const cs = getComputedStyle(el);
+      if (!cs) return 0;
+      const top = parseFloat(cs.paddingTop);
+      const bottom = parseFloat(cs.paddingBottom);
+      const sum = (isFinite(top) ? top : 0) + (isFinite(bottom) ? bottom : 0);
+      return sum > 0 ? sum : 0;
+    } catch (err) {
+      return 0;
+    }
+  }
+
+  function fitTextBlock(el, container, basePx, minPx, scrollHost, reservePx) {
+    if (!el || !container) return;
+    if (scrollHost && scrollHost.classList) scrollHost.classList.remove('vno-caption-scroll');
+    if (typeof el.scrollHeight !== 'number' || typeof container.clientHeight !== 'number') return;
+    // a hidden container (the page layer before Start, the text box on the main menu) has no height to fit against yet
+    if (container.clientHeight <= 0 || el.scrollHeight <= 0) return;
+    if (el.style) el.style.fontSize = '';
+    const base = basePx > 0 ? basePx : 16;
+    const floor = minPx > 0 ? minPx : 12;
+    const reserve = typeof reservePx === 'number' && reservePx > 0 ? reservePx : 0;
+    const available = container.clientHeight - verticalPaddingPx(container) - reserve - 2;
+    const factors = [1, 0.92, 0.85, 0.78, 0.72, 0.66, 0.6, 0.55];
+    let fits = false;
+    for (let i = 0; i < factors.length; i++) {
+      const px = Math.max(floor, Math.round(base * factors[i]));
+      if (el.style) el.style.fontSize = px + 'px';
+      if (el.scrollHeight <= available) {
+        fits = true;
+        break;
+      }
+    }
+    if (!fits && scrollHost && scrollHost.classList) scrollHost.classList.add('vno-caption-scroll');
+  }
+
+  function fitCaption() {
+    if (!dom.pageCaption || !dom.pageCaptionArea) return;
+    // the footer sits inside the caption strip, so its height is not available to the words
+    const footer = document.getElementById('vno-page-footer');
+    const reserve = footer && typeof footer.offsetHeight === 'number' ? footer.offsetHeight : 0;
+    fitTextBlock(dom.pageCaption, dom.pageCaptionArea, baseFontPx(dom.pageCaption, 52 * storyTextScale()), 30, dom.pageCaptionArea, reserve);
+  }
+
+  function fitDialogue() {
+    if (!dom.dialogueText || !dom.textbox) return;
+    fitTextBlock(dom.dialogueText, dom.textbox, baseFontPx(dom.dialogueText, 33 * storyTextScale()), 14);
   }
 
   function refreshActiveScreens() {
@@ -1511,11 +1873,52 @@ export function generatePlayerJs(): string {
     }
   }
 
+  // ---- audio balance (VNO-48): a perceptual gain curve and a duck under the voice ----
+
+  /** A slider value (0-100) as a gain: squaring-ish curve, so 48 is quiet background music rather than half volume. */
+  function channelGain(value) {
+    const n = Number(value);
+    const v = isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
+    return Math.pow(v / 100, 1.6);
+  }
+
+  /** Ramp an audio element's volume over ~180 ms (instant when there is no animation frame, e.g. in a test DOM). */
+  function setVolumeSmooth(el, target) {
+    if (!el) return;
+    const n = Number(target);
+    const to = isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
+    if (typeof requestAnimationFrame !== 'function') {
+      el.volume = to;
+      return;
+    }
+    const token = (el.__vnoVolumeRamp || 0) + 1;
+    el.__vnoVolumeRamp = token;
+    const from = typeof el.volume === 'number' ? el.volume : 0;
+    const started = typeof performance !== 'undefined' && performance && typeof performance.now === 'function' ? performance.now() : null;
+    const duration = 180;
+    const step = (now) => {
+      if (el.__vnoVolumeRamp !== token) return;
+      const t = started === null ? 1 : Math.min(1, Math.max(0, (typeof now === 'number' ? now : started) - started) / duration);
+      el.volume = from + (to - from) * t;
+      if (t < 1) requestAnimationFrame(step);
+      else el.volume = to;
+    };
+    requestAnimationFrame(step);
+  }
+
+  function setVoiceActive(active) {
+    const next = Boolean(active);
+    if (voiceActive === next) return;
+    voiceActive = next;
+    applyAudioVolumes();
+  }
+
   function applyAudioVolumes() {
-    if (dom.audioMusic) dom.audioMusic.volume = settings.volMusic / 100;
-    if (dom.audioAmbience) dom.audioAmbience.volume = settings.volSfx / 100;
-    if (dom.audioSfx) dom.audioSfx.volume = settings.volSfx / 100;
-    if (dom.audioVoice) dom.audioVoice.volume = settings.volVoice / 100;
+    // music and ambience duck while a voice clip plays; the voice itself and the effects keep their own level
+    if (dom.audioMusic) setVolumeSmooth(dom.audioMusic, channelGain(settings.volMusic) * (voiceActive ? 0.35 : 1));
+    if (dom.audioAmbience) setVolumeSmooth(dom.audioAmbience, channelGain(settings.volSfx) * (voiceActive ? 0.7 : 1));
+    if (dom.audioSfx) setVolumeSmooth(dom.audioSfx, channelGain(settings.volSfx));
+    if (dom.audioVoice) setVolumeSmooth(dom.audioVoice, channelGain(settings.volVoice));
   }
 
   function bindUiEvents() {
@@ -1566,10 +1969,16 @@ export function generatePlayerJs(): string {
       btn.addEventListener('click', closeAllScreens);
     });
 
-    // Preferences Sliders
+    // Preferences: the interface language re-labels every open screen; the story language stays on the two story selects
+    if (dom.prefUiLanguage) {
+      dom.prefUiLanguage.addEventListener('change', (e) => switchUiLanguage(e.target.value));
+    }
+
+    // Preferences Sliders (with a value readout on the row)
     document.getElementById('vno-pref-fullscreen').addEventListener('click', toggleFullscreen);
     bindRange('vno-pref-text-speed', 'textSpeed');
     bindRange('vno-pref-auto-delay', 'autoDelay');
+    bindRange('vno-pref-story-text-size', 'storyTextSize', applyTextScale, (v) => String(v) + '%');
     bindRange('vno-pref-vol-music', 'volMusic', applyAudioVolumes);
     bindRange('vno-pref-vol-sfx', 'volSfx', applyAudioVolumes);
     bindRange('vno-pref-vol-voice', 'volVoice', applyAudioVolumes);
@@ -1599,19 +2008,61 @@ export function generatePlayerJs(): string {
     }
   }
 
-  function bindRange(elemId, key, callback) {
+  /** The row's <output>: the current value, or its formatted form (the story text size shows a percent). */
+  function updateRangeOutput(elemId, key, formatter) {
+    const out = document.getElementById(elemId + '-value');
+    if (!out) return;
+    const value = settings[key];
+    const text = formatter ? formatter(value) : String(value);
+    if ('value' in out) out.value = text;
+    out.textContent = text;
+  }
+
+  function bindRange(elemId, key, callback, formatter) {
     const el = document.getElementById(elemId);
     if (!el) return;
-    el.value = settings[key];
+    el.value = String(settings[key]);
+    updateRangeOutput(elemId, key, formatter);
     el.addEventListener('input', (e) => {
       settings[key] = Number(e.target.value);
       saveSettings();
+      updateRangeOutput(elemId, key, formatter);
       if (callback) callback();
     });
   }
 
+  /** The Preferences / Save / History / About screen that is open right now, if any. */
+  function firstOpenScreen() {
+    const screens = [dom.screenPrefs, dom.screenSave, dom.screenHistory, dom.screenAbout];
+    for (let i = 0; i < screens.length; i++) {
+      const screen = screens[i];
+      if (screen && screen.classList && !screen.classList.contains('vno-hidden')) return screen;
+    }
+    return null;
+  }
+
+  /** Esc on an open screen closes it and hands focus back to a close button (the keyboard user stays in the modal's world). */
+  function closeScreenOnEscape(openScreen) {
+    closeAllScreens();
+    let target = openScreen && openScreen.querySelector ? openScreen.querySelector('.vno-screen-close') : null;
+    if (!target && document.querySelectorAll) {
+      const closers = document.querySelectorAll('.vno-screen-close');
+      if (closers && closers.length) target = closers[0];
+    }
+    if (target && typeof target.focus === 'function') target.focus();
+  }
+
   function bindKeyboardShortcuts() {
     window.addEventListener('keydown', (e) => {
+      // Esc closes any open screen first, in both presentations: a modal never traps the reader
+      if (e && e.code === 'Escape') {
+        const open = firstOpenScreen();
+        if (open) {
+          e.preventDefault();
+          closeScreenOnEscape(open);
+          return;
+        }
+      }
       if (e.target && (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT')) return;
       if (dom.mainMenu && !dom.mainMenu.classList.contains('vno-hidden')) return;
       if (pictureBook) {
@@ -1963,8 +2414,11 @@ export function generatePlayerJs(): string {
     dom.indicator.classList.add('vno-hidden');
     currentFullText = htmlText;
 
+    // Lay the whole line out first, so the auto-fit measures the final text, then let it type from the first character.
+    dom.dialogueText.innerHTML = htmlText;
+    fitDialogue();
+
     if (settings.textSpeed >= 100) {
-      dom.dialogueText.innerHTML = htmlText;
       isTyping = false;
       dom.indicator.classList.remove('vno-hidden');
       return;
@@ -1989,6 +2443,7 @@ export function generatePlayerJs(): string {
     clearInterval(typewriterTimer);
     isTyping = false;
     dom.dialogueText.innerHTML = currentFullText;
+    fitDialogue();
     dom.indicator.classList.remove('vno-hidden');
   }
 
@@ -2256,7 +2711,17 @@ export function generatePlayerJs(): string {
     if (!currentEdition || !currentEdition.voice || !currentEdition.voice[beatId]) return;
     const rel = currentEdition.voice[beatId];
     dom.audioVoice.src = rel;
-    dom.audioVoice.play().catch(() => {});
+    const previous = dom.audioVoice.onended;
+    dom.audioVoice.onended = function () {
+      dom.audioVoice.onended = null;
+      setVoiceActive(false);
+      if (typeof previous === 'function') previous();
+    };
+    setVoiceActive(true);
+    dom.audioVoice.play().catch(() => {
+      // a rejected play never became audible: do not leave the music ducked
+      setVoiceActive(false);
+    });
   }
 
   function stopVoice() {
@@ -2264,6 +2729,7 @@ export function generatePlayerJs(): string {
       dom.audioVoice.onended = null;
       dom.audioVoice.pause();
     }
+    setVoiceActive(false);
     pageVoices = [];
     pageVoiceIdx = 0;
   }
@@ -2351,6 +2817,7 @@ export function generatePlayerJs(): string {
     }
     currentFullText = htmlText;
     dom.dialogueText.innerHTML = htmlText;
+    fitDialogue();
     if (b.type === 'line') {
       dom.speakerName.textContent = getLocalizedCharacterName(b, b.speakerLabel);
     }
@@ -2619,10 +3086,8 @@ export function generatePlayerJs(): string {
     if (!dom.pageCaption) return;
     const html = pageCaption(scene);
     dom.pageCaption.innerHTML = html;
-    const length = html.replace(/<[^>]*>/g, '').length;
-    dom.pageCaption.classList.remove('vno-page-caption-medium', 'vno-page-caption-long');
-    if (length > 240) dom.pageCaption.classList.add('vno-page-caption-long');
-    else if (length > 120) dom.pageCaption.classList.add('vno-page-caption-medium');
+    // the caption auto-shrinks to fit its strip (the old medium/long size classes are replaced by the fitter)
+    fitCaption();
   }
 
   /** The words under the picture: narration and lines of the scene, with the emphasis kept as HTML. */
@@ -2726,11 +3191,18 @@ export function generatePlayerJs(): string {
     pageVoiceIdx++;
     if (!rel || !dom.audioVoice) return;
     dom.audioVoice.src = rel;
+    const previous = dom.audioVoice.onended;
     dom.audioVoice.onended = function () {
       dom.audioVoice.onended = null;
+      // un-duck before the chain runs the next clip (which ducks again when it is audible)
+      setVoiceActive(false);
+      if (typeof previous === 'function') previous();
       playNextPageVoiceClip();
     };
-    dom.audioVoice.play().catch(() => {});
+    setVoiceActive(true);
+    dom.audioVoice.play().catch(() => {
+      setVoiceActive(false);
+    });
   }
 
   function replayPageVoice() {
@@ -2739,10 +3211,37 @@ export function generatePlayerJs(): string {
     if (entry) playPageVoice(entry.scene);
   }
 
+  function settingsNumber(value, min, max, fallback) {
+    const n = Number(value);
+    if (!isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, n));
+  }
+
   function loadSettings() {
-    const raw = localStorage.getItem('vno_settings');
-    if (raw) {
-      try { Object.assign(settings, JSON.parse(raw)); } catch(e) {}
+    let stored = null;
+    try {
+      const raw = localStorage.getItem('vno_settings');
+      if (raw) stored = JSON.parse(raw);
+    } catch (err) {
+      stored = null; // corrupt JSON: keep the defaults rather than break the player
+    }
+    if (stored && typeof stored === 'object') {
+      Object.keys(stored).forEach(key => { settings[key] = stored[key]; });
+    }
+
+    settings.textSpeed = settingsNumber(settings.textSpeed, 1, 100, 50);
+    settings.autoDelay = settingsNumber(settings.autoDelay, 1, 10, 4);
+    settings.volMusic = settingsNumber(settings.volMusic, 0, 100, 48);
+    settings.volSfx = settingsNumber(settings.volSfx, 0, 100, 80);
+    settings.volVoice = settingsNumber(settings.volVoice, 0, 100, 90);
+    settings.storyTextSize = settingsNumber(settings.storyTextSize, 80, 140, 100);
+    if (typeof settings.uiLang !== 'string' || !settings.uiLang) settings.uiLang = 'en';
+
+    // Migration: a stored player from before VNO-48 has no schema; its music default (80) drowns the voice, so cap it once and persist.
+    if (!stored || stored.schema === undefined || stored.schema === null) {
+      settings.volMusic = Math.min(settingsNumber(settings.volMusic, 0, 100, 48), 60);
+      settings.schema = 2;
+      saveSettings();
     }
   }
 
@@ -2765,13 +3264,18 @@ export function generatePlayerJs(): string {
         beatIdx: currentBeatIdx,
         pageIdx: pageIdx,
         presentation: presentation,
-        lang: currentLang
+        lang: currentLang,
+        uiLang: settings.uiLang
       };
     },
     getLanguages: function() {
       return gameData && gameData.languages ? gameData.languages : [];
     },
+    getUiLanguages: function() {
+      return getUiLanguages();
+    },
     switchLanguage: switchLanguage,
+    switchUiLanguage: switchUiLanguage,
     loadGameData: loadGameData,
     advance: advance
   };

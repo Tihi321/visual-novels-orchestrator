@@ -106,6 +106,10 @@ At most one build job waits in the queue after edits, so several quick edits cau
 
 The last build and lint results are in `ProjectDetail.build` / `.lint` (`build.json`, `lint.json` in the project folder).
 
+### The web player's own preferences
+
+The generated player keeps its settings in the browser's `localStorage` (`vno_settings`, per build) and shows them in its Preferences screen. **Interface language** and **Story language** are two separate pickers: the story picker lists the book's editions (`game-data.json` → `languages`), the interface picker lists `uiLanguages` — every built-in language with menu strings (the `PLAYER_UI_KEYS` subset of `src/shared/ui-strings.ts`, exact keys only, so the payload stays ~26 KB) plus English, which shows the English literals. The interface starts in English and the choice is remembered; changing the story language never changes the menus, and an old `game-data.json` without `uiLanguages` keeps the pre-VNO-48 behaviour (menus follow the story, the interface row is hidden). The mix is balanced for read-aloud books: music defaults to 48 against voice 90, every slider goes through a perceptual `(value/100)^1.6` curve, and music (×0.35) and ambience (×0.7) duck while a voice clip plays. A stored settings blob from before VNO-48 is migrated once (its music value is capped at 60). The `Story text size` slider (80–140 %) scales the picture-book caption and the dialogue, and both auto-fit so long text never covers the illustration.
+
 ## Themes, ComfyUI, engines
 
 | Command | Answer |

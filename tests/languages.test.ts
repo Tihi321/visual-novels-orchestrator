@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { UI_STRINGS } from '../src/shared/ui-strings'
+import { PLAYER_UI_KEYS, UI_STRINGS } from '../src/shared/ui-strings'
 import { assertKnownLang, BUILTIN_LANGUAGES, isKnownLang, languageInfo, languages, registerLanguages, resetLanguages } from '../src/shared/languages'
 import { LANGS, langSchema, projectSettingsSchema } from '../src/shared/vn'
 import { detectLanguage } from '../src/engine/vn/lang'
@@ -54,6 +54,14 @@ describe('UI strings of the built-in languages', () => {
     for (const l of others) expect(l.ui, l.code).toBeTruthy()
     expect(languageInfo('en')?.ui).toBeUndefined()
     expect(Object.keys(UI_STRINGS).sort()).toEqual(others.map((l) => l.code).sort())
+  })
+  it('every player UI key is in the Croatian table, whose 49 core keys are still the template ones', () => {
+    const missing = PLAYER_UI_KEYS.find((key) => !(key in UI_STRINGS.hr!))
+    expect(missing, `the Croatian table has no "${missing}"`).toBeUndefined()
+    // the 49 core keys come first, in the template's order: the same keys the other tables have
+    expect(hr).toHaveLength(49)
+    expect(Object.keys(UI_STRINGS.hr!).slice(0, 49)).toEqual(Object.keys(UI_STRINGS.de!))
+    expect(hr[48]).toBe('Are you sure you want to skip to the next choice?')
   })
   it('each table has exactly the 49 core keys of the Croatian one, which are the template strings', () => {
     expect(hr).toHaveLength(49)
