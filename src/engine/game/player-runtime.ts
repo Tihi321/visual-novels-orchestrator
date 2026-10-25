@@ -65,6 +65,9 @@ ${extraCss}
         </div>
       </div>
 
+      <!-- The scene's location title (a catalogue's sceneTitles, else the scene's place text) -->
+      <div id="vno-scene-title" class="vno-scene-title vno-hidden"></div>
+
       <!-- Dialogue Box -->
       <div id="vno-textbox-container" class="vno-textbox-container">
         <div id="vno-namebox" class="vno-namebox vno-hidden">
@@ -410,6 +413,31 @@ body.vno-body {
   height: 278px;
   pointer-events: auto;
   cursor: pointer;
+}
+
+/* The scene location title: the localized sceneTitles[scene.id], else the scene's place text. */
+.vno-scene-title {
+  position: absolute;
+  bottom: 306px;
+  right: 48px;
+  max-width: 70%;
+  padding: 6px 18px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.55);
+  color: var(--vno-color-accent, #fff);
+  font-family: var(--vno-font-interface, var(--vno-font-text));
+  font-size: 22px;
+  letter-spacing: 0.02em;
+  text-align: right;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+[dir="rtl"] .vno-scene-title {
+  right: auto;
+  left: 48px;
+  text-align: left;
 }
 
 .vno-textbox {
@@ -1020,6 +1048,7 @@ export function generatePlayerJs(): string {
     dom.endingCardText = document.getElementById('vno-ending-card-text');
     dom.textboxContainer = document.getElementById('vno-textbox-container');
     dom.textbox = document.getElementById('vno-textbox');
+    dom.sceneTitle = document.getElementById('vno-scene-title');
     dom.namebox = document.getElementById('vno-namebox');
     dom.speakerName = document.getElementById('vno-speaker-name');
     dom.dialogueText = document.getElementById('vno-dialogue-text');
@@ -1197,6 +1226,15 @@ export function generatePlayerJs(): string {
     // 1. Active Dialogue / Narration Beat
     updateCurrentDialogueDisplay();
 
+    // 1b. Scene title pill (a localized catalogue sceneTitles value, else the scene title)
+    if (dom.mainMenu && !dom.mainMenu.classList.contains('vno-hidden')) {
+      hideSceneTitle();
+    } else {
+      const ch = gameData.chapters[currentChapterIdx];
+      const sc = ch ? ch.scenes[currentSceneIdx] : null;
+      if (sc) showSceneTitle(sc);
+    }
+
     // 2. Chapter Title Card
     if (dom.chapterCard && !dom.chapterCard.classList.contains('vno-hidden')) {
       const ch = gameData.chapters[currentChapterIdx];
@@ -1362,6 +1400,7 @@ export function generatePlayerJs(): string {
     activePuzzle = null;
     dom.mainMenu.classList.remove('vno-hidden');
     stopVoice();
+    hideSceneTitle();
     if (gameData && gameData.audio && gameData.audio.music && gameData.audio.music.music_01) {
       playMusic('music_01');
     }
@@ -1427,6 +1466,7 @@ export function generatePlayerJs(): string {
     } else {
       dom.bgImage.style.backgroundImage = 'none';
     }
+    showSceneTitle(scene);
 
     // Music
     if (scene.music) {
@@ -1949,6 +1989,29 @@ export function generatePlayerJs(): string {
   function getLocalizedChapterTitle(chIdx, def) {
     const n = gameData.chapters[chIdx]?.number;
     return (currentEdition && currentEdition.chapterTitles && currentEdition.chapterTitles[n]) || def;
+  }
+
+  function getLocalizedSceneTitle(sceneId, def) {
+    const titles = currentEdition && currentEdition.sceneTitles ? currentEdition.sceneTitles : null;
+    return (titles && titles[sceneId]) || def || '';
+  }
+
+  function showSceneTitle(scene) {
+    if (!dom.sceneTitle || !scene) return;
+    const title = getLocalizedSceneTitle(scene.id, scene.title);
+    if (!title) {
+      dom.sceneTitle.textContent = '';
+      dom.sceneTitle.classList.add('vno-hidden');
+      return;
+    }
+    dom.sceneTitle.textContent = title;
+    dom.sceneTitle.classList.remove('vno-hidden');
+  }
+
+  function hideSceneTitle() {
+    if (!dom.sceneTitle) return;
+    dom.sceneTitle.textContent = '';
+    dom.sceneTitle.classList.add('vno-hidden');
   }
 
   function getLocalizedCharacterName(beatOrKey, def) {

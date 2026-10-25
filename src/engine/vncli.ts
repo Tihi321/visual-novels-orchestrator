@@ -23,7 +23,8 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   import <folder|slug> [--lang en|hr] [--run]   make a project from a book (--run: start the pipeline)
   projects                               list the projects
   run <slug> [--from <step>] [--force]   run the pipeline; steps: ${STEPS.join(', ')}
-  edition add <slug> <folder> --lang hr  add a translated edition
+  edition add <slug> <folder|catalog.json> [--lang hr] [--force]   add a translated edition (legacy folder, or a pack catalogue/bundle)
+  edition sync <slug> [folder]           add every non-primary vn/text/*.json catalogue of a pack
   analyse <slug>                         let the script-analyst settle the items the parser could not
   plan <slug> [--refresh-prompts]        write the art and music prompts (--refresh-prompts: write the art prompts again, also for assets that have a file; locked and custom ones stay)
   assets <slug> [--kind k]               list the assets with their versions and files
@@ -272,14 +273,21 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
       return waitAndReport(svc, slug!)
     }
     case 'edition': {
-      if (p.args[0] !== 'add') throw new Error('usage: edition add <slug> <folder> --lang hr')
-      const [, slug, folder] = need(p, 3, 'edition add <slug> <folder> --lang hr')
+      if (p.args[0] === 'sync') {
+        const [, slug, folder] = need(p, 2, 'edition sync <slug> [folder]')
+        const r = await svc.syncEditions(slug!, folder)
+        for (const a of r.added) out(`${a.lang}: ${a.keyCount} key(s), ${a.missing.length} missing`)
+        for (const f of r.failed) out(`${f.lang}: failed: ${f.error}`)
+        if (r.skipped.length) out(`skipped the primary language ${r.skipped.join(', ')}`)
+        return r.failed.length ? 1 : 0
+      }
+      if (p.args[0] !== 'add') throw new Error('usage: edition add <slug> <folder|catalog.json> [--lang hr] | edition sync <slug> [folder]')
+      const [, slug, folder] = need(p, 3, 'edition add <slug> <folder|catalog.json> [--lang hr]')
       const l = lang(p)
-      if (!l) throw new Error('usage: edition add <slug> <folder> --lang hr')
-      await svc.addEdition(slug!, folder!, l)
+      const r = await svc.addEdition(slug!, folder!, l, { force: !!p.flags.force })
       const code = await waitAndReport(svc, slug!)
-      const rep = await svc.alignReport(slug!, l)
-      if (rep) out(`${l}: ${rep.matched} beat(s) matched, ${rep.missing.length} missing, ${rep.extra.length} extra${rep.warnings.length ? `, ${rep.warnings.length} warning(s)` : ''}`)
+      const rep = await svc.alignReport(slug!, r.lang)
+      if (rep) out(`${r.lang}: ${rep.matched} beat(s) matched, ${rep.missing.length} missing, ${rep.extra.length} extra${rep.keyCount !== undefined ? `, ${rep.keyCount} key(s)` : ''}${rep.warnings.length ? `, ${rep.warnings.length} warning(s)` : ''}`)
       return code
     }
     case 'analyse': {

@@ -163,19 +163,21 @@ describe('voice plan (VibeTTS)', () => {
     expect(Object.values(await readIndex(h.env, h.slug, 'en')).filter((e) => e.speaker === 'mara')).toHaveLength(0)
   })
 
-  it('fails with the download hint when a non-English edition needs Supertonic and it is missing, but plans English alone', async () => {
+  it('fails with the download hint when an edition language needs Supertonic and it is missing, and plans both languages without voice.langs', async () => {
     const h = await setup()
     await withHr(h)
     h.env.mock.on({ task: 'vn.voice.plan' }, 'no')
     h.fake.supertonic = false
-    await h.svc.updateSettings(h.slug, { voice: { enabled: true, langs: ['en', 'hr'] } })
+    await h.svc.updateSettings(h.slug, { voice: { enabled: true, langs: ['en'] } })
     await h.svc.planVoices(h.slug)
     expect((await waitIdle(h.env, h.slug)).failed).toHaveLength(1)
     expect((await failures(h.env)).join('|')).toContain(SUPERTONIC_HINT)
     expect(SUPERTONIC_HINT).toContain('Settings > Supertonic')
     expect(await voicesOf(h)).toEqual({}) // nothing half-planned
+    // with Supertonic installed the hr edition language is planned too, although voice.langs lists only en
+    h.fake.supertonic = true
     await planned(h, ['en'])
-    expect(Object.values(await voicesOf(h)).every((v) => v.en && !v.hr)).toBe(true)
+    expect(Object.values(await voicesOf(h)).every((v) => v.en && v.hr)).toBe(true)
   })
 
   it('uses the Supertonic voices for English when the project asks for them', async () => {
@@ -299,7 +301,9 @@ describe('voice generate (VibeTTS)', () => {
     h.env.mock.on({ task: 'vn.voice.plan' }, 'no')
     await withHr(h)
     await planned(h, ['en'])
-    await h.svc.updateSettings(h.slug, { voice: { langs: ['en', 'hr'] } })
+    // planning included the hr edition; take its voices away to exercise the skip path
+    const plannedVoices = await voicesOf(h)
+    await h.svc.updateSettings(h.slug, { voice: { voices: Object.fromEntries(Object.entries(plannedVoices).map(([k, v]) => [k, { en: v.en! }])) } })
     await h.svc.generateVoice(h.slug, { lang: 'hr' })
     await waitIdle(h.env, h.slug)
     expect(h.fake.batches).toEqual([])

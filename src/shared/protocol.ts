@@ -324,6 +324,11 @@ export interface AlignReportView {
   nameMap: Record<string, string>
   placeMap: Record<string, string>
   warnings: string[]
+  /** A pack edition (VNO-46): the pack hash/version it was validated against and how many catalogue keys it had. */
+  packHash?: string
+  packVersion?: number
+  keyCount?: number
+  source?: string
 }
 
 /** The result of a build or lint. */
