@@ -2,7 +2,7 @@
 
 ## 2026-10-25 — VN Studio imports packs and adds editions by ID
 
-Branch `VNO-46_vn-pack` (from `master`), uncommitted. Cross-repo plan/contract: `C:\projects\Personal\creative-hub\.claude\tickets\HUB-16-vn-pack\`.
+Branch `VNO-46_vn-pack` (from `master`), commit `bde84ca`, pushed to `origin/VNO-46_vn-pack`. Cross-repo plan/contract: `C:\projects\Personal\creative-hub\.claude\tickets\HUB-16-vn-pack\`.
 
 ### What changed
 
