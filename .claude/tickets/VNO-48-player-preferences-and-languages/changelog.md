@@ -110,4 +110,6 @@ Branch: `VNO-48_player-preferences-and-languages` (cut from `origin/master` = `1
 - `Story text size` is a player preference, not a theme value; the theme's `sizes.text` still sets the base.
 
 ## Commit status
-Uncommitted at the time of writing this entry; committed and pushed on the branch right after the final gates.
+
+Committed as `be95c7b` on `VNO-48_player-preferences-and-languages` and pushed to
+`origin/VNO-48_player-preferences-and-languages` (2026-10-25). No PR opened yet.
