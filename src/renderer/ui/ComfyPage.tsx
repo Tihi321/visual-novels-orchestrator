@@ -25,9 +25,18 @@ function GeneratorCard({ id, name, role, ok, detail, hint }: { id: string; name:
   )
 }
 
+/** A short tag for what an engine makes (`voice` for speech, `effect` for a sound effect). */
+const taskLabel = (task: 'music' | 'tts' | 'sfx'): string => (task === 'tts' ? 'voice' : task === 'sfx' ? 'effect' : 'music')
+
+/** The language coverage of an engine, for its row: `any language`, `12 languages`, or null (no language input). */
+function languageHint(languages: string[] | '*'): string | null {
+  if (languages === '*') return 'any language'
+  return languages.length > 0 ? `${languages.length} language${languages.length === 1 ? '' : 's'}` : null
+}
+
 export function ComfyPage() {
   const comfy = useVn((s) => s.comfy)
-  const vibetts = useVn((s) => s.vibetts)
+  const voice = useVn((s) => s.voiceStatus)
   const studios = useVn((s) => s.studios)
   const engines = useVn((s) => s.engines)
   const workflows = useVn((s) => s.workflows)
@@ -67,18 +76,10 @@ export function ComfyPage() {
         <GeneratorCard
           id="comfy"
           name="ComfyUI"
-          role="Images (and music, and voices as a fallback)"
+          role="Images, music, local voices (TTS Audio Suite) and sound effects"
           ok={comfy ? comfy.ok : null}
           detail={comfy ? `${reachable} of ${lanes.length} lanes, ${ready} engines ready` : ''}
           hint="Start ComfyUI (python main.py), then press Refresh. The lanes are in config/comfy.md."
-        />
-        <GeneratorCard
-          id="vibetts"
-          name="VibeTTS"
-          role="Spoken lines"
-          ok={vibetts ? vibetts.ok : null}
-          detail={vibetts ? (vibetts.ok ? `${vibetts.voices.length} voices at ${vibetts.url}; Supertonic ${vibetts.supertonicInstalled ? 'installed' : 'not installed'}` : vibetts.url) : ''}
-          hint={vibetts?.error || 'Start VibeTTS: python -m vibetts --mcp-only in C:\\projects\\Personal\\vibe-tts-flow'}
         />
         <GeneratorCard
           id="pixel"
@@ -139,10 +140,12 @@ export function ComfyPage() {
               <div className="row" key={`${e.kind}:${e.id}`} data-testid={`engine-${e.id}`}>
                 <Pill tone={e.ready ? 'good' : 'warn'}>{e.ready ? 'ready' : 'missing'}</Pill>
                 <b>{e.label}</b>
+                <Pill tone="dim">{taskLabel(e.task)}</Pill>
                 <span className="dim">
                   {e.id} ({e.kind}
                   {engines?.image.concat(engines.audio).find((x) => x.id === e.id)?.edit ? ', editor' : ''})
                 </span>
+                {languageHint(e.languages) && <span className="dim">{languageHint(e.languages)}</span>}
                 {!e.ready && e.missing.length > 0 && <span className="warn ellipsis" title={e.missing.join('\n')}>{e.missing.length} missing: {e.missing.slice(0, 3).join(', ')}{e.missing.length > 3 ? ', ...' : ''}</span>}
               </div>
             ))}
@@ -152,6 +155,44 @@ export function ComfyPage() {
         <div className="dim" style={{ marginTop: 6 }}>
           Which engine a book uses is set per project (Book, Look and Voice tabs). There are no global defaults in the engine yet.
         </div>
+      </div>
+
+      <div className="card" data-testid="comfy-voices">
+        <h3>Local voices</h3>
+        {!voice && <div className="dim">Asking the engine...</div>}
+        {voice && (
+          <div className="stack">
+            {!voice.ok && (
+              <div className="warn" data-testid="comfy-voices-error">
+                {voice.error}
+              </div>
+            )}
+            <div className="row">
+              <Pill tone={voice.ok ? 'good' : 'bad'}>{voice.ok ? 'reachable' : 'not reachable'}</Pill>
+              <span className="dim">{voice.comfyUrl || 'config/comfy.md'}</span>
+              <span className="dim">default engine: {voice.defaultEngine}</span>
+            </div>
+            {voice.engines.map((e) => (
+              <div className="row" key={e.id} data-testid={`comfy-voice-${e.id}`}>
+                <Pill tone={e.ready ? 'good' : 'warn'}>{e.ready ? 'ready' : 'missing'}</Pill>
+                <b>{e.label}</b>
+                <Pill tone="dim">{taskLabel(e.task)}</Pill>
+                {languageHint(e.languages) && <span className="dim">{languageHint(e.languages)}</span>}
+                {!e.ready && e.missing.length > 0 && (
+                  <span className="warn ellipsis" title={e.missing.join('\n')}>
+                    {e.missing.slice(0, 3).join(', ')}
+                    {e.missing.length > 3 ? ', ...' : ''}
+                  </span>
+                )}
+              </div>
+            ))}
+            {voice.ok && !voice.engines.length && <div className="dim">No local TTS or sound-effect engine is installed.</div>}
+            {voice.workflows.length > 0 && (
+              <div className="dim">Custom TTS workflows: {voice.workflows.map((w) => `${w.name} (${w.languages.map(langName).join(', ')})`).join('; ')}</div>
+            )}
+            <div className="dim">The Voice tab picks the engine per language; the TTS Audio Suite in ComfyUI provides the models.</div>
+          </div>
+        )}
       </div>
 
       <div className="card" data-testid="comfy-bgremoval">

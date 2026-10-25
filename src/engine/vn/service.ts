@@ -25,7 +25,7 @@ import type {
   VnCommand
 } from '../../shared/protocol'
 import { assertKnownLang } from '../../shared/languages'
-import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, hasText, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider, resolveSfxEngine } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, DEFAULT_VOICE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, hasText, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider, resolveSfxEngine, resolveVoiceEngine } from '../../shared/vn'
 import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets, fallbackPrompt as derivedFallbackPrompt, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
 import { runsOnFlow } from '../assets/flow-image'
@@ -33,7 +33,7 @@ import { importAssetFile } from '../assets/import'
 import type { ImportOptions } from '../assets/import'
 import { lock, mergeDerived, pickVersion, resolveFile, setCustom, unlock } from '../assets/manifest'
 import { listPalettes } from '../assets/palettes'
-import { createComfyClient } from '../comfy/client'
+import { createComfyClient, lanesOf } from '../comfy/client'
 import type { ComfyClient } from '../comfy/client'
 import { listCustomWorkflows, loadCustomWorkflow, workflowKind } from '../comfy/custom-workflow'
 import { ENGINES } from '../comfy/graphs'
@@ -84,12 +84,12 @@ import { readMd, writeMd } from '../store/atomic'
 import { jobId, ROLE_OF, runOf, STEP_OF_TASK, stepIndex, TASKS } from './pipeline'
 import type { VnTask } from './pipeline'
 import { coverId, sheetId, spriteId, voiceRefId } from './ids'
-import { clientFor, loadVoiceConfig } from '../voice/config'
+import { loadVoiceConfig } from '../voice/config'
 import type { VoiceConfig } from '../voice/config'
-import { importVoiceClips, previewVoice, setVoice } from '../voice/jobs'
+import { previewComfyVoice } from '../voice/comfy-tts'
+import { importVoiceClips } from '../voice/jobs'
 import { previewFlowVoice, setFlowVoice } from '../voice/flow'
 import type { VoiceImportResult, VoicePreview } from '../voice/jobs'
-import type { VibeTtsClient } from '../voice/vibetts'
 import { chiptuneClientFor, flowClientFor, flowStartHint, loadStudiosConfig, pixelClientFor, startHint, studioRepo, studioUrl, STUDIO_NAMES } from '../studios/config'
 import type { StudioId, StudiosConfig } from '../studios/config'
 import type { ChiptuneClient } from '../studios/chiptune'
@@ -130,8 +130,6 @@ export interface VnDeps {
   stopBook?: (slug: string, reason?: 'stopped' | 'stop') => number
   /** A ComfyUI client (tests pass a fake). Default: one made from `config/comfy.md`. */
   comfy?: ComfyClient | (() => ComfyClient | Promise<ComfyClient>)
-  /** A VibeTTS client (tests pass a fake). Default: one made from `config/voice.md`. */
-  vibetts?: VibeTtsClient
   /** A Pixel Studio client (tests pass a fake). Default: one made from `config/studios.md`. */
   pixel?: PixelClient
   /** A Chiptune Studio client (tests pass a fake). Default: one made from `config/studios.md`. */
@@ -1643,7 +1641,7 @@ export class VnService {
       if (!entry) {
         const book = await this.store.loadBook(slug)
         if (charKey !== 'narrator' && !book.characters.some((c) => c.key === charKey)) throw new Error(`no character "${charKey}" in ${slug}`)
-        entry = { id, kind: 'voiceRef', prompt: '', engine: settings.voice.engines[settings.primaryLang] ?? '', seed: null, size: null, versions: [], selected: null, source: 'generated', locked: false }
+        entry = { id, kind: 'voiceRef', prompt: '', engine: resolveVoiceEngine(settings, settings.primaryLang), seed: null, size: null, versions: [], selected: null, source: 'generated', locked: false }
       }
       const updated = await setCustom(dir, entry, path.resolve(file))
       const assets = manifest.assets.some((a) => a.id === id) ? manifest.assets.map((a) => (a.id === id ? updated : a)) : [...manifest.assets, updated]
@@ -1712,29 +1710,46 @@ export class VnService {
     return r
   }
 
-  /** The VibeTTS client and `config/voice.md` (the client is the one the engine was given, else made from the config). */
-  async vibetts(): Promise<{ client: VibeTtsClient; config: VoiceConfig }> {
-    const config = await loadVoiceConfig(this.dataDir)
-    return { client: this.deps.vibetts ?? clientFor(config), config }
+  /** `config/voice.md`: the clip format, the speed and the chunk length of the local voice engines. */
+  async voiceConfig(): Promise<VoiceConfig> {
+    return loadVoiceConfig(this.dataDir)
   }
 
-  /** Asks VibeTTS for its voices. Never throws: an unreachable VibeTTS is `ok: false` with the message to show. */
+  /**
+   * The local voice engines (the TTS Audio Suite) and the custom TTS workflows, with their readiness. Never throws: an unreachable
+   * ComfyUI is `ok: false` with the lane errors, which the Voice tab shows.
+   */
   async voiceStatus(): Promise<Extract<EngineEvent, { type: 'voice.status' }>> {
-    const { client } = await this.vibetts()
+    const defaultEngine = DEFAULT_VOICE_ENGINE
+    let comfyUrl = ''
     try {
-      const r = await client.listVoices()
-      const voices = r.voices.map((v) => ({ id: v.id, label: v.label || v.id, engine: v.engine ?? '', languages: v.languages ?? [] }))
-      const languages = (r.languages ?? []).map((l) => l.code)
-      const english = { engine: r.english?.engine ?? '', language: 'en', voice: r.english?.voice ?? '' }
-      const other = { engine: '', language: r.other?.language ?? '', voice: r.other?.voice ?? '' }
-      return { type: 'voice.status', ok: true, url: client.url, error: '', supertonicInstalled: r.supertonic_installed === true, languages, english, other, voices }
+      const config = await loadComfyConfigFor(this.dataDir)
+      comfyUrl = lanesOf(config)[0] ?? ''
+      const inv = await buildInventory(config, { workflowDirs: dataFolders(this.dataDir).workflows })
+      const reports = new Map(inv.engines.map((r) => [r.id, r]))
+      const engines = Object.entries(ENGINES)
+        .filter(([, e]) => e.task === 'tts' || e.task === 'sfx')
+        .map(([id, e]) => {
+          const report = reports.get(id)
+          return {
+            id,
+            label: e.label,
+            task: e.task ?? 'music',
+            languages: e.languages ?? [],
+            ready: report?.ready ?? false,
+            missing: report?.missing ?? []
+          }
+        })
+      const workflows = (await this.customWorkflows()).filter((w) => w.kind === 'audio' && w.languages.length > 0).map((w) => ({ name: w.name, languages: w.languages }))
+      const error = inv.ok ? '' : `ComfyUI is not reachable (${inv.lanes.map((l) => `${l.url}: ${l.error || 'no answer'}`).join('; ')}): start it, or set a lane in config/comfy.md`
+      return { type: 'voice.status', ok: inv.ok, error, comfyUrl, defaultEngine, engines, workflows }
     } catch (e) {
-      const none = { engine: '', language: '', voice: '' }
-      return { type: 'voice.status', ok: false, url: client.url, error: (e as Error).message, supertonicInstalled: false, languages: [], english: none, other: none, voices: [] }
+      const error = `the local voice engines could not be checked: ${(e as Error).message}`
+      return { type: 'voice.status', ok: false, error, comfyUrl, defaultEngine, engines: [], workflows: [] }
     }
   }
 
-  /** Enqueues the voice plan (a VibeTTS voice per speaker). Does nothing when the project's voice is off. */
+  /** Enqueues the voice plan (a delivery style per speaker and a TTS engine per language). Does nothing when the project's voice is off. */
   async planVoices(slug: string, opts: { overwrite?: boolean } = {}): Promise<string[]> {
     const { settings } = await this.store.loadSettings(slug)
     if (!settings.voice.enabled) {
@@ -1744,22 +1759,36 @@ export class VnService {
     return [await this.enqueue(slug, TASKS.voicePlan, 'plan', await this.nextRun(slug), { body: { overwrite: !!opts.overwrite, standalone: true }, label: 'plan the voices', priority: 1 })]
   }
 
-  /** Gives a speaker the voice for one language and makes its preview (a few seconds to load the model on the first call). */
+  /**
+   * Picks the Flow voice of a speaker for one language and makes its preview (the first call loads the model). Flow only: the local
+   * ComfyUI voice is chosen in the project settings (`voice.engine`/`voice.engines`).
+   */
   async setVoice(slug: string, speakerKey: string, lang: Lang, voice: string): Promise<VoicePreview> {
     const { settings } = await this.store.loadSettings(slug)
-    if (settings.voice.provider === 'flow') return setFlowVoice(this, slug, speakerKey, lang, voice, { flow: (await this.studios()).flow, format: (await this.vibetts()).config.format })
-    return setVoice(this, slug, speakerKey, lang, voice)
+    if (settings.voice.provider !== 'flow') {
+      throw new Error('the local ComfyUI voice is set with voice.engine / voice.engines (Project settings); use vno_voice_preview (Listen) to hear it')
+    }
+    return setFlowVoice(this, slug, speakerKey, lang, voice, { flow: (await this.studios()).flow, format: (await this.voiceConfig()).format })
   }
 
-  /** A short sample of a voice in a language (the project's primary one when `lang` is left out). */
-  async previewVoice(slug: string, speakerKey: string, voice: string, lang?: Lang): Promise<VoicePreview> {
+  /**
+   * A short sample of a speaker in a language (the project's primary one when `lang` is left out). Flow uses the speaker's voice (`voice`,
+   * or the project's Flow voice for that language); the local ComfyUI uses the project's engine.
+   */
+  async previewVoice(slug: string, speakerKey: string, voice: string | undefined, lang?: Lang): Promise<VoicePreview> {
     const { settings } = await this.store.loadSettings(slug)
-    if (settings.voice.provider === 'flow') return previewFlowVoice(this, slug, speakerKey, voice, lang ?? settings.primaryLang, { flow: (await this.studios()).flow, style: settings.voice.flowStyles?.[speakerKey], format: (await this.vibetts()).config.format })
-    return previewVoice(this, slug, speakerKey, voice, lang ?? settings.primaryLang)
+    const chosen = lang ?? settings.primaryLang
+    const config = await this.voiceConfig()
+    if (settings.voice.provider === 'flow') {
+      const id = voice ?? settings.voice.voices[speakerKey]?.[chosen]
+      if (!id) throw new Error(`no Flow voice is set for ${speakerKey} (${chosen}): pick one in the Voice tab, or give its id (gemini:<Name>)`)
+      return previewFlowVoice(this, slug, speakerKey, id, chosen, { flow: (await this.studios()).flow, style: settings.voice.styles[speakerKey], format: config.format })
+    }
+    return previewComfyVoice(this, slug, speakerKey, chosen, { comfy: await this.comfy(), config })
   }
 
   /** Enqueues the voice clips job(s). Does nothing when the project's voice is off (and says so). */
-  async generateVoice(slug: string, opts: { lang?: Lang; beatId?: string; limit?: number } = {}): Promise<string[]> {
+  async generateVoice(slug: string, opts: { lang?: Lang; beatId?: string; limit?: number; force?: boolean; speakerKey?: string } = {}): Promise<string[]> {
     const { settings } = await this.store.loadSettings(slug)
     if (!settings.voice.enabled) {
       this.log(`${slug}: voice is off, no voice clips are generated (turn voice.enabled on in the project settings)`)
@@ -1768,7 +1797,8 @@ export class VnService {
     const langs = opts.lang ? [opts.lang] : settings.voice.langs.length ? settings.voice.langs : [settings.primaryLang]
     const run = await this.nextRun(slug)
     const ids: string[] = []
-    for (const lang of langs) ids.push(await this.enqueue(slug, TASKS.voiceGenerate, lang, run, { body: { beatId: opts.beatId, limit: opts.limit }, priority: 1 }))
+    const body = { beatId: opts.beatId, limit: opts.limit, force: !!opts.force, speakerKey: opts.speakerKey }
+    for (const lang of langs) ids.push(await this.enqueue(slug, TASKS.voiceGenerate, lang, run, { body, priority: 1 }))
     return ids
   }
 
@@ -1856,7 +1886,14 @@ export class VnService {
   }
 
   async listEngines(): Promise<{ image: EngineInfo[]; audio: EngineInfo[]; palettes: string[] }> {
-    const all: EngineInfo[] = Object.entries(ENGINES).map(([id, e]) => ({ id, kind: e.kind, label: e.label, edit: !!e.acceptsReferences }))
+    const all: EngineInfo[] = Object.entries(ENGINES).map(([id, e]) => ({
+      id,
+      kind: e.kind,
+      label: e.label,
+      edit: !!e.acceptsReferences,
+      task: e.task ?? 'music',
+      languages: e.languages ?? []
+    }))
     return { image: all.filter((e) => e.kind === 'image'), audio: all.filter((e) => e.kind === 'audio'), palettes: await listPalettes(dataFolders(this.dataDir).palettes) }
   }
 
@@ -2139,7 +2176,7 @@ export class VnService {
           await this.setVoiceRef(cmd.slug, cmd.charKey, cmd.file)
           return
         case 'generateVoice':
-          await this.generateVoice(cmd.slug, { lang: cmd.lang, beatId: cmd.beatId, limit: cmd.limit })
+          await this.generateVoice(cmd.slug, { lang: cmd.lang, beatId: cmd.beatId, limit: cmd.limit, force: cmd.force, speakerKey: cmd.speakerKey })
           return
         case 'voiceStatus':
           this.emit(await this.voiceStatus())

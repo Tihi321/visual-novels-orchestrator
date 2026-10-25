@@ -15,7 +15,7 @@ const REGISTRY = {
     { id: 'scriptorium', repo: 'C:\\s', port: 7341, mcp: 'http://127.0.0.1:7341/mcp', managed: true, warning: 'resumes the factory', start: { kind: 'electron', args: ['.', '--headless'] } },
     { id: 'pixel-studio', repo: 'C:\\repos\\pixel', port: 7457, mcp: 'http://127.0.0.1:7457/mcp', managed: true, start: { kind: 'electron', args: ['.', '--mcp-only'] } },
     { id: 'chiptune-studio', repo: '~\\repos\\chip', port: 7458, mcp: 'http://127.0.0.1:7458/mcp', managed: true, start: { kind: 'electron', args: ['.', '--mcp-only'], env: { FOO: 'bar', ELECTRON_RUN_AS_NODE: '1' } } },
-    { id: 'vibetts', repo: 'C:\\v', port: 7723, mcp: 'http://127.0.0.1:7723/mcp', managed: false, start: { kind: 'exe', path: 'C:\\v\\VibeTTS.exe' } },
+    { id: 'lmstudio', repo: 'C:\\lm', port: 1234, mcp: 'http://127.0.0.1:1234/mcp', managed: false, start: { kind: 'exe', path: 'C:\\lm\\LM Studio.exe' } },
     {
       id: 'comfyui',
       repo: null,
@@ -162,7 +162,7 @@ describe('policy', () => {
   })
 
   it('refuses unmanaged, warned, console, node, unknown and unlisted services', () => {
-    expect(canStart(entry('vibetts'), 'http://127.0.0.1:7723/mcp', cfg({ services: ['vibetts'] }))).toMatch(/not in the services/)
+    expect(canStart(entry('lmstudio'), 'http://127.0.0.1:1234/mcp', cfg({ services: ['lmstudio'] }))).toMatch(/not in the services/)
     expect(canStart({ ...entry('pixel-studio'), managed: false }, URLS['pixel-studio']!, on)).toMatch(/not managed/)
     expect(canStart({ ...entry('pixel-studio'), warning: 'careful' }, URLS['pixel-studio']!, on)).toMatch(/warning/)
     expect(canStart({ ...entry('pixel-studio'), start: { kind: 'console' } }, URLS['pixel-studio']!, on)).toMatch(/start kind "console"/)

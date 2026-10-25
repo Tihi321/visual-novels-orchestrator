@@ -2,7 +2,7 @@
 
 An Electron + TypeScript desktop app that takes a visual-novel book written in [Scriptorium](../scriptorium) (or any folder in the same format, including a language-independent VN pack), has a small team of AI agents plan and generate its art, music and optional voice with ComfyUI, and builds a self-contained HTML5 web game for desktop and Android.
 
-- A book can be in any of 37 languages (the 31 that VibeTTS Supertonic reads plus Book Translator's; more in `config/languages.md`), and the language is detected. A translated edition (a translated book folder, a vn-text catalogue or a translated pack bundle, or text written over MCP) reuses every asset and only replaces the text. There is no machine translation inside VN Studio.
+- A book can be in any of 37 languages (all with menu strings but English; more in `config/languages.md`), and the language is detected. A translated edition (a translated book folder, a vn-text catalogue or a translated pack bundle, or text written over MCP) reuses every asset and only replaces the text. There is no machine translation inside VN Studio.
 - A pack (HUB-16) is a book folder with `vn/pack.json` (the immutable template: ids, structure, art fields) and `vn/text/<lang>.json` (the only translatable document). `vno_import` reads it directly, `vno_add_edition` adds a translated catalogue by key, and `vno_sync_editions` adds every catalogue in `vn/text/`; art, music, SFX and ambience are shared, voice is per language, and no asset key ever comes from a translation.
 - A story can also be written straight into VN Studio over MCP (`vno_create_project` and the story tools), with no Scriptorium folder.
 - A book can be a **children's picture book** (`format: kids-picture-book`, or `presentation: picture-book`): one full-page illustration per scene with its characters drawn into it, one to three short sentences below, page turns, read aloud from the page's voice clips. It plans no sprites and no CGs, only internal character sheets as references (`docs/mcp-guide.md`, "Picture books").
@@ -10,7 +10,7 @@ An Electron + TypeScript desktop app that takes a visual-novel book written in [
 - Models: local ones (LM Studio, Strata) plus every Scriptorium provider (DeepSeek, Anthropic, Gemini, OpenRouter, other OpenAI-compatible APIs), any OpenAI-compatible server you add yourself in the Models page (Add provider, see Providers below), a seeded but switched-off `acp` entry for the ACP proxy, and the `client` provider (on by default, used only when you pick it): set a role to `client/claude-code` (or `client/antigravity`) and an MCP client (Claude Code, Antigravity CLI) answers its model calls itself, for free (`vno_get_task` / `vno_submit_task`). Pick the models on the Models page and a model per agent on the Agents page.
 - The engine core (model router, job queue, agents) is a plain copy of Scriptorium's. The plan is in `.claude/tickets/VNO-01-visual-novel-studio-scriptorium-book-ren/plan.md`.
 
-Status: working end to end (VNO-01 to VNO-04, web engine VNO-40, packs VNO-46, picture books VNO-47): import a Scriptorium book or write the story over MCP, the agent pipeline, ComfyUI / Pixel Studio / Chiptune Studio assets, editions, VibeTTS voices, the HTML5 web game (a visual novel or a page-turn picture book) and Android build, and an MCP server (HTTP, or headless with no window). The build still writes a few `.rpy` compatibility files, but the game is the web player and no Ren'Py SDK is needed.
+Status: working end to end (VNO-01 to VNO-04, web engine VNO-40, packs VNO-46, picture books VNO-47): import a Scriptorium book or write the story over MCP, the agent pipeline, ComfyUI / Pixel Studio / Chiptune Studio assets, editions, local ComfyUI voice engines (TTS Audio Suite, OmniVoice by default), the HTML5 web game (a visual novel or a page-turn picture book) and Android build, and an MCP server (HTTP, or headless with no window). The build still writes a few `.rpy` compatibility files, but the game is the web player and no Ren'Py SDK is needed.
 
 ## Setup
 
@@ -35,11 +35,11 @@ yarn install
 | `yarn lint` | ESLint |
 | `npx tsx scripts/puzzle-poc.ts --lint --play` | Builds the puzzle proof of concept (`templates/puzzles/`, a 3x3 Murdle grid) into `.claude/temp/puzzle-poc/`, lints it and opens it; `--selftest` clicks through it with Ren'Py's test runner |
 
-API keys come from environment variables or the Windows credential store (service `vn-studio`), never from files. A key that is not found there is also looked for under the services `scriptorium` and `book-translator`, so the keys of those tools work here; `VNO_SHARED_KEYS=0` turns that off. The Models page says when a key comes from another store. Studio tokens (`PIXEL_STUDIO_MCP_TOKEN`, `CHIPTUNE_STUDIO_MCP_TOKEN`, `VIBETTS_MCP_TOKEN`) are looked up the same way.
+API keys come from environment variables or the Windows credential store (service `vn-studio`), never from files. A key that is not found there is also looked for under the services `scriptorium` and `book-translator`, so the keys of those tools work here; `VNO_SHARED_KEYS=0` turns that off. The Models page says when a key comes from another store. Studio tokens (`PIXEL_STUDIO_MCP_TOKEN`, `CHIPTUNE_STUDIO_MCP_TOKEN`) are looked up the same way.
 
-A job that needs Pixel Studio, Chiptune Studio or ComfyUI starts it when it is down (from the creative hub's `services.json`; `config/autostart.md`, `VNO_AUTOSTART=0` turns it off). VibeTTS, Scriptorium and Strata are never started.
+A job that needs Pixel Studio, Chiptune Studio or ComfyUI starts it when it is down (from the creative hub's `services.json`; `config/autostart.md`, `VNO_AUTOSTART=0` turns it off). Scriptorium and Strata are never started.
 
-Google Flow (through the hub's `flow-music-mcp`) can make a project's images (`art.provider: flow`, free), voices and music: see `docs/mcp-guide.md`, "Google Flow".
+Google Flow (through the hub's `flow-music-mcp`) can make a project's images (`art.provider: flow`, free), music and — as the cloud voice fallback — voices: see `docs/mcp-guide.md`, "Google Flow".
 
 ## Command line and MCP
 
@@ -68,7 +68,7 @@ The app's engine serves MCP (Streamable HTTP) at `http://127.0.0.1:7459/mcp` whi
 claude mcp add --transport http vn-studio http://127.0.0.1:7459/mcp
 ```
 
-- Settings > MCP shows the state and the connection lines, and sets on/off, the port and an optional bearer token. They live in `config/mcp.md` (`enabled`, `port`, `token`), which is reloaded live; `VNO_MCP_PORT` and `VNO_MCP_TOKEN` override the port and the token for one run. 7457, 7458 and 7723 are taken by Pixel Studio, Chiptune Studio and VibeTTS.
+- Settings > MCP shows the state and the connection lines, and sets on/off, the port and an optional bearer token. They live in `config/mcp.md` (`enabled`, `port`, `token`), which is reloaded live; `VNO_MCP_PORT` and `VNO_MCP_TOKEN` override the port and the token for one run. 7457 and 7458 are taken by Pixel Studio and Chiptune Studio.
 - The server only listens on `127.0.0.1`, checks the Host and Origin headers, and runs every call on its own, so `vno_wait` does not hold up `vno_status`.
 - Tools (`docs/mcp-guide.md` is the guide the server also serves as the resource `vn-studio://guide`):
   - library and projects: `vno_list_books`, `vno_set_library`, `vno_import`, `vno_list_projects`, `vno_get_project`, `vno_update_settings`, `vno_delete_project`, `vno_languages`, `vno_fonts_fetch`

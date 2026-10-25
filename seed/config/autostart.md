@@ -20,7 +20,7 @@ When a job calls Pixel Studio, Chiptune Studio or ComfyUI and nothing answers, V
 - `services`: a subset of `pixel-studio`, `chiptune-studio`, `comfyui`.
 - `startTimeoutS`, `stopOnExit`: see above. With `stopOnExit` only what this engine run started is stopped (the process tree). If the engine is killed hard, the services stay up.
 
-What is never started: Scriptorium (it resumes a paid book factory), Strata (it uses most of the GPU), VibeTTS and LM Studio (tray and desktop apps), and anything that is not on this machine (a remote ComfyUI lane). ComfyUI is also not started while Strata answers. A service the registry marks `managed: false` or with a `warning` is not started.
+What is never started: Scriptorium (it resumes a paid book factory), Strata (it uses most of the GPU), LM Studio (a desktop app), and anything that is not on this machine (a remote ComfyUI lane). ComfyUI is also not started while Strata answers. A service the registry marks `managed: false` or with a `warning` is not started.
 
 A studio with `pixelStudioExe` / `chiptuneStudioExe` set in `config/studios.md` is started as `<exe> --mcp-only`. If the studio's desktop app is open and holds its data folder, the started copy exits at once and the job gets that reason.
 

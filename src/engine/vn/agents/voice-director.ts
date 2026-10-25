@@ -4,21 +4,23 @@ import { asJson, askJson, clip } from './common'
 import type { AgentCall } from './common'
 
 /**
- * voice-director / plan_voices (only when the book has voice on): one voice per speaking character and for the narrator.
- * For VibeTTS it gives a gender and, per language, a voice from the list it is shown; for a ComfyUI TTS workflow it gives a free-text
- * description of the voice (the prompt of the reference clip) and may name an uploaded reference clip. The caller validates the answer.
+ * voice-director / plan_voices (only when the book has voice on): a voice for every speaking character and for the narrator.
+ * For the local ComfyUI engines it gives a delivery style per speaker and, per language, an engine id from the list it is shown;
+ * for Google Flow it gives a gender and, per language, a voice id from the Flow list. The caller validates the answer.
  */
 export const planVoicesSchema = z.object({
   voices: z.array(
     z.object({
       speakerKey: z.string().optional(),
-      /** The old prompt (a data folder seeded before VibeTTS) answers with `voice_<key>`. */
+      /** The old prompt (a data folder seeded before the local engines) answers with `voice_<key>`. */
       voiceRefId: z.string().optional(),
       /** `female` or `male` (checked by the caller). */
       gender: z.string().optional(),
-      /** Language -> a voice id from the list in the prompt (VibeTTS only; checked by the caller). */
+      /** Language -> a local TTS engine id from the list in the prompt (`omnivoice`, `chatterbox-23lang` ...). */
+      engines: z.record(z.string(), z.string()).optional(),
+      /** Language -> a Flow voice id from the list in the prompt (`gemini:<Name>`). */
       voices: z.record(z.string(), z.string()).optional(),
-      /** Free text; the ComfyUI path uses it as the prompt of the voice reference. */
+      /** The delivery style of the speaker (the OmniVoice/Qwen3 `instruct`, Higgs inline tags, or the Flow style note). */
       description: z.string().default(''),
       suggestedRef: z.string().nullable().optional()
     })
@@ -65,13 +67,24 @@ export function voiceSubjects(book: VnBook): VoiceSubject[] {
   return out
 }
 
-/** `voiceList` is the VibeTTS voices per language (`describeVoices`), empty for a ComfyUI TTS workflow. */
-export async function planVoices(call: AgentCall, book: VnBook, clips: string[] = [], voiceList = ''): Promise<PlanVoices> {
+/**
+ * `voiceList` is the Flow voices per language (`describeVoices`); `engineList` the local TTS engines per language
+ * (`describeTtsEngines`). Empty for the provider that is not in use, so the prompt says which one it plans for.
+ */
+export async function planVoices(call: AgentCall, book: VnBook, clips: string[] = [], voiceList = '', engineList = ''): Promise<PlanVoices> {
   return askJson(
     call,
     'voice-director',
     'plan_voices',
-    { title: book.title, lang: book.primaryLang, genre: book.genre ?? '', subjects: asJson(voiceSubjects(book)), clips: asJson(clips), voiceList: voiceList || '(none: a ComfyUI TTS workflow makes the voices from reference clips)' },
+    {
+      title: book.title,
+      lang: book.primaryLang,
+      genre: book.genre ?? '',
+      subjects: asJson(voiceSubjects(book)),
+      clips: asJson(clips),
+      voiceList: voiceList || '(none: the Flow provider is not in use)',
+      engines: engineList || '(none: the local ComfyUI provider is not in use)'
+    },
     planVoicesSchema,
     { maxTokens: 2500 }
   )

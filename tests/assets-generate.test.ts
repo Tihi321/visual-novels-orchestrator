@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { deriveAssets } from '../src/engine/assets/derive'
 import { generateAll, generateAsset, QWEN_REMOVE_BG_PROMPT, type GenerateContext } from '../src/engine/assets/generate'
 import { assetDir, getEntry, loadManifest, resolveFile, saveManifest, setCustom } from '../src/engine/assets/manifest'
+import { ENGINES } from '../src/engine/comfy/graphs'
 import { importPackBook } from '../src/engine/vn/pack'
 import type { ComfyClient, ComfyRequest, ComfyResult } from '../src/engine/comfy/client'
 import type { AssetEntry } from '../src/shared/vn'
@@ -46,9 +47,9 @@ class FakeComfy implements ComfyClient {
       return { bytes, ext: 'png', kind: 'image', seed: req.seed ?? 0, engine: req.engine, lane: 'l', promptId: 'p' }
     }
     if (req.prompt && this.fail.has(req.prompt)) throw new Error('ComfyUI exploded')
-    // audio engines (ACE-Step, a custom audio workflow) answer with sound; everything else with a picture
-    const audio = req.engine.startsWith('ace-step') || req.engine.startsWith('custom:')
-    if (audio) return { bytes: Buffer.from('MP3DATA'), ext: req.engine.startsWith('custom:') ? 'flac' : 'mp3', kind: 'audio', seed: req.seed ?? 0, engine: req.engine, lane: 'l', promptId: 'p' }
+    // every audio engine (ACE-Step, the TTS Audio Suite models, MOSS, a custom audio workflow) answers with sound; everything else with a picture
+    const audio = req.engine.startsWith('custom:') || ENGINES[req.engine]?.kind === 'audio'
+    if (audio) return { bytes: Buffer.from('MP3DATA'), ext: req.engine.startsWith('custom:') ? 'flac' : (req.format ?? 'mp3'), kind: 'audio', seed: req.seed ?? 0, engine: req.engine, lane: 'l', promptId: 'p' }
     const bytes = req.references?.length ? await figure() : await landscape()
     return { bytes, ext: 'png', kind: 'image', seed: req.seed ?? 0, engine: req.engine, lane: 'l', promptId: 'p' }
   }
@@ -263,7 +264,7 @@ describe('generateAsset', () => {
     expect(await sharp(await readFile(resolveFile(dir, cover.entry)!)).metadata()).toMatchObject({ width: 1920, height: 1080 })
     const music = await generateAsset(ctx({ sizes: { musicSeconds: 95, musicFormat: 'opus' } }), stub('music_01'))
     if (!music.ok || music.skipped) throw new Error('expected a version')
-    expect(music.version.file).toBe('v1.mp3')
+    expect(music.version.file).toBe('v1.opus')
     expect(await readFile(resolveFile(dir, music.entry)!, 'utf8')).toBe('MP3DATA')
     const req = comfy.requests.at(-1)!
     expect(req).toMatchObject({ engine: 'ace-step-v1-instrumental', seconds: 95, format: 'opus' })
@@ -280,7 +281,7 @@ describe('generateAsset', () => {
     const forced = await generateAsset(ctx(), custom, { force: true })
     expect(forced).toMatchObject({ ok: true, skipped: false })
     if (forced.ok && !forced.skipped) expect(forced.entry).toMatchObject({ source: 'generated', selected: 1 })
-    const voice = deriveAssets(book, settings({ voice: { enabled: true, langs: ['en'], provider: 'comfy', voices: {}, engines: {} } })).find((a) => a.kind === 'voiceRef')!
+    const voice = deriveAssets(book, settings({ voice: { enabled: true, langs: ['en'], provider: 'comfy', engine: 'omnivoice', engines: {}, styles: {}, refTexts: {}, voices: {} } })).find((a) => a.kind === 'voiceRef')!
     expect(await generateAsset(ctx(), voice)).toMatchObject({ ok: true, skipped: true })
     expect(comfy.requests).toHaveLength(1)
   })
@@ -333,17 +334,24 @@ describe('generateAsset', () => {
       expect(comfy.requests).toHaveLength(0)
     })
 
-    it('a default sfx is made by the audio engine for five seconds; a custom engine still makes it', async () => {
+    it('a default sfx is made by the audio engine for five seconds; MOSS and a custom engine still make it', async () => {
       const r = await generateAsset(mctx(), mstub('sfx_bell'))
       if (!r.ok || r.skipped) throw new Error(`expected a version: ${JSON.stringify(r)}`)
       expect(comfy.requests[0]).toMatchObject({ engine: 'ace-step-v1-instrumental', prompt: 'a ship bell', seconds: 5 })
       expect(r.version).toMatchObject({ file: 'v1.mp3', engine: 'ace-step-v1-instrumental' })
       expect(await readFile(resolveFile(dir, r.entry)!, 'utf8')).toBe('MP3DATA')
 
+      // MOSS-SoundEffect v2 is a selectable sound-effect engine
+      const moss = settings({ sound: { ambienceEngine: 'ace-step-v1-instrumental', sfxEngine: 'moss-soundeffect-v2' } })
+      const effects = await generateAsset(mctx({ settings: moss }), mstub('sfx_bell', moss))
+      if (!effects.ok || effects.skipped) throw new Error(`expected a version: ${JSON.stringify(effects)}`)
+      expect(comfy.requests[1]).toMatchObject({ engine: 'moss-soundeffect-v2', prompt: 'a ship bell', seconds: 5 })
+      expect(effects.version).toMatchObject({ file: 'v1.mp3', engine: 'moss-soundeffect-v2' })
+
       const custom = settings({ sound: { ambienceEngine: 'ace-step-v1-instrumental', sfxEngine: 'custom:foley' } })
       const made = await generateAsset(mctx({ settings: custom }), mstub('sfx_bell', custom))
       if (!made.ok || made.skipped) throw new Error(`expected a version: ${JSON.stringify(made)}`)
-      expect(comfy.requests[1]).toMatchObject({ engine: 'custom:foley', prompt: 'a ship bell', seconds: 5 })
+      expect(comfy.requests[2]).toMatchObject({ engine: 'custom:foley', prompt: 'a ship bell', seconds: 5 })
       expect(made.version).toMatchObject({ file: 'v1.flac', engine: 'custom:foley' })
     })
 
@@ -355,7 +363,7 @@ describe('generateAsset', () => {
       expect(comfy.requests).toHaveLength(0)
     })
 
-    it('an old sfx entry with an empty engine falls back to the audio engine and generates', async () => {
+    it('an old sfx entry with an empty engine falls back to the project engine and generates', async () => {
       const old: AssetEntry = { ...mstub('sfx_bell'), engine: '' }
       const r = await generateAsset(mctx(), old)
       if (!r.ok || r.skipped) throw new Error(`expected a version: ${JSON.stringify(r)}`)

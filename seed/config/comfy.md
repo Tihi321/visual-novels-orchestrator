@@ -32,4 +32,5 @@ VN Studio drives a local ComfyUI. The generated images and music are saved into 
 - `files`: model file names (`qwen`, `zImage`, `krea2`, `audio` groups) when yours differ from the defaults.
 - `backgroundRemovalModel`: the BiRefNet file in `models/background_removal` (empty uses the first one ComfyUI lists).
 - `engineSettings`: steps, cfg, sampler or scheduler per engine id.
-- Custom workflows: put an API-format `<name>.json` and a `<name>.map.yaml` in `workflows/` of the data folder and pick `custom:<name>` as an engine. See `workflows/chatterbox-multilingual.map.yaml` for the mapping format.
+- The TTS Audio Suite voice and sound-effect engines (OmniVoice, Higgs Audio v3, Chatterbox, VibeVoice, Qwen3-TTS, IndexTTS-2, F5-TTS and MOSS-SoundEffect v2) are offered to voice and SFX jobs as soon as ComfyUI lists their nodes; `vno_voice_status` or the Generators page shows which are ready and which nodes are missing. They have no model file paths here (the suite manages its own models).
+- Custom workflows: put an API-format `<name>.json` and a `<name>.map.yaml` in `workflows/` of the data folder and pick `custom:<name>` as an engine (also for a TTS workflow). See `workflows/chatterbox-multilingual.map.yaml` for the mapping format.

@@ -124,6 +124,34 @@ export const SEED_MIGRATIONS: SeedMigration[] = [
       doc.delete('default_lmstudio_model')
       return true
     }
+  },
+  {
+    id: 'voice-local-v1',
+    file: 'config/voice.md',
+    // The local ComfyUI TTS engines replaced VibeTTS: the endpoint, token, timeout and batch keys mean nothing now, and
+    // the old file had no `chunkChars`. Values that still mean something (`format`, `speed`) are never overwritten.
+    apply(doc) {
+      let changed = false
+      for (const key of ['vibettsUrl', 'vibettsToken', 'timeoutS', 'voiceTimeoutS', 'batchTimeoutS', 'chunkSize']) {
+        if (doc.has(key)) {
+          doc.delete(key)
+          changed = true
+        }
+      }
+      if (!doc.has('format')) {
+        doc.set('format', 'mp3')
+        changed = true
+      }
+      if (!doc.has('speed')) {
+        doc.set('speed', 1)
+        changed = true
+      }
+      if (!doc.has('chunkChars')) {
+        doc.set('chunkChars', 400)
+        changed = true
+      }
+      return changed
+    }
   }
 ]
 

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto'
 import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -11,9 +10,9 @@ import type { FlowOptions } from '../assets/flow-image'
 import { countFlowSongs } from '../studios/flow-music'
 import { generateAsset } from '../assets/generate'
 import type { GenerateOptions } from '../assets/generate'
-import { pickVersion, resolveFile, setCustom } from '../assets/manifest'
+import { pickVersion, resolveFile } from '../assets/manifest'
 import { lanesOf } from '../comfy/client'
-import { loadCustomWorkflow } from '../comfy/custom-workflow'
+import { ENGINES } from '../comfy/graphs'
 import { BudgetError, isAbortError } from '../models/types'
 import type { ChatMessage } from '../models/types'
 import type { JobFile } from '../queue/jobs'
@@ -38,14 +37,16 @@ import { resolveUncertain } from './agents/script-analyst'
 import type { ExistingArt } from './agents/script-analyst'
 import { mergeChapterCues, stageChapter } from './agents/stage-director'
 import { planVoices, speakerOf } from './agents/voice-director'
-import { describeVoices, voiceLangsOf } from '../voice/catalog'
+import type { PlanVoices } from './agents/voice-director'
+import { NARRATOR, describeTtsEngines, describeVoices, voiceLangsOf } from '../voice/catalog'
+import type { TtsEngineInfo } from '../voice/catalog'
 import { generateFlowClips } from '../voice/flow'
-import { flowAsVibeList } from '../voice/flow-catalog'
-import { generateVibeClips, importedClipsNote, planVibeVoices, readVoiceIndexIn } from '../voice/jobs'
+import { flowAsVoiceList } from '../voice/flow-catalog'
+import { planListVoices, readVoiceIndexIn } from '../voice/jobs'
+import { generateComfyTtsClips } from '../voice/comfy-tts'
 import type { VoiceIndexEntry } from '../voice/jobs'
 import type { AgentCall } from './agents/common'
 import { applyAlignmentFixes, applyDecisions } from './fixes'
-import { voiceRefId } from './ids'
 import { bodyOf, isStep, Semaphore, STEP_OF_TASK, TASKS } from './pipeline'
 import type { VnTask } from './pipeline'
 import { resolveDrawMode } from '../studios/config'
@@ -62,7 +63,6 @@ sharp.cache(false)
 /** The agent retries of the art-critic: after this many revised prompts the best version is kept and marked rejected. */
 export const REVIEW_RETRIES = 2
 
-const sha1 = (s: string | Buffer) => createHash('sha1').update(s).digest('hex')
 const nowIso = () => new Date().toISOString()
 
 /** A failure that must stop the job (stopped by the user, over budget), not fall back to the deterministic path. */
@@ -83,6 +83,48 @@ async function tryAgent<T>(ctx: JobContext, what: string, fn: () => Promise<T>):
 }
 
 export type { VoiceIndexEntry } from '../voice/jobs'
+
+/**
+ * Persists the voice-director's local answer: a delivery style per speaker and, per language, a TTS engine that reads the language.
+ * A known style or engine is kept unless `overwrite`; the uploaded reference clips are never touched. Returns the message the voice
+ * step reports.
+ */
+async function planComfyVoices(
+  svc: VnService,
+  slug: string,
+  plan: PlanVoices,
+  engines: readonly TtsEngineInfo[],
+  opts: { overwrite?: boolean; log: (message: string) => void }
+): Promise<string> {
+  const { settings } = await svc.store.loadSettings(slug)
+  const book = await svc.store.loadBook(slug)
+  const speakers = new Set([NARRATOR, ...book.characters.map((c) => c.key)])
+  const styles = { ...settings.voice.styles }
+  const perLanguage = { ...settings.voice.engines }
+  const known = new Map(engines.map((e) => [e.id, e]))
+  let styled = 0
+  let assigned = 0
+  for (const v of plan.voices) {
+    const speaker = speakerOf(v)
+    if (!speaker || !speakers.has(speaker)) continue
+    const description = v.description.trim()
+    if (description && (opts.overwrite || !styles[speaker]?.trim())) {
+      styles[speaker] = description
+      styled++
+      opts.log(`voice style of ${speaker}: "${description}"`)
+    }
+    for (const [lang, engineId] of Object.entries(v.engines ?? {})) {
+      const engine = known.get(engineId)
+      if (!engine || !(engine.languages === '*' || engine.languages.includes(lang))) continue
+      if (!opts.overwrite && perLanguage[lang]) continue
+      if (perLanguage[lang] !== engineId) assigned++
+      perLanguage[lang] = engineId
+      opts.log(`voice engine of ${lang}: ${engineId}`)
+    }
+  }
+  if (styled || assigned) await svc.updateSettings(slug, { voice: { styles, engines: perLanguage } })
+  return `${styled} voice style(s) and ${assigned} engine(s) planned`
+}
 
 /**
  * Registers the VN pipeline's job handlers (`sched.register('<task>', ...)`) and returns the service the engine, the CLI and the MCP
@@ -626,36 +668,31 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       try {
         const book = await store.loadBook(slug)
         await svc.reconcileAssets(slug)
-        const vibe = settings.voice.provider === 'vibetts'
-        const flowVoices = settings.voice.provider === 'flow'
+        const langs = voiceLangsOf(settings)
+        const flowProvider = settings.voice.provider === 'flow'
         const folders = dataFolders(deps.dataDir)
-        // uploaded reference clips only matter for the ComfyUI provider
-        const library = !vibe && !flowVoices && existsSync(folders.voices) ? (await fs.readdir(folders.voices)).filter((f) => /\.(wav|mp3|flac|ogg|opus)$/i.test(f)).sort() : []
-        // VibeTTS first: the model is shown the voices that exist, and an unreachable VibeTTS fails before it is asked
-        const listed = vibe ? await (await svc.vibetts()).client.listVoices(ctx.signal) : undefined
-        // Flow: the free Gemini voices (every language) or the Windows voices of a language's culture; an unreachable flow-music-mcp fails here
-        const flowListed = flowVoices ? flowAsVibeList(await (await svc.studios()).flow.voices(ctx.signal), voiceLangsOf(settings)) : undefined
-        const voiceList = listed || flowListed ? describeVoices((listed ?? flowListed)!.voices, voiceLangsOf(settings), settings.voice.englishEngine) : ''
-        const r = await tryAgent(ctx, 'voice-director', () => planVoices(call(ctx), book, library, voiceList))
+        // the clips uploaded for the local engines: the director may name one for a speaker (but nothing is set on them)
+        const library = !flowProvider && existsSync(folders.voices) ? (await fs.readdir(folders.voices)).filter((f) => /\.(wav|mp3|flac|ogg|opus)$/i.test(f)).sort() : []
         let msg: string
-        if (vibe || flowVoices) {
-          msg = await planVibeVoices(svc, slug, r.ok ? r.value : null, { overwrite: body.overwrite, listed: listed ?? flowListed, source: vibe ? 'VibeTTS' : 'Google Flow', log: (m) => ctx.log(m), signal: ctx.signal })
+        if (flowProvider) {
+          // Flow: the free Gemini voices (every language) or the Windows voices of a language's culture; an unreachable flow-music-mcp fails here
+          const listed = flowAsVoiceList(await (await svc.studios()).flow.voices(ctx.signal), langs)
+          const r = await tryAgent(ctx, 'voice-director', () => planVoices(call(ctx), book, [], describeVoices(listed.voices, langs)))
+          msg = await planListVoices(svc, slug, r.ok ? r.value : null, { overwrite: body.overwrite, listed, source: 'Google Flow', log: (m) => ctx.log(m), signal: ctx.signal })
         } else {
-          const manifest = await store.loadAssets(slug)
-          let planned = 0
-          for (const v of r.ok ? r.value.voices : []) {
-            const id = voiceRefId(speakerOf(v))
-            const entry = manifest.assets.find((a) => a.id === id && a.kind === 'voiceRef')
-            if (!entry || entry.locked || !v.description.trim()) continue
-            await store.updateAsset(slug, entry.id, async (cur) => {
-              let next: AssetEntry = { ...cur, prompt: v.description.trim() }
-              const clip = v.suggestedRef && library.includes(v.suggestedRef) ? path.join(folders.voices, v.suggestedRef) : null
-              if (clip && !resolveFile(store.dir(slug), cur)) next = await setCustom(store.dir(slug), next, clip)
-              return next
-            })
-            planned++
-          }
-          msg = r.ok ? `${planned} voice(s) planned by the voice-director` : `the voice-director did not answer (${r.error}): voices need an uploaded reference clip each (setVoiceRef)`
+          // Local: the TTS Audio Suite engines and the custom TTS workflows that read each language
+          const engines: TtsEngineInfo[] = [
+            ...Object.entries(ENGINES)
+              .filter(([, e]) => e.task === 'tts')
+              .map(([id, e]) => ({ id, label: e.label, languages: e.languages ?? '*' })),
+            ...(await svc.customWorkflows())
+              .filter((w) => w.kind === 'audio' && w.languages.length > 0)
+              .map((w) => ({ id: `custom:${w.name}`, label: `${w.name} (custom workflow)`, languages: w.languages }))
+          ]
+          const r = await tryAgent(ctx, 'voice-director', () => planVoices(call(ctx), book, library, '', describeTtsEngines(engines, langs)))
+          msg = r.ok
+            ? await planComfyVoices(svc, slug, r.value, engines, { overwrite: body.overwrite, log: (m) => ctx.log(m) })
+            : `the voice-director did not answer (${r.error}): the clips use ${settings.voice.engine} with no delivery style`
         }
         await svc.emitProject(slug)
         if (body.standalone) await svc.setStep(slug, 'voice', 'done', msg)
@@ -672,118 +709,42 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
     TASKS.voiceGenerate,
     async (ctx, slug) => {
       const lang = ctx.job.unit as Lang
-      const { beatId: only, limit } = bodyOf<{ beatId?: string; limit?: number }>(ctx.jobBody)
+      const body = bodyOf<{ beatId?: string; limit?: number; force?: boolean; speakerKey?: string }>(ctx.jobBody)
       const { settings } = await store.loadSettings(slug)
       if (!settings.voice.enabled) return 'voice is off for this project: no clips generated'
-      if (settings.voice.provider === 'vibetts') {
-        try {
-          const { client, config } = await svc.vibetts()
-          const r = await generateVibeClips(svc, slug, lang, { beatId: only, limit, client, config, log: (m) => ctx.log(m), signal: ctx.signal })
-          ctx.log(r.message)
-          await svc.setStep(slug, 'voice', r.status, r.message)
-          return r.message
-        } catch (e) {
-          if (!fatal(ctx, e)) await svc.setStep(slug, 'voice', 'failed', (e as Error).message)
-          throw e
-        }
+      try {
+        const r =
+          settings.voice.provider === 'flow'
+            ? await (async () => {
+                const { flow, config: studiosConfig } = await svc.studios()
+                const config = await svc.voiceConfig()
+                return generateFlowClips(svc, slug, lang, {
+                  beatId: body.beatId,
+                  limit: body.limit,
+                  flow,
+                  format: config.format,
+                  settings: { pauseMs: studiosConfig.flowVoicePauseMs, retries: studiosConfig.flowVoiceRetries },
+                  log: (m) => ctx.log(m),
+                  signal: ctx.signal
+                })
+              })()
+            : await generateComfyTtsClips(svc, slug, lang, {
+                beatId: body.beatId,
+                limit: body.limit,
+                force: body.force,
+                speakerKey: body.speakerKey,
+                comfy: await svc.comfy({ autoStart: true, log: ctx.log }),
+                config: await svc.voiceConfig(),
+                log: (m) => ctx.log(m),
+                signal: ctx.signal
+              })
+        ctx.log(r.message)
+        await svc.setStep(slug, 'voice', r.status, r.message)
+        return r.message
+      } catch (e) {
+        if (!fatal(ctx, e)) await svc.setStep(slug, 'voice', 'failed', (e as Error).message)
+        throw e
       }
-      if (settings.voice.provider === 'flow') {
-        try {
-          const { flow, config: studiosConfig } = await svc.studios()
-          const voiceConfig = (await svc.vibetts()).config
-          const r = await generateFlowClips(svc, slug, lang, { beatId: only, limit, flow, format: voiceConfig.format, settings: { pauseMs: studiosConfig.flowVoicePauseMs, retries: studiosConfig.flowVoiceRetries }, log: (m) => ctx.log(m), signal: ctx.signal })
-          ctx.log(r.message)
-          await svc.setStep(slug, 'voice', r.status, r.message)
-          return r.message
-        } catch (e) {
-          if (!fatal(ctx, e)) await svc.setStep(slug, 'voice', 'failed', (e as Error).message)
-          throw e
-        }
-      }
-      const engine = settings.voice.engines[lang] ?? 'custom:chatterbox-multilingual'
-      const name = engine.replace(/^custom:/, '')
-      const wf = await loadCustomWorkflow(dataFolders(deps.dataDir).workflows, name)
-      const supported = Object.keys(wf.mapping.languages ?? {})
-      if (wf.mapping.language && wf.mapping.languages && !supported.includes(lang)) {
-        const msg = `voice for ${lang} skipped: the TTS workflow "${name}" has no ${lang} voice (it supports: ${supported.join(', ')}). Pick another TTS workflow for ${lang} in the project's voice.engines.`
-        ctx.log(msg)
-        await svc.setStep(slug, 'voice', 'skipped', msg)
-        return msg
-      }
-      const book = await store.loadBook(slug)
-      const edition = await store.loadEdition(slug, lang).catch(() => null)
-      if (!edition) {
-        const msg = `voice for ${lang} skipped: the project has no ${lang} edition`
-        ctx.log(msg)
-        return msg
-      }
-      const manifest = await store.loadAssets(slug)
-      const refs = new Map<string, string>()
-      for (const a of manifest.assets) if (a.kind === 'voiceRef') {
-        const f = resolveFile(store.dir(slug), a)
-        if (f) refs.set(a.id, f)
-      }
-      const refHash = new Map<string, string>()
-      const hashOf = async (f: string) => {
-        let h = refHash.get(f)
-        if (!h) refHash.set(f, (h = sha1(await fs.readFile(f))))
-        return h
-      }
-      const config = await loadComfyConfigFor(deps.dataDir)
-      comfySem.setPermits(lanesOf(config).length)
-      const comfy = await svc.comfy({ autoStart: true, log: ctx.log })
-      const dir = voiceDir(slug, lang)
-      await fs.mkdir(dir, { recursive: true })
-      const index = await readVoiceIndex(slug, lang)
-      const missingRef = new Set<string>()
-      let made = 0
-      let kept = 0
-      let skipped = 0
-      let importedKept = 0
-      let importedStale = 0
-      for (const chapter of book.chapters) {
-        for (const scene of chapter.scenes) {
-          for (const beat of scene.beats) {
-            if (beat.type === 'cast' || (only && beat.id !== only)) continue
-            const text = edition.beats[beat.id]?.trim()
-            if (!text) continue
-            // a clip you imported is never made again
-            const mine = index[beat.id]
-            if (mine?.imported && existsSync(path.join(dir, mine.file))) {
-              importedKept++
-              if (mine.textHash !== sha1(text)) importedStale++
-              continue
-            }
-            const speaker = beat.type === 'line' && beat.speakerKey ? beat.speakerKey : 'narrator'
-            const ref = refs.get(voiceRefId(speaker)) ?? refs.get(voiceRefId('narrator'))
-            if (wf.mapping.voiceRef && !ref) {
-              missingRef.add(speaker)
-              skipped++
-              continue
-            }
-            const hash = sha1([engine, lang, speaker, text, ref ? await hashOf(ref) : ''].join('\u0000'))
-            const known = index[beat.id]
-            if (known && known.hash === hash && existsSync(path.join(dir, known.file))) {
-              kept++
-              continue
-            }
-            const r = await comfySem.run(() => comfy.generate({ engine: `custom:${name}`, text, language: lang, voiceRef: ref, signal: ctx.signal, filenamePrefix: `vno_voice_${slug}` }), ctx.signal)
-            const file = `${beat.id}.${r.ext}`
-            if (known && known.file !== file) await fs.rm(path.join(dir, known.file), { force: true })
-            await fs.writeFile(path.join(dir, file), r.bytes)
-            index[beat.id] = { hash, file }
-            made++
-            if (made % 5 === 0) await fs.writeFile(path.join(dir, 'index.json'), JSON.stringify(index, null, 2))
-          }
-        }
-      }
-      await fs.writeFile(path.join(dir, 'index.json'), JSON.stringify(index, null, 2))
-      const parts = [`${made} clip(s) made, ${kept} unchanged`]
-      if (importedKept) parts.push(importedClipsNote(importedKept, importedStale))
-      if (skipped) parts.push(`${skipped} skipped: no voice reference for ${[...missingRef].join(', ')} (upload one with setVoiceRef)`)
-      const msg = `voice ${lang}: ${parts.join('; ')}`
-      await svc.setStep(slug, 'voice', skipped && !made && !kept ? 'skipped' : 'done', msg)
-      return msg
     },
     { noModel: true, step: false }
   )

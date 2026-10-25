@@ -36,7 +36,7 @@ export function importTools(svc: VnService, def: ToolDef, opts: McpOptions): Too
     ),
     def(
       'vno_voice_import',
-      'Use voice clips you made or recorded, for one language: one file for a beat (beatId and file), or a folder whose files are named <beatId>.<ext> (mp3, wav, ogg, opus, flac, m4a; the beat ids are those of vno_get_edition). The clips are copied into the project and recorded as imported: voice generation (VibeTTS or ComfyUI) keeps them and says how many it kept, and changing a speaker\'s voice does not drop them. File names that match no text beat are listed in unknown. Rebuilds the game unless rebuild is false.',
+      'Use voice clips you made or recorded, for one language: one file for a beat (beatId and file), or a folder whose files are named <beatId>.<ext> (mp3, wav, ogg, opus, flac, m4a; the beat ids are those of vno_get_edition). The clips are copied into the project and recorded as imported: voice generation (the local ComfyUI TTS engines or Google Flow) keeps them and says how many it kept, and changing a speaker\'s voice does not drop them. File names that match no text beat are listed in unknown. Rebuilds the game unless rebuild is false.',
       z.object({
         slug,
         lang: langSchema.describe('The language of the clips (an edition of the project)'),

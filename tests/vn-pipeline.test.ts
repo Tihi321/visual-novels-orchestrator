@@ -290,11 +290,11 @@ describe('voice', () => {
     expect(ids).toHaveLength(1)
     await waitIdle(env, slug)
     const done = await env.engine.jobs.read('done', ids[0]!)
-    expect(done?.body).toMatch(/voice for hr skipped: the TTS workflow "chatterbox-multilingual" has no hr voice \(it supports: en,/)
+    expect(done?.body).toMatch(/voice for hr skipped: the engine "custom:chatterbox-multilingual" does not read hr \(it reads: en,/)
     expect(env.comfy.requests.some((r) => r.engine.startsWith('custom:'))).toBe(false)
     const st = await svc.pipelineStatus(slug)
     expect(st?.steps.voice?.status).toBe('skipped')
-    expect(st?.steps.voice?.message).toContain('no hr voice')
+    expect(st?.steps.voice?.message).toContain('does not read hr')
   })
 
   it('makes a clip per beat with the voice reference, skips unchanged ones and uses the clips in the game', async () => {

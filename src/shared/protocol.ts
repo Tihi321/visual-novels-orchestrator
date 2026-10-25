@@ -3,7 +3,7 @@
  * A Transport carries them. Today that is the Electron utilityProcess port. Later it could be a WebSocket.
  */
 
-import type { AssetEntry, Edition, Lang, ProjectSettings, VnBook } from './vn'
+import type { AssetEntry, Edition, EngineTask, Lang, ProjectSettings, VnBook } from './vn'
 
 export type AgentState = 'working' | 'reviewing' | 'waiting-provider' | 'waiting-research' | 'idle' | 'error' | 'paused'
 
@@ -368,6 +368,24 @@ export interface EngineInfo {
   label: string
   /** Edit engines take a reference image. */
   edit: boolean
+  /** What it makes: `music` (the default), speech (`tts`) or a sound effect (`sfx`). */
+  task: EngineTask
+  /** The codes a TTS engine reads, `'*'` for any language; empty for an engine with no language (music, SFX, images). */
+  languages: string[] | '*'
+}
+
+/** One ComfyUI engine as the status page shows it: the model files and suite nodes it needs, and whether they are there. */
+export interface ComfyEngineView {
+  id: string
+  kind: 'image' | 'audio'
+  label: string
+  /** What it makes: `music` (the default), speech (`tts`) or a sound effect (`sfx`). */
+  task: EngineTask
+  /** The codes a TTS engine reads, `'*'` for any language; empty when it has no language input. */
+  languages: string[] | '*'
+  ready: boolean
+  /** Missing model files (`unet=...`) or ComfyUI nodes (`node:UnifiedTTSTextNode`). */
+  missing: string[]
 }
 
 export interface CustomWorkflowInfo {
@@ -445,15 +463,24 @@ export type EngineEvent =
       type: 'comfy.status'
       ok: boolean
       lanes: { url: string; reachable: boolean; running: number; pending: number; error: string }[]
-      engines: { id: string; kind: 'image' | 'audio'; label: string; ready: boolean; missing: string[] }[]
+      engines: ComfyEngineView[]
       customWorkflows: string[]
       backgroundRemoval: { available: boolean; models: string[] }
     }
   | { type: 'comfy.freed'; results: { lane: string; ok: boolean; error?: string }[] }
   | { type: 'engines.listed'; image: EngineInfo[]; audio: EngineInfo[]; palettes: string[] }
   | { type: 'workflows.listed'; workflows: CustomWorkflowInfo[] }
-  /** VibeTTS (MCP): reachable or not, and its voices. The answer to `voiceStatus`. */
-  | { type: 'voice.status'; ok: boolean; url: string; error: string; supertonicInstalled: boolean; languages: string[]; english: VibeDefaultView; other: VibeDefaultView; voices: VibeVoiceView[] }
+  /** The local voice engines (TTS Audio Suite) and custom TTS workflows, with their readiness. The answer to `voiceStatus`. */
+  | {
+      type: 'voice.status'
+      ok: boolean
+      error: string
+      comfyUrl: string
+      defaultEngine: string
+      engines: VoiceEngineView[]
+      /** The custom TTS workflows: their name and the language codes their mapping declares. */
+      workflows: { name: string; languages: string[] }[]
+    }
   /** A preview clip of a voice (`setVoice`, `previewVoice`): `file` is relative to the project folder; `rev` busts the player's cache. */
   | { type: 'voice.preview'; slug: string; speakerKey: string; voice: string; file: string; rev: number; lang: Lang }
   /** Pixel Studio and Chiptune Studio (MCP): reachable or not. The answer to `studiosStatus`. */
@@ -483,20 +510,16 @@ export interface StudioStatusView {
   tools: number
 }
 
-/** A VibeTTS voice as `list_voices` gives it: a Kokoro voice reads English only, a Supertonic voice 31 languages. */
-export interface VibeVoiceView {
+/** One local voice or sound-effect engine as `voiceStatus` saw it. */
+export interface VoiceEngineView {
   id: string
   label: string
-  engine: string
-  /** The language codes it reads. */
-  languages: string[]
-}
-
-/** The user's default voice in VibeTTS (its `english` or `other` profile): the engine, or the language, and the voice id. Empty when unknown. */
-export interface VibeDefaultView {
-  engine: string
-  language: string
-  voice: string
+  task: EngineTask
+  /** The codes it reads, `'*'` for any language; empty for a sound-effect engine. */
+  languages: string[] | '*'
+  ready: boolean
+  /** Missing ComfyUI nodes (the suite is not installed) or model files. */
+  missing: string[]
 }
 
 /** What the Settings page shows of config/renpy.md. */
@@ -605,20 +628,24 @@ export type Command =
   | { type: 'saveMcpConfig'; enabled: boolean; port: number; token?: string }
   /** The voice reference clip of a character (or `narrator`): becomes the voice_<charKey> asset, custom and locked. */
   | { type: 'setVoiceRef'; slug: string; charKey: string; file: string }
-  /** Generates the TTS clips (all languages of the project, or one `lang`, or one `beatId`, or at most `limit` clips per language). Nothing happens when the project's voice is off. */
-  | { type: 'generateVoice'; slug: string; lang?: Lang; beatId?: string; limit?: number }
-  /** Checks VibeTTS (its MCP server) and lists its voices. Answers with `voice.status`. */
+  /**
+   * Generates the voice clips (all languages of the project, or one `lang`, or one `beatId`, or at most `limit` clips per language).
+   * `force` regenerates the matching clips even when their text did not change; `speakerKey` limits the regeneration to one speaker.
+   * Nothing happens when the project's voice is off.
+   */
+  | { type: 'generateVoice'; slug: string; lang?: Lang; beatId?: string; limit?: number; force?: boolean; speakerKey?: string }
+  /** Checks the local ComfyUI voice engines (their nodes and models) and lists them. Answers with `voice.status`. */
   | { type: 'voiceStatus' }
   /** Checks Pixel Studio and Chiptune Studio (their MCP servers). Answers with `studios.status`. */
   | { type: 'studiosStatus' }
   /** Opens an asset in its studio (images in Pixel Studio, music in Chiptune Studio). Each save there becomes a new custom, locked version. Answers with `studio.opened`. */
   | { type: 'openInStudio'; slug: string; id: string }
-  /** Enqueues the voice plan: a VibeTTS voice per character and the narrator (existing ones are kept unless `overwrite`). */
+  /** Enqueues the voice plan: a delivery style per speaker and a TTS engine per language (existing ones are kept unless `overwrite`). */
   | { type: 'planVoices'; slug: string; overwrite?: boolean }
-  /** Picks the VibeTTS voice of a speaker (a character key or `narrator`) for one language, forgets that speaker's clips in it and answers with `voice.preview`. */
+  /** Picks the Flow voice of a speaker (a character key or `narrator`) for one language, forgets that speaker's clips in it and answers with `voice.preview`. Flow only: a local engine is set with `voice.engine`/`voice.engines`. */
   | { type: 'setVoice'; slug: string; speakerKey: string; lang: Lang; voice: string }
-  /** Makes a short preview clip of a VibeTTS voice in a language. Answers with `voice.preview`. */
-  | { type: 'previewVoice'; slug: string; speakerKey: string; voice: string; lang?: Lang }
+  /** Makes a short preview clip with the speaker's Flow voice (`voice`), or with the project's local ComfyUI engine when `voice` is left out. Answers with `voice.preview`. */
+  | { type: 'previewVoice'; slug: string; speakerKey: string; voice?: string; lang?: Lang }
   /** Updates stage cues (scene transitions/pauses and cast slot positions) for one or more scenes/beats. */
   | {
       type: 'updateSceneCues'

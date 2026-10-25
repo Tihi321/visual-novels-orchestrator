@@ -15,8 +15,14 @@
  *   audio  yue2                      YuE2 text-to-music
  *   audio  minimax-music-3           MiniMax Music 3
  *
+ * The local TTS and sound-effect engines (TTS Audio Suite: OmniVoice, Higgs Audio v3, Chatterbox, VibeVoice, Qwen3-TTS,
+ * IndexTTS-2, F5-TTS, MOSS-SoundEffect v2) are built in `tts-engines.ts` and spread into this registry below.
  * `custom:<name>` engines (see `custom-workflow.ts`) are not in this registry.
  */
+
+import { saveAudioNode } from './audio-save'
+import { TTS_ENGINES } from './tts-engines'
+import type { EngineTask } from '../../shared/vn'
 
 export interface GraphNode {
   class_type: string
@@ -124,6 +130,21 @@ export interface BuildOpts {
   repetitionPenalty?: number
   abc?: string
   cfgScale?: number
+  // TTS and SFX
+  /** What the voice engine says or the sound effect is (the OpenAI-style `prompt` still works for music and images). */
+  text?: string
+  /** The value the engine's language input takes (`English`, `F5-DE`, ...), from `map` or the language name. */
+  languageName?: string
+  /** The delivery style: the `instruct` input of OmniVoice/Qwen3, or inline tags for Higgs Audio v3. */
+  instruct?: string
+  /** The transcript of the voice reference clip (`CharacterVoicesNode.reference_text`). */
+  voiceRefText?: string
+  /** ComfyUI input filename of the uploaded voice reference clip (`LoadAudio.audio`). */
+  voiceRef?: string
+  /** `UnifiedTTSTextNode.max_chars_per_chunk`: how long a chunk is before a long line is split. */
+  chunkChars?: number
+  /** The sample rate multiplier some engines take (`OmniVoiceEngineNode.speed`, `F5TTSEngineNode.speed`). */
+  speed?: number
 }
 
 type Ref = [string, number]
@@ -232,20 +253,8 @@ export function buildKrea2(o: BuildOpts): Graph {
 }
 
 /**
- * The audio save node. `wav` uses the plain `SaveAudio` node; the compressed formats go through `SaveAudioAdvanced`,
- * which takes a per-format quality.
+ * ACE-Step v1: tags + lyrics. Keeps the template's shift and Reinhard tonemap CFG operation.
  */
-function saveAudioNode(format: string | undefined, quality: string | undefined, sourceId: number, filenamePrefix: string): GraphNode {
-  const choice = String(format ?? 'flac').toLowerCase()
-  if (choice === 'wav') return { class_type: 'SaveAudio', inputs: { audio: ref(sourceId), filename_prefix: filenamePrefix } }
-  const inputs: Record<string, unknown> = { audio: ref(sourceId), filename_prefix: filenamePrefix, format: choice }
-  // the format is a dynamic combo: its sub-input is named `format.quality` in the API graph (a plain `quality` is "missing")
-  if (choice === 'mp3') inputs['format.quality'] = quality ?? 'V0'
-  if (choice === 'opus') inputs['format.quality'] = quality ?? '128k'
-  return { class_type: 'SaveAudioAdvanced', inputs }
-}
-
-/** ACE-Step v1: tags + lyrics. Keeps the template's shift and Reinhard tonemap CFG operation. */
 export function buildAceStep(o: BuildOpts): Graph {
   const { files, seed, steps, cfg, sampler, scheduler } = o
   const graph: Graph = {
@@ -336,20 +345,46 @@ export type EngineKind = 'image' | 'audio'
 export interface EngineDef {
   kind: EngineKind
   label: string
-  /** Which file group of the config this engine reads. */
-  fileGroup: keyof FileGroups
-  /** Files (keys of the group) that must exist for the engine to be ready, with their model folder. */
-  requires: Array<[key: string, folder: string]>
+  /** What it makes: music when missing (the image engines and the music engines). */
+  task?: EngineTask
+  /** Which file group of the config this engine reads (music engines only). */
+  fileGroup?: keyof FileGroups
+  /** Files (keys of the group) that must exist for the engine to be ready, with their model folder (music engines only). */
+  requires?: Array<[key: string, folder: string]>
   build: (opts: BuildOpts) => Graph
-  defaults: { steps: number; cfg: number; sampler: string; scheduler: string; denoise?: number; shift?: number; resolution?: number; seconds?: number; [k: string]: unknown }
+  defaults: { steps?: number; cfg?: number; sampler?: string; scheduler?: string; denoise?: number; shift?: number; resolution?: number; seconds?: number; [k: string]: unknown }
   /** True when the engine takes reference images (image edit). */
   acceptsReferences?: boolean
+  /** The ComfyUI node class of a built-in TTS/SFX engine. */
+  node?: string
+  /** Every required widget input of the engine node (TTS/SFX), as `/object_info` lists it. */
+  preset?: Record<string, unknown>
+  /** The node whose output is the clip (TTS/SFX): passed to ComfyUI as the preferred output node. */
+  outputNode?: string
+  /** ComfyUI node classes the engine needs (TTS Audio Suite): checked against `/object_info` before a job runs. */
+  requiresNodes?: string[]
+  /** The language codes the engine reads, or `'*'` for any language. */
+  languages?: string[] | '*'
+  /** The input that takes the language label; `map` turns a project code into the node's label. */
+  language?: { input: string; map?: Record<string, string> }
+  /** The input that takes the delivery style (`instruct`). */
+  instruct?: string
+  /** The style is inline tags (`<|...|>`) prepended to the text, not an input (Higgs Audio v3). */
+  inlineStyle?: boolean
+  /** The clip is used without its transcript (Qwen3's `x_vector_only_mode`). */
+  xVectorOnlyWithoutRefText?: boolean
+  /** With a clip but no transcript, generate ref-free from the style instead of using the clip (OmniVoice). */
+  refFreeWithoutTranscript?: boolean
+  /** Whether a voice reference clip is needed: `required` skips the clip without one, `none` never uploads it. */
+  clone?: 'required' | 'optional' | 'none'
+  /** Whether the clip's transcript is needed: `required` skips the clip without one (F5-TTS). */
+  refText?: 'required' | 'optional' | 'none'
 }
 
 const QWEN_REQ: EngineDef['requires'] = [['unet', 'diffusion_models'], ['clip', 'text_encoders'], ['vae', 'vae']]
 const ACE_DEFAULTS = { steps: 50, cfg: 5, sampler: 'euler', scheduler: 'simple', shift: 5, lyricsStrength: 0.99, seconds: 60 }
 
-/** Every built-in engine, with the defaults its template shipped. */
+/** Every built-in engine, with the defaults its template shipped. The TTS/SFX engines come from `tts-engines.ts`. */
 export const ENGINES: Record<string, EngineDef> = {
   'qwen-image-2.1': {
     kind: 'image', label: 'Qwen-Image 2.1 (text to image)', fileGroup: 'qwen', requires: QWEN_REQ,
@@ -394,7 +429,9 @@ export const ENGINES: Record<string, EngineDef> = {
     requires: [['minimaxUnet', 'diffusion_models'], ['minimaxClip', 'text_encoders'], ['minimaxVae', 'vae']],
     build: buildMiniMaxMusic,
     defaults: { steps: 30, cfg: 1.7, sampler: 'euler', scheduler: 'simple', seconds: 60, cfgScale: 1.7, topK: 50 }
-  }
+  },
+  // the local TTS and sound-effect engines: OmniVoice, Higgs Audio v3, Chatterbox 23L, VibeVoice, Qwen3-TTS, IndexTTS-2, F5-TTS, MOSS v2
+  ...TTS_ENGINES
 }
 
 /** Engine ids of one kind, in registry order. */

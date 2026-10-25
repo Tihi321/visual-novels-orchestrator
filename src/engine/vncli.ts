@@ -38,15 +38,19 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   build <slug>                           build the game
   lint <slug>                            run lint on the built game
   play <slug>                            start the built game
-  voice <slug> [--lang hr] [--only <beatId>] [--limit n]   generate the voice clips (only when the project's voice is on)
-  voice plan <slug> [--overwrite]        assign a VibeTTS voice per character, the narrator and edition language
+  voice <slug> [--lang hr] [--only <beatId>] [--limit n] [--force] [--speaker <key>]   generate the voice clips (--force: regenerate; only when the project's voice is on)
+  voice plan <slug> [--overwrite]        plan the delivery styles and per-language engines (local) or the Flow voices
+  voice status                           the local ComfyUI voice and SFX engines, their languages and readiness
+  voice preview <slug> <speaker> [--lang hr]   make a preview clip with the project's engine
+  voice engine <slug> <engine> [--lang hr]     set the default local TTS engine, or one language's (no --lang: the default)
+  voice style <slug> <speaker> <text>    set a speaker's delivery style (instruct)
+  voice reftext <slug> <speaker> <text>  set the transcript of a speaker's uploaded reference clip
   voice import <slug> --lang hr (--folder <dir> | --beat <beatId> --file <clip>)   use clips you made: <beatId>.<ext> files; generation keeps them
-  voice set <slug> <speaker> <lang> <voice>   pick one voice (a character key or narrator; en, hr; an id from voice status)
-  voice status                           is VibeTTS reachable, and its fixed voices (Kokoro: English, Supertonic: 31 languages)
+  voice set <slug> <speaker> <lang> <voice>   Flow only: pick one Flow voice (a character key or narrator; an id from flow voices)
   comfy status|free                      ComfyUI lanes and engines / free its VRAM
   settings <slug> [--style pixel|illustrated] [--palette name|none] [--music-provider chiptune|comfy|auto] [--chip nes|gb|genesis|snes|pce|auto]
            [--pixel-provider pixel-studio|vno] [--art-provider comfy|pixel-studio-draw|hand|flow] [--flow-model "Nano Banana Pro"] [--pixel-size 320x180] [--dither none|ordered|floyd] [--outline[=false]] [--tracks n]
-                                         show or change the look settings of a project
+                                         show or change the look settings of a project (also voice: provider/engine/style)
   studios status                         are Pixel Studio and Chiptune Studio reachable (how to start them if not)
   studio open <slug> <assetId> [--wait] [--via launch|mcp] [--timeout seconds]   open an asset in Pixel Studio / Chiptune Studio; a save there makes a new custom, locked version (--wait: until the first save)
   themes                                 list the game themes
@@ -409,11 +413,16 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
       if (p.args[0] === 'status') {
         const st = await svc.voiceStatus()
         if (!st.ok) {
-          out(`VibeTTS (${st.url}) is not reachable: ${st.error}`)
+          out(`local voice engines: ${st.error}`)
           return 1
         }
-        out(`VibeTTS (${st.url}) is reachable, ${st.voices.length} voice(s); Supertonic is ${st.supertonicInstalled ? 'installed' : 'NOT installed (download it in VibeTTS Settings > Supertonic: it reads Croatian and the other languages)'}:`)
-        for (const v of st.voices) out(`  ${v.id.padEnd(16)} ${v.engine.padEnd(11)} ${(v.languages.length > 4 ? `${v.languages.length} languages` : v.languages.join(',')).padEnd(14)} ${v.label}`)
+        out(`local voice engines: ok (ComfyUI ${st.comfyUrl}), default ${st.defaultEngine}`)
+        for (const e of st.engines) {
+          const kind = e.task === 'sfx' ? 'effect' : 'voice'
+          const langs = e.languages === '*' ? 'any language' : e.languages.length ? e.languages.join(',') : '-'
+          out(`  ${e.id.padEnd(22)} ${kind.padEnd(7)} ${langs.padEnd(14)} ${e.ready ? 'ready' : `missing ${e.missing.join(', ')}`}  ${e.label}`)
+        }
+        out(`custom TTS workflows: ${st.workflows.length ? st.workflows.map((w) => `${w.name} (${w.languages.join(',')})`).join(', ') : 'none'}`)
         return 0
       }
       if (p.args[0] === 'set') {
@@ -421,6 +430,32 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
         const setCode = assertKnownLang(setLang!)
         const r = await svc.setVoice(setSlug!, speaker!, setCode, voice!)
         out(`${speaker} (${setCode}): ${r.voice}, preview ${r.file}`)
+        return 0
+      }
+      if (p.args[0] === 'engine') {
+        const [, engSlug, engine] = need(p, 3, 'voice engine <slug> <engine> [--lang hr]')
+        const { settings } = await svc.store.loadSettings(engSlug!)
+        const l = lang(p)
+        const patch = l ? { engines: { ...settings.voice.engines, [l]: engine! } } : { engine: engine! }
+        const r = await svc.updateSettings(engSlug!, { voice: patch })
+        const v = r.settings.voice
+        const overrides = Object.entries(v.engines).map(([code, id]) => `${code}=${id}`)
+        out(`${engSlug}: default voice engine ${v.engine}${overrides.length ? `; per language ${overrides.join(', ')}` : ''}`)
+        return 0
+      }
+      if (p.args[0] === 'style' || p.args[0] === 'reftext') {
+        const which = p.args[0] === 'style' ? 'delivery style' : 'reference transcript'
+        const [, sSlug, speaker, text] = need(p, 4, `voice ${p.args[0]} <slug> <speaker> <text>`)
+        const { settings } = await svc.store.loadSettings(sSlug!)
+        const voice = p.args[0] === 'style' ? { styles: { ...settings.voice.styles, [speaker!]: text! } } : { refTexts: { ...settings.voice.refTexts, [speaker!]: text! } }
+        await svc.updateSettings(sSlug!, { voice })
+        out(`${speaker}: ${which} set`)
+        return 0
+      }
+      if (p.args[0] === 'preview') {
+        const [, pvSlug, speaker] = need(p, 3, 'voice preview <slug> <speaker> [--lang hr]')
+        const r = await svc.previewVoice(pvSlug!, speaker!, undefined, lang(p))
+        out(`${speaker} (${r.lang}): ${r.voice}, preview ${r.file}`)
         return 0
       }
       if (p.args[0] === 'import') {
@@ -444,11 +479,11 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
         }
         return waitAndReport(svc, planSlug!)
       }
-      const [slug] = need(p, 1, 'voice <slug> [--lang hr] [--only <beatId>] [--limit n]')
+      const [slug] = need(p, 1, 'voice <slug> [--lang hr] [--only <beatId>] [--limit n] [--force] [--speaker <key>]')
       const limitFlag = flag(p, 'limit')
       const limit = limitFlag === undefined ? undefined : Number(limitFlag)
       if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) throw new Error(`--limit must be a positive whole number, not "${limitFlag}"`)
-      const ids = await svc.generateVoice(slug!, { lang: lang(p), beatId: flag(p, 'only'), limit })
+      const ids = await svc.generateVoice(slug!, { lang: lang(p), beatId: flag(p, 'only'), limit, force: !!p.flags.force, speakerKey: flag(p, 'speaker') })
       if (!ids.length) {
         out('voice is off for this project: set voice.enabled in its project.md (or updateProjectSettings); nothing was generated')
         return 0
@@ -480,6 +515,8 @@ export async function runCliWith(engine: Engine, p: ParsedCli): Promise<number> 
       const px = resolvePixel(next.art)
       out(`${slug}: art ${next.art.style}${next.art.palette ? ` (palette ${next.art.palette})` : ''}, sprites by ${resolveArtProvider(next.art)}, pixel art by ${resolvePixelProvider(next.art)} at ${px.width}x${px.height}, dither ${px.dither}, outline ${px.outline ? 'on' : 'off'}`)
       out(`${slug}: music by ${resolveMusicProvider(next)}${next.music.provider ? '' : ' (auto)'}, chip ${next.music.chip ?? 'auto'}, ${next.music.tracks} track(s)`)
+      const overrides = Object.entries(next.voice.engines).map(([code, engine]) => `${code}=${engine}`)
+      out(`${slug}: voices by ${next.voice.provider === 'flow' ? 'Google Flow (cloud)' : 'ComfyUI (local)'}${next.voice.enabled ? '' : ' [off]'}, default engine ${next.voice.engine}${overrides.length ? `; per language ${overrides.join(', ')}` : ''}`)
       return 0
     }
     case 'studios': {

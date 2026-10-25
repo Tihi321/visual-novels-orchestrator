@@ -180,7 +180,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     def('vno_get_project', 'One project in full: its settings (theme, art, music, voice), editions, assets, pipeline state, build and lint results.', z.object({ slug }), async (a) => ({ project: { ...(await svc.detail(a.slug)), models: await svc.projectModels(a.slug) } })),
     def(
       'vno_update_settings',
-      'Change the settings of a project: each part is merged into the current one, and the asset list follows. theme: a theme name (vno_themes) or null. art: style (pixel or illustrated), palette, stylePrompt, provider (comfy; pixel-studio-draw; hand: images are made by you and set with vno_asset_replace, ComfyUI is never called for an image; or flow: every image is made by Google Flow through flow-music-mcp, free, with flowModel e.g. "Nano Banana Pro" and flowProject, see docs/mcp-guide.md; Flow runs one image at a time and a project is never mixed with ComfyUI art unless you regenerate one asset with an engine), pixelProvider, pixel {width,height,dither,outline}. music: provider (comfy, chiptune, or flow: Flow Music songs through flow-music-mcp, which SPEND FLOW MUSIC CREDITS: never a default, ask the user first; at most flowMusicMaxSongs songs per project, 4 by default), chip, tracks. voice: provider (vibetts, comfy, or flow: free Gemini/Windows narration through flow-music-mcp, voice ids gemini:<Name>; flowStyles {speakerKey: "gruffly, tired"} is an optional delivery note per speaker), englishEngine and the other voice settings (vno_get_project shows them). sound: sfxEngine (an audio engine or "custom:<comfy workflow>" for ComfyUI, or "chiptune" for Chiptune Studio compose_sfx, which picks the sound from the key and description; "none": import effects with vno_asset_import; null/omitted: the music provider engine, Chiptune Studio for a pixel book, else ambienceEngine) and ambienceEngine (a ComfyUI music engine, the default, or "chiptune" for compose_sfx ambience loops); only sounds with no file yet follow a change. models: {role: provider/model, ...} the models this project uses for those roles, before the agent and role lists of config/roles.md (the way to have an MCP client do one project: {"art-director": "client/claude-code"}); null for a role clears it. A new art.stylePrompt (or art style) is also written into the prompts that have no image yet (restyle in the answer lists the assets: kept, and generated, which keep the old style until regenerated). A model whose provider has no key (or is down) is saved but not used: the answer has warnings, and vno_status shows models with usable and the reason. null clears an optional field.',
+      'Change the settings of a project: each part is merged into the current one, and the asset list follows. theme: a theme name (vno_themes) or null. art: style (pixel or illustrated), palette, stylePrompt, provider (comfy; pixel-studio-draw; hand: images are made by you and set with vno_asset_replace, ComfyUI is never called for an image; or flow: every image is made by Google Flow through flow-music-mcp, free, with flowModel e.g. "Nano Banana Pro" and flowProject, see docs/mcp-guide.md; Flow runs one image at a time and a project is never mixed with ComfyUI art unless you regenerate one asset with an engine), pixelProvider, pixel {width,height,dither,outline}. music: provider (comfy, chiptune, or flow: Flow Music songs through flow-music-mcp, which SPEND FLOW MUSIC CREDITS: never a default, ask the user first; at most flowMusicMaxSongs songs per project, 4 by default), chip, tracks. voice: provider (comfy, the default: the local ComfyUI TTS Audio Suite engines, or flow: the cloud fallback, free Gemini/Windows narration through flow-music-mcp), engine (the default local TTS engine, omnivoice), engines (language -> engine, for example {hr: "higgs-audio-v3"}; a built-in id or "custom:<comfy workflow>"), styles (speaker -> delivery/instruct text; Higgs accepts inline tags), refTexts (speaker -> the transcript of the speaker\'s uploaded voice_<key> clip), langs, and voices (Flow ids gemini:<Name> / windows:<Voice Name>; the maps given replace the old ones). vno_get_project shows the current settings. sound: sfxEngine (an audio engine such as MOSS-SoundEffect v2 "moss-soundeffect-v2", or "custom:<comfy workflow>" for ComfyUI, or "chiptune" for Chiptune Studio compose_sfx, which picks the sound from the key and description; "none": import effects with vno_asset_import; null/omitted: the music provider\'s engine — ambienceEngine for a ComfyUI project, Chiptune Studio for a chiptune one) and ambienceEngine (a ComfyUI music engine, the default, or "chiptune" for compose_sfx ambience loops); only sounds with no file yet follow a change. models: {role: provider/model, ...} the models this project uses for those roles, before the agent and role lists of config/roles.md (the way to have an MCP client do one project: {"art-director": "client/claude-code"}); null for a role clears it. A new art.stylePrompt (or art style) is also written into the prompts that have no image yet (restyle in the answer lists the assets: kept, and generated, which keep the old style until regenerated). A model whose provider has no key (or is down) is saved but not used: the answer has warnings, and vno_status shows models with usable and the reason. null clears an optional field.',
       z.object({
         slug,
         theme: z.string().nullable().optional(),
@@ -262,10 +262,10 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
       }
     ),
 
-    // ---- voice (VibeTTS: each character has one voice per edition language) ----
+    // ---- voice (local ComfyUI TTS Audio Suite engines, or Google Flow as the cloud fallback) ----
     def(
       'vno_voice_status',
-      'Is VibeTTS (the local text-to-speech app) reachable, and which voices it has (id, label, engine, languages) and whether Supertonic is installed. Voices are fixed: Kokoro voices read English only, supertonic:F1..F5 and supertonic:M1..M5 read any language.',
+      'The local ComfyUI voice engines (the TTS Audio Suite) and sound-effect engine: each engine id, label, task (voice or effect), the languages it reads (`*` means any language), whether it is ready and which ComfyUI nodes are missing, plus the custom TTS workflows (name, languages) and the default voice engine (omnivoice). Never an error: an unreachable ComfyUI is ok:false with the reason. Google Flow voice status is in vno_studios_status.',
       z.object({}),
       async () => {
         const { type: _type, ...status } = await svc.voiceStatus()
@@ -274,35 +274,40 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     ),
     def(
       'vno_voice_plan',
-      'Assign a VibeTTS voice to every character and the narrator, one voice per edition language (existing voices are kept unless overwrite). Kokoro reads English only, supertonic:* reads any language (a non-English edition needs Supertonic installed). The project needs voice.enabled (vno_update_settings). Queues a job: pass wait to wait for it.',
+      'Plan the voices of a project: for the local ComfyUI provider, a delivery style per speaker (voice.styles) and a TTS engine per edition language (voice.engines), chosen from the installed engines that read that language; for the Flow provider, an existing Flow voice per language (voice.voices). Existing styles, engines and voices are kept unless overwrite. Uploaded reference clips and transcripts are never touched, and nothing breaks when the voice-director does not answer (generation falls back to voice.engine). The project needs voice.enabled (vno_update_settings). Queues a job: pass wait to wait for it.',
       z.object({ slug, overwrite: z.boolean().optional(), wait }),
       async (a) => {
         const jobs = await svc.planVoices(a.slug, { overwrite: a.overwrite })
-        return { jobs, ...(await settle(a.slug, a.wait)), voices: (await svc.store.loadSettings(a.slug)).settings.voice.voices }
+        const { settings } = await svc.store.loadSettings(a.slug)
+        return { jobs, ...(await settle(a.slug, a.wait)), engines: settings.voice.engines, styles: settings.voice.styles, voices: settings.voice.voices }
       }
     ),
     def(
       'vno_voice_set',
-      'Give a speaker (a character key, or narrator) a voice for one edition language, and make a preview clip. Kokoro voices read English only; supertonic:F1..F5 / supertonic:M1..M5 read any language. Ids are in vno_voice_status. With voice.provider flow the ids are gemini:<Name> (any language, e.g. gemini:Charon) or windows:<Voice Name> (its culture only); flow_voices of flow-music-mcp lists them.',
-      z.object({ slug, speakerKey: z.string().describe('A character key or narrator'), lang, voice: z.string().describe('A voice id, for example af_heart or supertonic:F2') }),
+      'Flow provider only: give a speaker (a character key, or narrator) a Flow voice for one edition language and make a preview clip. Ids are gemini:<Name> (any language, e.g. gemini:Charon) or windows:<Voice Name> (its culture only); flow_voices of flow-music-mcp lists them. A local ComfyUI project picks its engine in the project settings instead: voice.engine (the default engine) or voice.engines[lang], then vno_voice_preview to hear it. Calling this on a local project returns that hint as an error.',
+      z.object({ slug, speakerKey: z.string().describe('A character key or narrator'), lang, voice: z.string().describe('A Flow voice id, for example gemini:Charon') }),
       async (a) => ({ preview: await svc.setVoice(a.slug, a.speakerKey, a.lang, a.voice) })
     ),
     def(
       'vno_voice_preview',
-      "Make a short preview clip of a voice in a language, without assigning it. Without voice: the speaker's assigned voice for that language. Kokoro voices read English only, supertonic:* any language.",
+      "Make a short preview clip of a speaker in a language. voice is optional: a Flow voice id (Flow provider; without it the speaker's assigned Flow voice for that language is used), while a local ComfyUI project ignores it and uses the project's engine (voice.engine / voice.engines). The answer's voice is the engine or Flow voice that spoke.",
       z.object({ slug, speakerKey: z.string(), lang, voice: z.string().optional() }),
-      async (a) => {
-        const voice = a.voice ?? (await svc.store.loadSettings(a.slug)).settings.voice.voices[a.speakerKey]?.[a.lang]
-        if (!voice) throw new Error(`${a.speakerKey} has no voice for ${a.lang} yet: pass voice, or run vno_voice_plan or vno_voice_set`)
-        return { preview: await svc.previewVoice(a.slug, a.speakerKey, voice, a.lang) }
-      }
+      async (a) => ({ preview: await svc.previewVoice(a.slug, a.speakerKey, a.voice, a.lang) })
     ),
     def(
       'vno_voice_generate',
-      'Generate the spoken clips of a project (all its edition languages, or one lang, one beatId, at most limit clips per language). Each language uses the voices set for it. Nothing is made when the project voice is off (voice.enabled). Queues jobs: pass wait to wait for them.',
-      z.object({ slug, lang: lang.optional(), beatId: z.string().optional(), limit: z.number().int().positive().optional(), wait }),
+      'Generate the spoken clips of a project (all its edition languages, or one lang, one beatId, at most limit clips per language). Each language uses its engine (voice.engines[lang] / voice.engine) and the speaker styles and reference clips. Clips whose text, engine, reference, transcript, style or format did not change are skipped. force: regenerate the matching clips even when nothing changed (a fresh seed); speakerKey narrows force to one speaker, beatId to one beat. Nothing is made when the project voice is off (voice.enabled). Queues jobs: pass wait to wait for them.',
+      z.object({
+        slug,
+        lang: lang.optional(),
+        beatId: z.string().optional(),
+        limit: z.number().int().positive().optional(),
+        force: z.boolean().optional().describe('Regenerate the matching clips even when they are unchanged'),
+        speakerKey: z.string().optional().describe('With force: only this speaker (a character key or narrator)'),
+        wait
+      }),
       async (a) => {
-        const jobs = await svc.generateVoice(a.slug, { lang: a.lang, beatId: a.beatId, limit: a.limit })
+        const jobs = await svc.generateVoice(a.slug, { lang: a.lang, beatId: a.beatId, limit: a.limit, force: a.force, speakerKey: a.speakerKey })
         return { jobs, ...(await settle(a.slug, a.wait)) }
       }
     ),
@@ -316,9 +321,9 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     def('vno_comfy_free', 'Free the VRAM of the ComfyUI lanes (unload models).', z.object({}), async () => ({ results: await svc.comfyFree() })),
     def(
       'vno_languages',
-      "The languages a project or edition can use: code, English name, native name, the Ren'Py language name, right-to-left, script, whether VibeTTS Supertonic reads it and whether the game menus are translated. Add more in config/languages.md.",
+      "The languages a project or edition can use: code, English name, native name, the Ren'Py language name, right-to-left, script and whether the game menus are translated. Add more in config/languages.md. Which text-to-speech engine reads a language is in vno_voice_status.",
       z.object({}),
-      async () => ({ languages: languages().map((l) => ({ code: l.code, name: l.name, native: l.native, renpy: l.renpy, rtl: !!l.rtl, script: l.script, supertonic: !!l.supertonic, uiStrings: !!l.ui })) })
+      async () => ({ languages: languages().map((l) => ({ code: l.code, name: l.name, native: l.native, renpy: l.renpy, rtl: !!l.rtl, script: l.script, uiStrings: !!l.ui })) })
     ),
     def('vno_themes', 'The game themes a project can use (name, label, description, light, pixel).', z.object({}), async () => ({ themes: svc.listThemes().map((t) => ({ name: t.name, label: t.label, description: t.description, light: t.light, pixel: t.pixel })) })),
 

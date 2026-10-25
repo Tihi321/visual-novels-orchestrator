@@ -204,6 +204,6 @@ describe('studio tokens (V5)', () => {
     expect(studioToken(c, 'pixel', {}, () => undefined)).toBe('from-config')
     expect(studioToken(c, 'chiptune', {}, store)).toBe('chip-config')
     expect(studioToken(studiosConfigSchema.parse({}), 'chiptune', {}, () => undefined)).toBeNull()
-    expect(resolveToken('VIBETTS_MCP_TOKEN', '  spaced  ', {}, () => undefined)).toBe('spaced')
+    expect(resolveToken('SOME_MCP_TOKEN', '  spaced  ', {}, () => undefined)).toBe('spaced')
   })
 })

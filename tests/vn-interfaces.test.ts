@@ -161,7 +161,7 @@ describe('MCP server', () => {
     env = await makeVnEnv({ sdk: false })
     const client = await connect()
     expect(client.getServerVersion()).toMatchObject({ name: 'vn-studio' })
-    expect(client.getInstructions()).toMatch(/Kokoro voices read English only/)
+    expect(client.getInstructions()).toMatch(/local ComfyUI TTS engine/)
     const { tools } = await client.listTools()
     const names = tools.map((t) => t.name)
     expect(names.slice(0, 11)).toEqual(['vno_list_books', 'vno_import', 'vno_list_projects', 'vno_run_pipeline', 'vno_status', 'vno_asset_list', 'vno_asset_replace', 'vno_asset_regen', 'vno_build', 'vno_lint', 'vno_add_edition'])
@@ -183,7 +183,7 @@ describe('MCP server', () => {
 
     const guide = await client.readResource({ uri: 'vn-studio://guide' })
     expect(guide.contents[0]).toMatchObject({ mimeType: 'text/markdown' })
-    expect((guide.contents[0] as { text: string }).text).toMatch(/supertonic:F1/)
+    expect((guide.contents[0] as { text: string }).text).toMatch(/omnivoice/)
     await client.close()
   })
 

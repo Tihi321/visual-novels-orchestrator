@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import type { ComfyClient, ComfyRequest, ComfyResult } from '../src/engine/comfy/client'
+import { ENGINES } from '../src/engine/comfy/graphs'
 import type { EngineOptions } from '../src/engine/engine'
 import type { MockProvider } from '../src/engine/models/mock'
 import { collect } from '../src/engine/models/types'
@@ -18,13 +19,17 @@ export class FakeComfy implements ComfyClient {
   requests: ComfyRequest[] = []
   /** Prompts (or `text`) that make the request fail. */
   fail = new Set<string>()
-  /** Languages the fake TTS refuses, like a workflow without them. */
   async generate(req: ComfyRequest): Promise<ComfyResult> {
     this.requests.push(req)
     const key = req.prompt ?? req.text ?? ''
     if (this.fail.has(key)) throw new Error('ComfyUI exploded')
-    const isAudio = req.engine.startsWith('ace-step') || req.engine.startsWith('custom:')
-    if (isAudio) return { bytes: Buffer.from(`AUDIO:${key}`), ext: req.engine.startsWith('custom:') ? 'flac' : 'mp3', kind: 'audio', seed: req.seed ?? 1, engine: req.engine, lane: 'fake', promptId: 'p' }
+    // every audio engine (the music ones, the TTS Audio Suite models and MOSS) answers with sound; everything else with a picture
+    const isAudio = req.engine.startsWith('custom:') || ENGINES[req.engine]?.kind === 'audio'
+    if (isAudio) {
+      // a custom workflow writes what its own save node writes (flac in the seed workflow); a built-in engine follows the requested format
+      const ext = req.engine.startsWith('custom:') ? 'flac' : (req.format ?? 'mp3')
+      return { bytes: Buffer.from(`AUDIO:${key}`), ext, kind: 'audio', seed: req.seed ?? 1, engine: req.engine, lane: 'fake', promptId: 'p' }
+    }
     const w = 128
     const h = 128
     const bytes = req.references?.length
@@ -38,6 +43,14 @@ export class FakeComfy implements ComfyClient {
   async removeBackground(): Promise<Buffer | null> {
     return null // the flat-colour key is used
   }
+}
+
+/** Points the ComfyUI lanes at a closed port, so a status check (`comfyStatus`, `voiceStatus`) never touches a real ComfyUI. */
+export async function deadComfyLane(env: { dir: string }): Promise<string> {
+  const lane = 'http://127.0.0.1:9'
+  await mkdir(path.join(env.dir, 'config'), { recursive: true })
+  await writeFile(path.join(env.dir, 'config', 'comfy.md'), `---\nkind: comfy\nlanes:\n  - ${lane}\n---\n`)
+  return lane
 }
 
 export interface VnEnv extends TestEnv {

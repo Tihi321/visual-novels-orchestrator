@@ -58,7 +58,9 @@ describe('deriveAssets', () => {
 
   it('adds voice references only when voice is enabled', () => {
     expect(deriveAssets(book, settings()).some((a) => a.kind === 'voiceRef')).toBe(false)
-    const on = deriveAssets(book, settings({ voice: { enabled: true, langs: ['en'], provider: 'comfy', voices: {}, engines: { en: 'custom:chatterbox-multilingual' } } }))
+    const defaults = deriveAssets(book, settings({ voice: { enabled: true, langs: ['en'], provider: 'comfy', engine: 'omnivoice', engines: {}, styles: {}, refTexts: {}, voices: {} } }))
+    expect(defaults.find((a) => a.id === 'voice_petra')!.engine).toBe('omnivoice') // the primary language's engine
+    const on = deriveAssets(book, settings({ voice: { enabled: true, langs: ['en'], provider: 'comfy', engine: 'omnivoice', engines: { en: 'custom:chatterbox-multilingual' }, styles: {}, refTexts: {}, voices: {} } }))
     expect(on.filter((a) => a.kind === 'voiceRef').map((a) => a.id)).toEqual(['voice_petra', 'voice_mango', 'voice_narrator'])
     expect(on.find((a) => a.id === 'voice_petra')!.engine).toBe('custom:chatterbox-multilingual')
   })
@@ -190,15 +192,17 @@ describe('deriveAssets: media cues and expression sets', () => {
     expect(deriveAssets(unused, settings()).some((a) => a.id === 'cg_letter')).toBe(false)
   })
 
-  it('derives the sfx engine from the project: default audio engine, chiptune for pixel, custom and "none" as written', () => {
+  it('derives the sfx engine from the project: the ambience engine by default, chiptune for pixel, MOSS/custom/"none" as written', () => {
     const pixel = settings({ art: { style: 'pixel', generator: 'z-image-turbo', editor: 'qwen-image-2.1-edit', review: false, bgRemoval: 'birefnet' } })
     const engine = (s: ReturnType<typeof settings>) => deriveAssets(mediaBook(), s).find((a) => a.id === 'sfx_bell')!.engine
+    // no explicit sfx engine: the music provider's engine (the ambience engine, ACE-Step, for a ComfyUI project)
     expect(engine(settings())).toBe('ace-step-v1-instrumental')
     // a pixel book with no music provider composes its effects in Chiptune Studio
     expect(engine(pixel)).toBe('chiptune')
-    // no sfx engine: the ambience engine answers
-    expect(engine(settings({ sound: { ambienceEngine: 'yue2' } }))).toBe('yue2')
-    // an explicit engine is used as written, including the import-only marker
+    // a Flow project has no local sound-effect engine either: the ambience engine answers
+    expect(engine(settings({ music: { engine: 'ace-step-v1-instrumental', tracks: 3, provider: 'flow' } }))).toBe('ace-step-v1-instrumental')
+    // MOSS-SoundEffect v2 and any other engine are chosen explicitly
+    expect(engine(settings({ sound: { ambienceEngine: 'yue2', sfxEngine: 'moss-soundeffect-v2' } }))).toBe('moss-soundeffect-v2')
     expect(engine(settings({ sound: { ambienceEngine: 'yue2', sfxEngine: 'custom:foley' } }))).toBe('custom:foley')
     expect(engine(settings({ sound: { ambienceEngine: 'yue2', sfxEngine: 'none' } }))).toBe('none')
     // the ambience ignores the sfx engine

@@ -2,6 +2,7 @@ import type {
   AlignReportView,
   AssetView,
   BuildResult,
+  ComfyEngineView,
   CustomWorkflowInfo,
   EngineEvent,
   EngineInfo,
@@ -14,31 +15,28 @@ import type {
   StepStatus,
   StudioStatusView,
   ThemeInfo,
-  VibeDefaultView,
-  VibeVoiceView
+  VoiceEngineView
 } from '../../shared/protocol'
 import type { Edition, Lang } from '../../shared/vn'
 
 export interface ComfyStatusView {
   ok: boolean
   lanes: { url: string; reachable: boolean; running: number; pending: number; error: string }[]
-  engines: { id: string; kind: 'image' | 'audio'; label: string; ready: boolean; missing: string[] }[]
+  engines: ComfyEngineView[]
   customWorkflows: string[]
   backgroundRemoval: { available: boolean; models: string[] }
 }
 
-/** VibeTTS as the last `voice.status` saw it. */
+/** The local voice engines (TTS Audio Suite) and the custom TTS workflows, as the last `voice.status` saw them. */
 export interface VoiceStatusView {
   ok: boolean
-  url: string
   error: string
-  supertonicInstalled: boolean
-  /** The language codes VibeTTS can read. */
-  languages: string[]
-  /** The user's own default voices in VibeTTS. */
-  english: VibeDefaultView
-  other: VibeDefaultView
-  voices: VibeVoiceView[]
+  comfyUrl: string
+  /** The engine every language without a `voice.engines` entry uses (the registry default, OmniVoice). */
+  defaultEngine: string
+  engines: VoiceEngineView[]
+  /** The custom TTS workflows: their name and the language codes their mapping declares. */
+  workflows: { name: string; languages: string[] }[]
 }
 
 /** The last preview clip of a voice slot (speaker and language, `voice.preview`), `file` relative to the project folder. */
@@ -78,8 +76,8 @@ export interface VnData {
   engines: { image: EngineInfo[]; audio: EngineInfo[]; palettes: string[] } | null
   workflows: CustomWorkflowInfo[]
   comfy: ComfyStatusView | null
-  /** VibeTTS (null until `voiceStatus` was answered). */
-  vibetts: VoiceStatusView | null
+  /** The local voice engines and custom TTS workflows (null until `voiceStatus` was answered). */
+  voiceStatus: VoiceStatusView | null
   /** Pixel Studio and Chiptune Studio (null until `studiosStatus` was answered). */
   studios: StudioStatusView[] | null
   /** `<slug>:<assetId>` -> what the last "Open in ... Studio" said. */
@@ -117,7 +115,7 @@ export function initialVn(): VnData {
     engines: null,
     workflows: [],
     comfy: null,
-    vibetts: null,
+    voiceStatus: null,
     studios: null,
     studioOpened: {},
     voicePreviews: {},
@@ -223,7 +221,7 @@ export function reduceVn(s: VnData, e: EngineEvent, now = Date.now()): Partial<V
     }
     case 'voice.status': {
       const { type: _t, ...view } = e
-      return { vibetts: view }
+      return { voiceStatus: view }
     }
     case 'studios.status':
       return { studios: e.studios }
