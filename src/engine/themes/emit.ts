@@ -20,7 +20,10 @@ export interface RGBA {
 }
 
 export function parseHex(hex: string): RGBA {
-  const h = hex.replace('#', '')
+  // `#abc` and `#abcd` are shorthand for `#aabbcc` / `#aabbccdd`; a theme file is validated to the long form, but a
+  // hand-made game-data or a test fixture may use the short one, and a `NaN` channel would leak into `rgb(...)` CSS.
+  const raw = hex.replace('#', '')
+  const h = raw.length === 3 || raw.length === 4 ? raw.replace(/./g, (ch) => ch + ch) : raw
   return {
     r: parseInt(h.slice(0, 2), 16),
     g: parseInt(h.slice(2, 4), 16),
@@ -312,6 +315,44 @@ export function themeFontFaces(theme: Theme, folder: string): string {
 
 
 /**
+ * Linear mix of two `#rrggbb`/`#rrggbbaa` colours at `t` (0..1): the red, green and blue channels are interpolated
+ * independently (`t = 0` is `a`, `t = 1` is `b`). The alpha channels are ignored: the result is `#rrggbb`.
+ */
+export function mixHex(a: string, b: string, t: number): string {
+  const x = parseHex(a)
+  const y = parseHex(b)
+  const k = Math.min(1, Math.max(0, t))
+  const channel = (p: number, q: number): string => Math.round(p + (q - p) * k).toString(16).padStart(2, '0')
+  return `#${channel(x.r, y.r)}${channel(x.g, y.g)}${channel(x.b, y.b)}`
+}
+
+/** One sRGB channel as WCAG relative luminance. */
+function channelLuminance(value: number): number {
+  const s = value / 255
+  return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+}
+
+/** WCAG relative luminance of a colour (0 = black, 1 = white). */
+export function relativeLuminance(hex: string): number {
+  const c = parseHex(hex)
+  return 0.2126 * channelLuminance(c.r) + 0.7152 * channelLuminance(c.g) + 0.0722 * channelLuminance(c.b)
+}
+
+/** WCAG contrast ratio of two colours (1..21). */
+export function contrastRatio(a: string, b: string): number {
+  const la = relativeLuminance(a)
+  const lb = relativeLuminance(b)
+  const [hi, lo] = la >= lb ? [la, lb] : [lb, la]
+  return (hi + 0.05) / (lo + 0.05)
+}
+
+/** `preferred` when it reads on `background` (contrast 4.5:1), else black or white by the background's luminance. */
+export function readableOn(background: string, preferred: string): string {
+  if (contrastRatio(background, preferred) >= 4.5) return preferred
+  return relativeLuminance(background) > 0.5 ? '#000000' : '#ffffff'
+}
+
+/**
  * CSS stylesheet variables and styling rules for the HTML5 web player runtime.
  */
 export function renderThemeCss(theme: Theme, fonts: { text: string; name: string; interface: string; bold: string | null }): string {
@@ -335,6 +376,23 @@ export function renderThemeCss(theme: Theme, fonts: { text: string; name: string
   const fontIface = fonts.interface.includes('/') || fonts.interface.endsWith('.ttf') || fonts.interface.endsWith('.otf') || fonts.interface.endsWith('.woff2')
     ? `"${fonts.interface.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '')}", sans-serif`
     : `"${fonts.interface}", sans-serif`
+
+  // Player interface tokens, computed from the theme colours so light and dark themes both stay readable.
+  const surface = mixHex(c.background, c.text, 0.06)
+  const surface2 = mixHex(c.background, c.text, 0.1)
+  const uiText = readableOn(surface, c.text)
+  const controlBg = mixHex(c.background, c.text, 0.12)
+  const controlText = readableOn(controlBg, uiText)
+  let uiMuted = uiText
+  for (const amount of [0.35, 0.3, 0.25]) {
+    const candidate = mixHex(uiText, surface, amount)
+    if (contrastRatio(candidate, surface) >= 3) {
+      uiMuted = candidate
+      break
+    }
+  }
+  const uiFocus = contrastRatio(c.accent, surface) >= 3 ? c.accent : uiText
+  const captionSize = Math.min(56, Math.max(40, Math.round(theme.sizes.text * 1.6)))
 
   return `
 :root {
@@ -378,6 +436,17 @@ export function renderThemeCss(theme: Theme, fonts: { text: string; name: string
   --vno-transition-show: ${theme.transitions.show}s;
   --vno-transition-fade: ${theme.transitions.fade}s;
   --vno-pixelated: ${theme.pixel ? 'pixelated' : 'auto'};
+
+  --vno-ui-scrim: ${theme.light ? 'rgba(0,0,0,0.72)' : 'rgba(0,0,0,0.85)'};
+  --vno-ui-surface: ${surface};
+  --vno-ui-surface-2: ${surface2};
+  --vno-ui-text: ${uiText};
+  --vno-ui-text-muted: ${uiMuted};
+  --vno-ui-border: ${mixHex(c.background, c.text, 0.28)};
+  --vno-ui-control-bg: ${controlBg};
+  --vno-ui-control-text: ${controlText};
+  --vno-ui-focus: ${uiFocus};
+  --vno-page-caption-size: ${captionSize}px;
 }
 `.trim()
 }

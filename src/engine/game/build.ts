@@ -83,7 +83,7 @@ export function languageWarnings(langs: Lang[]): string[] {
   for (const code of langs) {
     const name = languageInfo(code)?.name ?? code
     if (code !== 'en' && !uiStrings(code)) {
-      out.push(`the menus of ${name} stay in English (no UI strings for ${code}; add them in config/languages.md)`)
+      out.push(`the interface has no ${name} strings (no UI strings for ${code}; add them in config/languages.md)`)
     }
   }
   return out

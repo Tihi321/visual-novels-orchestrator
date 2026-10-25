@@ -101,7 +101,17 @@ export const UI_STRINGS: Readonly<Record<string, Readonly<Record<string, string>
     'Next': 'Sljedeća stranica',
     'Previous': 'Prethodna stranica',
     'Page {} of {}': 'Stranica {} od {}',
-    'Read aloud': 'Čitaj naglas'
+    'Read aloud': 'Čitaj naglas',
+    // VNO-48: the player's preferences screen; other languages fall back to the English literal.
+    'Text': 'Tekst',
+    'Audio': 'Zvuk',
+    'Close': 'Zatvori',
+    'Interface Language': 'Jezik sučelja',
+    'Story Language': 'Jezik priče',
+    'Story Text Size': 'Veličina teksta priče',
+    // VNO-48: the save screen's titles (the English literals are the runtime's fallbacks).
+    'Save Game': 'Spremi igru',
+    'Load Game': 'Učitaj igru'
   },
   de: {
     'Language': 'Sprache',
@@ -1889,3 +1899,51 @@ export const UI_STRINGS: Readonly<Record<string, Readonly<Record<string, string>
     'Are you sure you want to skip to the next choice?': 'क्या आप सच में अगले चुनाव तक छोड़ना चाहते हैं?'
   }
 }
+
+/** The menu strings the HTML5 player runtime actually asks for (`ui('…')` in `player-runtime.ts`), so a build ships only keys that are used. */
+export const PLAYER_UI_KEYS: readonly string[] = [
+  'Start',
+  'Load',
+  'Save',
+  'Save Game',
+  'Load Game',
+  'Preferences',
+  'Prefs',
+  'About',
+  'Back',
+  'History',
+  'Skip',
+  'Auto',
+  'Q.Save',
+  'Q.Load',
+  'Menu',
+  'Main Menu',
+  'Start again',
+  'The End',
+  'Display',
+  'Fullscreen',
+  'Language',
+  'Text',
+  'Audio',
+  'Text Speed',
+  'Auto-Forward Time',
+  'Music Volume',
+  'Sound Volume',
+  'Voice Volume',
+  'Page {}',
+  'Page {} of {}',
+  'Next',
+  'Previous',
+  'Read aloud',
+  'Clues',
+  'Accuse',
+  'Submit',
+  'Hint',
+  'Give Up',
+  'empty slot',
+  'The dialogue history is empty.',
+  'Close',
+  'Interface Language',
+  'Story Language',
+  'Story Text Size'
+]

@@ -1,7 +1,8 @@
 import path from 'node:path'
 import type { Edition, Lang, Presentation, VnBeat, VnBook, VnChapter, VnScene } from '../../shared/vn'
 import { hasText, isPictureBook, presentationOf } from '../../shared/vn'
-import { languageInfo } from '../../shared/languages'
+import { languageInfo, languages as registeredLanguages } from '../../shared/languages'
+import { PLAYER_UI_KEYS } from '../../shared/ui-strings'
 import type { Theme } from '../themes/load'
 import { aliasIndex } from '../vn/aliases'
 import { expressionsOf } from '../vn/expressions'
@@ -545,6 +546,15 @@ export interface GameDataLanguage {
   fontFamily: string
 }
 
+/** One interface (menu) language the player may choose in its Preferences screen; the story language is chosen separately. */
+export interface GameDataUiLanguage {
+  code: string
+  name: string
+  nativeName: string
+  /** Only the `PLAYER_UI_KEYS` strings this language has; an empty table means the runtime shows the English literals (English itself). */
+  ui: Record<string, string>
+}
+
 export interface GameData {
   slug: string
   title: string
@@ -570,6 +580,8 @@ export interface GameData {
   puzzles: Record<string, CompiledPuzzle>
   editions: Record<string, CompiledEdition>
   languages: GameDataLanguage[]
+  /** Interface (menu) languages; optional because an old game-data.json has none (the menus then follow the story language). */
+  uiLanguages?: GameDataUiLanguage[]
 }
 
 export interface BuildGameDataInput {
@@ -617,6 +629,18 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
       fontFamily: code === book.primaryLang ? 'var(--vno-font-text)' : `Font_${code}, var(--vno-font-text)`
     }
   })
+
+  // Interface (menu) languages: English first with no table (the runtime then shows the English literals), then every
+  // registered language whose UI table has at least one of the strings the player uses.
+  const uiLanguages: GameDataUiLanguage[] = [{ code: 'en', name: 'English', nativeName: 'English', ui: {} }]
+  for (const info of registeredLanguages().filter((l) => l.code !== 'en').sort((a, b) => a.name.localeCompare(b.name, 'en'))) {
+    const ui: Record<string, string> = {}
+    for (const key of PLAYER_UI_KEYS) {
+      const value = info.ui?.[key]
+      if (value) ui[key] = value
+    }
+    if (Object.keys(ui).length > 0) uiLanguages.push({ code: info.code, name: info.name, nativeName: info.native, ui })
+  }
 
   // 2. Characters
   const characters: Record<string, GameDataCharacter> = {}
@@ -793,7 +817,8 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
     chapters,
     puzzles: puzzlesResult.puzzles,
     editions,
-    languages
+    languages,
+    uiLanguages
   }
 }
 
