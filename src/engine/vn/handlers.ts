@@ -857,6 +857,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
       const renpy = await loadRenpyConfig(deps.dataDir)
       const gameDir = svc.gameDir(slug)
       let result: BuildResult
+      let warningCount = 0
       if (!existsSync(path.join(gameDir, 'index.html')) && !existsSync(path.join(gameDir, 'game', 'index.html')) && !existsSync(path.join(gameDir, 'game-data.json'))) {
         result = { slug, action: 'lint', ok: false, skipped: true, messages: ['lint skipped: the game has not been built yet'], at: nowIso(), gameDir }
       } else {
@@ -866,13 +867,20 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         const primary = await store.loadEdition(slug, settings.primaryLang).catch(() => null)
         const projectProblems = primary ? primaryEditionProblems(book, primary) : []
         for (const s of await svc.staleEditions(slug)) projectProblems.push(`edition ${s.lang} was made for pack ${s.editionPackHash}, the project uses ${settings.packHash}: re-add it from the translated catalogue`)
-        const messages = [...l.messages, ...projectProblems]
+        // the run's warnings (a picture-book page without text, left-over sprites) are shown but do not fail the lint
+        warningCount = l.warnings.length
+        const messages = [...l.warnings.map((w) => `warning: ${w}`), ...l.messages, ...projectProblems]
         result = { slug, action: 'lint', ok: l.ok && !projectProblems.length, messages, statistics: l.statistics, at: nowIso(), gameDir }
       }
       await store.writeJson(slug, 'lint.json', result)
       deps.emit({ type: 'build.result', result })
       const blocks = /The game contains (\d[\d,]*) dialogue blocks/.exec(result.statistics ?? '')?.[1]
-      return result.skipped ? result.messages[0]! : result.ok ? `lint is clean${blocks ? ` (${blocks} dialogue blocks)` : ''}` : `lint found ${result.messages.length} problem(s)`
+      const pages = /The game contains (\d[\d,]*) pages/.exec(result.statistics ?? '')?.[1]
+      return result.skipped
+        ? result.messages[0]!
+        : result.ok
+          ? `lint is clean${warningCount ? ` (${warningCount} warning(s))` : ''}${pages ? ` (${pages} pages)` : blocks ? ` (${blocks} dialogue blocks)` : ''}`
+          : `lint found ${result.messages.length} problem(s)`
     },
     { noModel: true }
   )

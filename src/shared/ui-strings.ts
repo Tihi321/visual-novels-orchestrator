@@ -96,7 +96,12 @@ export const UI_STRINGS: Readonly<Record<string, Readonly<Record<string, string>
     'Accuse': 'Optuži',
     'Submit': 'Pošalji',
     'Hint': 'Natuknica',
-    'Give Up': 'Odustani'
+    'Give Up': 'Odustani',
+    // Picture books (VNO-47): the page-turn footer and read aloud. Other languages fall back to the English literal.
+    'Next': 'Sljedeća stranica',
+    'Previous': 'Prethodna stranica',
+    'Page {} of {}': 'Stranica {} od {}',
+    'Read aloud': 'Čitaj naglas'
   },
   de: {
     'Language': 'Sprache',

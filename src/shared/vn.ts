@@ -27,6 +27,35 @@ export const expressionSchema = z.string().regex(EXPRESSION_RE, 'lowercase lette
 /** Any expression: the standard ones are a subset (so a vn.json from before expression sets still parses). */
 export type Expression = string
 
+// ---- presentation ----
+
+/** How the game presents the book: as a visual novel (sprites, a text box), or as a children's picture book. */
+export const PRESENTATIONS = ['visual-novel', 'picture-book'] as const
+export const presentationSchema = z.enum(PRESENTATIONS)
+export type Presentation = z.infer<typeof presentationSchema>
+
+/** The Scriptorium formats whose books are children's picture books: one illustration and a short caption per scene, no sprites. */
+export const PICTURE_BOOK_FORMATS: readonly string[] = ['kids-picture-book']
+
+/** The presentation a new book of this format gets: a picture book for the picture-book formats, else a visual novel. */
+export function presentationForFormat(format: string | null | undefined): Presentation {
+  return format && PICTURE_BOOK_FORMATS.includes(format) ? 'picture-book' : 'visual-novel'
+}
+
+/**
+ * The presentation of a book: its own `presentation` field (which `book.update` may change), else the one its format implies.
+ * Old `vn.json` files without the field are visual novels (or picture books, if their format says so).
+ */
+export function presentationOf(book: Pick<VnBook, 'format'> & { presentation?: Presentation }): Presentation {
+  return book.presentation ?? presentationForFormat(book.format)
+}
+
+/** Whether a book (or a format id) is presented as a children's picture book. */
+export function isPictureBook(bookOrFormat: (Pick<VnBook, 'format'> & { presentation?: Presentation }) | string | null | undefined): boolean {
+  if (bookOrFormat === null || bookOrFormat === undefined || typeof bookOrFormat === 'string') return presentationForFormat(bookOrFormat) === 'picture-book'
+  return presentationOf(bookOrFormat) === 'picture-book'
+}
+
 /**
  * What a beat may carry besides its own content (a cast, a line or narration): a picture shown from this beat on (`cg_<key>`, null hides it), a
  * sound effect played when it starts (`sfx_<key>`), an ambience started or, with null, stopped (`amb_<key>`). Values are catalogue keys.
@@ -144,6 +173,11 @@ export const vnBookSchema = z.object({
   genre: z.string().optional(),
   /** The Scriptorium format id, for example `choice-visual-novel`. */
   format: z.string(),
+  /**
+   * How the game shows the book: `visual-novel` (sprites and a text box) or `picture-book` (one illustration and a caption per scene). Optional so an
+   * old `vn.json` still parses; missing follows the format (`presentationForFormat`). New imports store it.
+   */
+  presentation: presentationSchema.optional(),
   kind: z.enum(['linear', 'choice']),
   primaryLang: langSchema,
   /** The art style from the bible's Style section. */

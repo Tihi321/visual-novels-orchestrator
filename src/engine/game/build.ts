@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { languageInfo } from '../../shared/languages'
+import { isPictureBook } from '../../shared/vn'
 import type { Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { emitTheme, renderThemeCss } from '../themes/emit'
 import { defaultThemesDir, findTheme, listThemes } from '../themes/load'
@@ -230,7 +231,8 @@ export async function buildGame(inp: BuildGameInput): Promise<BuildGameResult> {
     resolution,
     format,
     warnings,
-    pixel: settings.art.style === 'pixel'
+    pixel: settings.art.style === 'pixel',
+    pictureBook: isPictureBook(book)
   })
 
   // 7. Localized Voice copying

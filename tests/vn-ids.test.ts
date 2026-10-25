@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { backgroundId, beatId, coverId, musicId, sceneId, sheetId, slugKey, spriteId, voiceRefId } from '../src/engine/vn/ids'
+import { backgroundId, backgroundIdFor, beatId, coverId, musicId, pictureBookBackgroundId, sceneId, sheetId, slugKey, spriteId, voiceRefId } from '../src/engine/vn/ids'
 
 describe('id helpers', () => {
   it('slugKey strips diacritics and is Ren\'Py safe', () => {
@@ -27,5 +27,12 @@ describe('id helpers', () => {
   it('pads scene and beat ids', () => {
     expect(sceneId(1, 2)).toBe('ch01.s02')
     expect(beatId(sceneId(12, 1), 7)).toBe('ch12.s01.b007')
+  })
+
+  it('a picture book has one page id per scene, a visual novel keeps place and time', () => {
+    expect(pictureBookBackgroundId('ch01.s01')).toBe('bg_ch01_s01')
+    expect(backgroundIdFor('picture-book', 'ch02.s03', 'harbour', 'The harbour wall', 'dusk')).toBe('bg_ch02_s03')
+    expect(backgroundIdFor('visual-novel', 'ch02.s03', 'harbour', 'The harbour wall', 'dusk')).toBe('bg_harbour_dusk')
+    expect(backgroundIdFor(undefined, 'ch02.s03', null, 'on a boat', null)).toBe('bg_on_a_boat_any')
   })
 })

@@ -1,0 +1,110 @@
+{
+  "format": "vn-pack",
+  "version": 2,
+  "book": {
+    "slug": "picture-book",
+    "format": "kids-picture-book",
+    "kind": "linear",
+    "primaryLang": "en",
+    "genre": "Children",
+    "style": "Soft watercolour, warm and gentle, short sentences.",
+    "author": "Mara Quill",
+    "coverBrief": "Luna and Pero on a green hill under a crooked apple tree."
+  },
+  "characters": [
+    {
+      "key": "luna",
+      "looks": "A small girl with two dark braids, a red coat and yellow boots.",
+      "voice": "bright and young."
+    },
+    {
+      "key": "pero",
+      "looks": "A round grey cat with green eyes and a red scarf.",
+      "voice": "soft, purring."
+    }
+  ],
+  "places": [
+    {
+      "key": "hill",
+      "name": "The Hill",
+      "looks": "A green hill with tall grass and one crooked apple tree."
+    },
+    {
+      "key": "home",
+      "name": "Home",
+      "looks": "A warm kitchen with a stove and a round window."
+    }
+  ],
+  "chapters": [
+    {
+      "n": 1,
+      "isEnding": true,
+      "scenes": [
+        {
+          "id": "ch01.s01",
+          "placeKey": "hill",
+          "placeText": "The Hill",
+          "time": "morning",
+          "description": "Luna runs up the green hill, and Pero the cat runs after her through the tall grass.",
+          "breakBefore": false,
+          "beats": [
+            {
+              "id": "ch01.s01.b001",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "luna"
+                },
+                {
+                  "charKey": "pero"
+                }
+              ]
+            },
+            {
+              "id": "ch01.s01.b002",
+              "type": "narration"
+            }
+          ]
+        },
+        {
+          "id": "ch01.s02",
+          "placeKey": "hill",
+          "placeText": "The Hill",
+          "time": "morning",
+          "description": "Pero sits high in the crooked apple tree, and Luna stands under it.",
+          "breakBefore": false,
+          "beats": [
+            {
+              "id": "ch01.s02.b001",
+              "type": "cast",
+              "cast": [
+                {
+                  "charKey": "pero"
+                }
+              ]
+            },
+            {
+              "id": "ch01.s02.b002",
+              "type": "narration"
+            }
+          ]
+        },
+        {
+          "id": "ch01.s03",
+          "placeKey": "home",
+          "placeText": "Home",
+          "time": "morning",
+          "description": "The warm kitchen: a stove, a round window and two bowls on the table.",
+          "breakBefore": false,
+          "beats": [
+            {
+              "id": "ch01.s03.b001",
+              "type": "narration"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "packHash": "sha256:570ae02c028bc501b5ba712b6a19996b1a01992d2b0d4dfaf92e24e9ef4569bc"
+}

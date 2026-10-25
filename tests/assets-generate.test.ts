@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { deriveAssets } from '../src/engine/assets/derive'
 import { generateAll, generateAsset, QWEN_REMOVE_BG_PROMPT, type GenerateContext } from '../src/engine/assets/generate'
 import { assetDir, getEntry, loadManifest, resolveFile, saveManifest, setCustom } from '../src/engine/assets/manifest'
+import { importPackBook } from '../src/engine/vn/pack'
 import type { ComfyClient, ComfyRequest, ComfyResult } from '../src/engine/comfy/client'
 import type { AssetEntry } from '../src/shared/vn'
 import { book, mediaBook, settings } from './assets-fixtures'
@@ -123,6 +124,26 @@ describe('generateAsset', () => {
     expect(meta).toMatchObject({ format: 'webp', hasAlpha: true, height: 972 })
     const corner = await sharp(await readFile(resolveFile(dir, r.entry)!)).ensureAlpha().raw().toBuffer()
     expect(corner[3]).toBe(0)
+  })
+
+  it('makes a picture-book page from the sheets of its cast (the edit engine), and a page without cast with the generator', async () => {
+    const { book: pb } = await importPackBook(path.resolve(__dirname, 'fixtures', 'books', 'picture-book'))
+    const assets = deriveAssets(pb, settings())
+    const page1 = assets.find((a) => a.id === 'bg_ch01_s01')!
+    const page3 = assets.find((a) => a.id === 'bg_ch01_s03')!
+    const sheet = path.join(dir, 'sheet.png')
+    await writeFile(sheet, await figure())
+    const pbCtx = ctx({ book: pb, resolveRef: (id) => (id.startsWith('sheet_') ? sheet : null) })
+    const withCast = await generateAsset(pbCtx, page1)
+    if (!withCast.ok || withCast.skipped) throw new Error(`expected a version: ${JSON.stringify(withCast)}`)
+    expect(comfy.requests[0]).toMatchObject({ engine: 'qwen-image-2.1-edit', references: [sheet, sheet], width: 1664, height: 928 })
+    expect(comfy.requests[0]!.prompt).toContain('different people')
+    expect(comfy.requests[0]!.negative).not.toMatch(/\b(person|people|characters?|animals?)\b/i)
+    const withoutCast = await generateAsset(pbCtx, page3)
+    if (!withoutCast.ok || withoutCast.skipped) throw new Error('expected a version')
+    expect(comfy.requests[1]).toMatchObject({ engine: 'qwen-image-2.1' })
+    expect(comfy.requests[1]!.references).toBeUndefined()
+    expect(comfy.requests[1]!.prompt).toContain("children's picture book illustration")
   })
 
   it('uses the ComfyUI removal result when available, and falls back when it throws', async () => {

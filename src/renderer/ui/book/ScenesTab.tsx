@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { computeStageAtBeat, resolveSceneAudio } from '../../lib/stage-preview'
-import { expressionsOf } from '../../../shared/vn'
+import { expressionsOf, isPictureBook } from '../../../shared/vn'
 import type { AssetView, ProjectDetail, SceneTransitionView, StageSlotView } from '../../../shared/protocol'
 import type { VnBeat } from '../../../shared/vn'
 import { sendCommand } from '../../api'
@@ -85,6 +85,8 @@ function SceneAudioRow({
 
 export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetail }) {
   const { book } = detail
+  // a picture book is shown page by page: one illustration with the caption of its scene
+  const pictureBook = isPictureBook(book)
   const cuesMap = detail.cues ?? {}
   const assetMap = useVn((s) => s.assets[slug])
   const assetRev = useVn((s) => s.assetRev)
@@ -174,6 +176,16 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
   const bgAsset = bgAssetId ? assetMap?.[bgAssetId] : undefined
   const bgUrl = bgAsset?.fileRel ? projectAssetUrl(slug, bgAsset.fileRel, assetRev[`${slug}:${bgAsset.id}`] ?? 0) : null
 
+  // Picture book: the page preview walks the scenes as pages, and its caption is the scene's narration and lines
+  const pageIndex = allScenes.findIndex((x) => x.scene.id === scene.id)
+  const captionBeats = scene.beats.filter((b) => b.type === 'line' || b.type === 'narration')
+  const goToPage = (n: number) => {
+    const next = allScenes[n]
+    if (!next) return
+    setSelectedSceneId(next.scene.id)
+    setBeatIdx(0)
+  }
+
   // The CG or insert shown over the stage: a full picture covers it, an insert is shown small in the middle.
   const cgKey = stage.cg
   const cgEntry = cgKey ? book.images?.find((i) => i.key === cgKey) : undefined
@@ -254,7 +266,75 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
 
         {/* Right Pane: Stage Preview + Inspector */}
         <div className="stack" style={{ flex: 1, minWidth: 0, gap: 14 }}>
-          {/* Live Stage Preview Canvas (16:9) */}
+          {/* A picture book shows its pages, not a stage: one illustration with the caption of its scene */}
+          {pictureBook ? (
+            <div className="card stack" style={{ gap: 8 }} data-testid="page-preview">
+              <div className="row spread">
+                <div className="row" style={{ gap: 8 }}>
+                  <b>Page preview</b>
+                  <Pill>{scene.id}</Pill>
+                  <span className="dim">
+                    Page {pageIndex + 1} / {allScenes.length}
+                  </span>
+                </div>
+                <div className="row" style={{ gap: 6 }}>
+                  <button disabled={pageIndex <= 0} onClick={() => goToPage(pageIndex - 1)} data-testid="page-prev">
+                    Previous page
+                  </button>
+                  <button disabled={pageIndex < 0 || pageIndex >= allScenes.length - 1} onClick={() => goToPage(pageIndex + 1)} data-testid="page-next">
+                    Next page
+                  </button>
+                </div>
+              </div>
+              <div
+                data-testid="page-illustration"
+                style={{
+                  position: 'relative',
+                  width: '100%',
+                  aspectRatio: '16 / 9',
+                  borderRadius: 8,
+                  overflow: 'hidden',
+                  background: bgUrl ? `center / contain no-repeat url("${bgUrl}")` : 'linear-gradient(180deg, #1b2234 0%, #0f131d 100%)',
+                  border: '1px solid var(--border, #2e3446)'
+                }}
+              >
+                {!bgUrl && (
+                  <div
+                    data-testid="page-bg-missing"
+                    className="dim"
+                    style={{ position: 'absolute', top: 10, left: 12, fontSize: 12, background: 'rgba(0,0,0,0.55)', padding: '2px 8px', borderRadius: 4 }}
+                  >
+                    {bgAssetId ? `${bgAssetId} (no image yet)` : '(no illustration)'}
+                  </div>
+                )}
+              </div>
+              <div
+                data-testid="page-caption"
+                style={{
+                  minHeight: 66,
+                  padding: '10px 14px',
+                  borderRadius: 8,
+                  background: 'rgba(10, 13, 22, 0.86)',
+                  border: '1px solid rgba(255,255,255,0.14)',
+                  color: '#f2f4f8',
+                  fontSize: 14,
+                  lineHeight: 1.5
+                }}
+              >
+                {captionBeats.length === 0 && <span className="dim">(no text yet: a picture-only page)</span>}
+                {captionBeats.map((b) =>
+                  b.type === 'line' ? (
+                    <div key={b.id}>
+                      <b>{charByKey.get(b.speakerKey ?? '')?.name ?? b.speakerKey}:</b> {b.text}
+                    </div>
+                  ) : (
+                    <div key={b.id}>{b.text}</div>
+                  )
+                )}
+              </div>
+            </div>
+          ) : (
+          // Live Stage Preview Canvas (16:9)
           <div className="card stack" style={{ gap: 8 }}>
             <div className="row spread">
               <div className="row" style={{ gap: 8 }}>
@@ -458,6 +538,7 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
               </div>
             </div>
           </div>
+          )}
 
           {/* Scene Audio: the effective cues at this beat, as the game plays them */}
           {sceneAudio && (
@@ -509,7 +590,9 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
 
           {/* Scene Header Controls */}
           <div className="card stack" style={{ gap: 10 }}>
-            <b>Scene Settings ({scene.id})</b>
+            <b>
+              {pictureBook ? 'Page Settings' : 'Scene Settings'} ({scene.id})
+            </b>
             <div className="row" style={{ flexWrap: 'wrap', gap: 12 }}>
               <label className="row" style={{ gap: 6 }}>
                 <span className="dim">Place</span>
@@ -666,16 +749,17 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
                           <b>{ch?.name ?? c.charKey}</b> <span className="dim">({c.charKey})</span>
                         </span>
                         <div className="row" style={{ gap: 4 }}>
-                          {SLOTS.map((slot) => (
-                            <button
-                              key={slot}
-                              className={curSlot === slot ? 'primary' : ''}
-                              onClick={() => handleCastSlotChange(currentBeat, c.charKey, slot)}
-                              data-testid={`cast-slot-${currentBeat.id}-${c.charKey}-${slot}`}
-                            >
-                              {slot}
-                            </button>
-                          ))}
+                          {!pictureBook &&
+                            SLOTS.map((slot) => (
+                              <button
+                                key={slot}
+                                className={curSlot === slot ? 'primary' : ''}
+                                onClick={() => handleCastSlotChange(currentBeat, c.charKey, slot)}
+                                data-testid={`cast-slot-${currentBeat.id}-${c.charKey}-${slot}`}
+                              >
+                                {slot}
+                              </button>
+                            ))}
                           <button
                             onClick={() =>
                               sendCommand({
@@ -761,50 +845,54 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
                         </select>
                       </label>
 
-                      <label className="row" style={{ gap: 6 }}>
-                        <span className="dim">Expression</span>
-                        <select
-                          value={currentBeat.expression}
-                          onChange={(e) =>
-                            sendCommand({
-                              type: 'updateSceneStory',
-                              slug,
-                              beats: [{ id: currentBeat.id, expression: e.target.value }]
-                            })
-                          }
-                          data-testid="beat-expression-select"
-                        >
-                          {expressionsOf(book, charByKey.get(currentBeat.speakerKey ?? '')).map((expr) => (
-                            <option key={expr} value={expr}>
-                              {expr}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                      {!pictureBook && (
+                        <label className="row" style={{ gap: 6 }}>
+                          <span className="dim">Expression</span>
+                          <select
+                            value={currentBeat.expression}
+                            onChange={(e) =>
+                              sendCommand({
+                                type: 'updateSceneStory',
+                                slug,
+                                beats: [{ id: currentBeat.id, expression: e.target.value }]
+                              })
+                            }
+                            data-testid="beat-expression-select"
+                          >
+                            {expressionsOf(book, charByKey.get(currentBeat.speakerKey ?? '')).map((expr) => (
+                              <option key={expr} value={expr}>
+                                {expr}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
                     </>
                   )}
 
-                  <label className="row" style={{ gap: 6 }}>
-                    <span className="dim">CG Image</span>
-                    <select
-                      value={currentBeat.image ?? ''}
-                      onChange={(e) =>
-                        sendCommand({
-                          type: 'updateSceneStory',
-                          slug,
-                          beats: [{ id: currentBeat.id, image: e.target.value || null }]
-                        })
-                      }
-                      data-testid="beat-image-select"
-                    >
-                      <option value="">(none)</option>
-                      {(book.images ?? []).map((cg) => (
-                        <option key={cg.key} value={cg.key}>
-                          {cg.key}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {!pictureBook && (
+                    <label className="row" style={{ gap: 6 }}>
+                      <span className="dim">CG Image</span>
+                      <select
+                        value={currentBeat.image ?? ''}
+                        onChange={(e) =>
+                          sendCommand({
+                            type: 'updateSceneStory',
+                            slug,
+                            beats: [{ id: currentBeat.id, image: e.target.value || null }]
+                          })
+                        }
+                        data-testid="beat-image-select"
+                      >
+                        <option value="">(none)</option>
+                        {(book.images ?? []).map((cg) => (
+                          <option key={cg.key} value={cg.key}>
+                            {cg.key}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
 
                   <label className="row" style={{ gap: 6 }}>
                     <span className="dim">SFX</span>

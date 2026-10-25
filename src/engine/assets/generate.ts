@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
-import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, SFX_IMPORT_ONLY, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider, resolveSfxEngine } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, isPictureBook, SFX_IMPORT_ONLY, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider, resolveSfxEngine } from '../../shared/vn'
 import type { AssetEntry, AssetManifest, AssetVersion, ProjectSettings, VnBook } from '../../shared/vn'
 import type { ComfyClient, ComfyProgress, ComfyResult } from '../comfy/client'
 import { randomSeed } from '../comfy/graphs'
@@ -359,7 +359,7 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
   // whatever made its earlier versions. An engine given for this run, a locked image and a custom file keep theirs.
   if (IMAGE_KINDS.has(edited.kind) && opts.engine === undefined && !edited.locked && edited.source === 'generated') {
     if (resolveArtProvider(ctx.settings.art) === 'flow') edited.engine = FLOW_ENGINE
-    else if (edited.engine === FLOW_ENGINE) edited.engine = edited.kind === 'sprite' || (edited.kind === 'cg' && (edited.refs?.length ?? 0) > 0) ? ctx.settings.art.editor : ctx.settings.art.generator
+    else if (edited.engine === FLOW_ENGINE) edited.engine = edited.kind === 'sprite' || ((edited.kind === 'cg' || edited.kind === 'background') && (edited.refs?.length ?? 0) > 0) ? ctx.settings.art.editor : ctx.settings.art.generator
   }
   // A sound effect made before the project had an engine follows the project's audio engine now (an older manifest may say '').
   if (edited.kind === 'sfx' && !edited.engine) edited.engine = resolveSfxEngine(ctx.settings)
@@ -368,7 +368,7 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     progress('start', `${entry.kind} with ${edited.engine}`)
     const pixel = ctx.settings.art.style === 'pixel'
     const prompt = edited.prompt.trim() || fallbackPrompt(edited, ctx.book, { pixel, stylePrompt: ctx.settings.art.stylePrompt })
-    const negative = edited.negative ?? fallbackNegative(edited.kind)
+    const negative = edited.negative ?? fallbackNegative(edited.kind, { pictureBook: isPictureBook(ctx.book) })
     const seed = edited.seed ?? randomSeed()
     const sizes = ctx.sizes ?? {}
     const onProgress = (p: ComfyProgress) => progress('comfy', `${p.stage}: ${p.message}`)
@@ -415,7 +415,9 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
           if (!found) throw new Error(`${edited.id} has no raw output to reprocess: generate it first`)
           raw = found
         } else {
-          const refs = edited.kind === 'sprite' || edited.kind === 'cg' ? flowReferences(edited, { entryOf: ctx.resolveRefEntry, fileOf: ctx.resolveRef }) : undefined
+          // a sprite uses its sheet, a CG the sheets of its characters, and a picture-book page (a background with refs) too
+          const usesRefs = edited.kind === 'sprite' || edited.kind === 'cg' || (edited.kind === 'background' && (edited.refs?.length ?? 0) > 0)
+          const refs = usesRefs ? flowReferences(edited, { entryOf: ctx.resolveRefEntry, fileOf: ctx.resolveRef }) : undefined
           const run = await makeFlowImage(ctx.flow, {
             entry: edited,
             prompt,
@@ -444,7 +446,12 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
         break
       }
       case 'background': {
-        const r = await ctx.comfy.generate({ ...base, width: size.w, height: size.h })
+        // a picture-book page with characters is edited from their sheets (the same rule as a CG with characters); place backgrounds have no refs
+        const refFiles = (edited.refs ?? []).flatMap((id) => ctx.resolveRef?.(id) ?? [])
+        if ((edited.refs?.length ?? 0) > 0 && refFiles.length === 0) {
+          throw new Error(`the character sheets of ${edited.id} (${edited.refs!.join(', ')}) have no file yet: generate them first`)
+        }
+        const r = await ctx.comfy.generate({ ...base, ...(refFiles.length ? { references: refFiles } : {}), width: size.w, height: size.h })
         const fin = await finishImage(ctx, edited, r.bytes, finishOpts)
         warnings.push(...fin.warnings)
         native = fin.native

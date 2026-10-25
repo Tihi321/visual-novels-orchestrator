@@ -3,13 +3,13 @@ import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
 import { languageInfo } from '../../shared/languages'
-import { editionSchema, hasText, langSchema, vnBookSchema } from '../../shared/vn'
+import { editionSchema, hasText, langSchema, presentationForFormat, vnBookSchema } from '../../shared/vn'
 import type { Edition, ImageEntry, Lang, SoundEntry, VnBeat, VnBook, VnChapter, VnScene } from '../../shared/vn'
 import { puzzleCoreSchema, puzzleEntityIds, puzzleTextIds } from '../../shared/puzzle'
 import type { PuzzleEntry } from '../../shared/puzzle'
 import type { LangDetection } from './lang'
 import { mapExpression } from './expressions'
-import { backgroundId, beatId, sceneId, slugKey } from './ids'
+import { backgroundIdFor, beatId, sceneId, slugKey } from './ids'
 import { charactersInText, cueKey, detectTime, matchPlace } from './script'
 import type { AliasMerge } from './aliases'
 import type { Uncertain } from './script'
@@ -533,6 +533,7 @@ const soundOf = (sounds: SoundEntry[], kind: 'sfx' | 'ambience', key: string): S
 export function buildFromPack(loaded: LoadedPack, catalog: Catalog): { book: VnBook; edition: Edition; warnings: string[] } {
   const { pack } = loaded
   const warnings = [...loaded.warnings]
+  const presentation = presentationForFormat(pack.book.format)
   const ctx = makeCharacterContext(pack, catalog, warnings)
   const images: ImageEntry[] = []
   const sounds: SoundEntry[] = []
@@ -612,7 +613,7 @@ export function buildFromPack(loaded: LoadedPack, catalog: Catalog): { book: VnB
         placeKey,
         placeText,
         time,
-        backgroundId: backgroundId(placeKey, placeText, time),
+        backgroundId: backgroundIdFor(presentation, id, placeKey, placeText, time),
         description: sc.description ?? '',
         beats,
         breakBefore: sc.breakBefore ?? false
@@ -663,6 +664,7 @@ export function buildFromPack(loaded: LoadedPack, catalog: Catalog): { book: VnB
     ...(pack.book.author ? { author: pack.book.author } : {}),
     ...(pack.book.genre ? { genre: pack.book.genre } : {}),
     format: pack.book.format,
+    presentation,
     kind: pack.book.kind,
     primaryLang: pack.book.primaryLang,
     style: pack.book.style ?? '',

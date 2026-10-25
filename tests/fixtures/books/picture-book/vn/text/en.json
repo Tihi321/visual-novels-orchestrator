@@ -1,0 +1,29 @@
+{
+  "format": "vn-text",
+  "version": 2,
+  "lang": "en",
+  "packHash": "sha256:570ae02c028bc501b5ba712b6a19996b1a01992d2b0d4dfaf92e24e9ef4569bc",
+  "title": "Luna and the Apple Tree",
+  "blurb": "Luna and Pero run up the hill, and find out which of them can climb.",
+  "chapterTitles": {
+    "1": "One Morning"
+  },
+  "sceneTitles": {
+    "ch01.s01": "The Hill, morning",
+    "ch01.s02": "Under the apple tree",
+    "ch01.s03": "Home, morning"
+  },
+  "choiceTexts": {},
+  "endings": {
+    "1": "And they went home for breakfast."
+  },
+  "characterNames": {
+    "luna": "Luna",
+    "pero": "Pero"
+  },
+  "beats": {
+    "ch01.s01.b002": "Luna ran up the hill, and Pero ran after her.",
+    "ch01.s02.b002": "**Pero** climbed the crooked apple tree.",
+    "ch01.s03.b001": "Then they went home for breakfast."
+  }
+}

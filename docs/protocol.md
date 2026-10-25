@@ -1,6 +1,6 @@
 # Engine protocol for the VN projects
 
-The UI talks to the engine with `Command`s and receives `EngineEvent`s (`src/shared/protocol.ts`, the transport is described there). This page covers the VN part: projects, editions, assets, the pipeline, the game build, themes, ComfyUI and voice. The types live in `src/shared/protocol.ts` (the commands, the events, `ProjectSummary`, `ProjectDetail`, `AssetView`, `BuildResult` ...) and `src/shared/vn.ts` (`VnBook`, `Edition`, `ProjectSettings`, `AssetEntry`).
+The UI talks to the engine with `Command`s and receives `EngineEvent`s (`src/shared/protocol.ts`, the transport is described there). This page covers the VN part: projects, editions, assets, the pipeline, the game build, themes, ComfyUI and voice. The types live in `src/shared/protocol.ts` (the commands, the events, `ProjectSummary`, `ProjectDetail`, `AssetView`, `BuildResult` ...) and `src/shared/vn.ts` (`VnBook`, `Edition`, `ProjectSettings`, `AssetEntry`). A book is presented either as a visual novel or, from HUB-17 (VNO-47), as a children's picture book: `VnBook.presentation` (see "Picture books" below).
 
 Rules that hold for every command:
 
@@ -63,11 +63,24 @@ Jobs that never need a model run without a provider slot. Jobs for one project a
 
 An edition never changes the asset list. The MCP tool `vno_sync_editions` scans a pack's `vn/text/*.json` and adds every non-primary catalogue through the same validation (idempotent).
 
+## Picture books (VNO-47)
+
+A picture book is the same `VnBook` shown differently: one full-page illustration with its characters drawn into it and one to three short sentences below, page turns, no sprites.
+
+- `VnBook.presentation` is `'visual-novel'` (the default, and what an old `vn.json` without the field is) or `'picture-book'`. New imports store it from the format (`presentationForFormat`: `kids-picture-book` -> `picture-book`); `vno_create_project {book.presentation}` and `book.update {presentation}` set it, and the summary (`storySummary`, `vno_get_story`) reports it. `presentationOf(book)` answers the effective one. There is no project setting and no data-folder migration.
+- **One page = one scene.** Pages are scenes; there is no page entity and no new beat type. The page text is the scene's `narration` beats (and its `line` beats, shown as `Name: text`), localized through the edition. The primary edition is still the primary text; translations go through the usual catalogues.
+- **One illustration per page = the scene's `backgroundId`.** In a picture book `backgroundId` is `bg_<chapter>_<scene>` (`pictureBookBackgroundId`, e.g. `bg_ch01_s01`), so two scenes in the same place and time have different pictures. Outside picture books the place+time id is untouched. `backgroundIdFor(presentation, sceneId, placeKey, placeText, time)` picks one. Changing the presentation with `book.update` recomputes every scene's id (the new backgrounds need prompts/images; the old paid assets are orphaned but kept).
+- **Asset plan (D4).** `deriveAssets` plans one `background` per scene (the page), a `cover`, the music tracks, the SFX/ambience, the voice references and a `sheet_<char>` per character that appears. There are **no `sprite_*`, no expression variants and no `cg_*`**: the sheets stay internal references, never drawn in the book. A page whose scene has characters is made by the edit engine (`art.editor`) from at most 3 sheets (`refs`, the same rule as a CG with characters); a page without them by the generator.
+- **Page prompts (D5).** `fallbackPrompt('background')` (and the art-director's `describeAsset`/`ensureFraming`) keep the people the place looks and the scene description mention and name the scene's cast with `peopleClause`; the framing is `PAGE_FRAMING` ("children's picture book illustration, full-bleed ... no text, no lettering"), never `BACKGROUND_FRAMING`. `fallbackNegative('background', { pictureBook: true })` drops the people/animal ban and keeps the text bans. A visual-novel prompt and negative are byte-identical to before.
+- **The player.** `GameData.presentation` (missing = visual novel) switches the web player to page mode: the body gets `vno-picturebook`, the image band is 0-800 px with `contain` (nothing cropped), the caption band 800-1080 px, a footer with the page counter and prev/next, and a replay button when the page's beats have voice clips. Click/tap the illustration or the caption, `->`/Space/Enter: next page; `<-`/PageUp: previous; swipe on touch; Esc: main menu. There is no typewriter, chapter card, name box, quick menu or scene title. The last page shows The End (Start again / Main Menu); a book with choices still offers them. The page is quick-saved on every turn and the main menu's Load resumes it; a visual novel keeps its save/load screens unchanged.
+- **Read aloud (D8).** If the current edition has voice clips for the page's text beats they play in order when the page appears (the narrator reads narration); the replay button repeats them. No new voice pipeline.
+- **Lint.** `lintGame` on a picture book checks: a page with no illustration (`bgPath` null) is an error; a page with no text is a warning; sprite entries, CG entries or CG/insert cues left in the game are warnings; the statistics say pages. Warnings do not fail the lint (they are in the output and in `lint.json` with a `warning: ` prefix).
+
 ## Assets
 
 `AssetView` is the manifest entry (`id`, `kind`, `prompt`, `negative`, `engine`, `seed`, `size`, `refs`, `versions[]`, `selected`, `source: 'generated' | 'custom'`, `customFile`, `locked`, `review`) plus `fileRel` (the file the build uses), `versionFiles` (version number -> relative path) and `orphaned` (the book no longer uses it; it is kept).
 
-Asset ids: `bg_<place>_<time>`, `sheet_<char>`, `sprite_<char>_<expression>`, `cg_<key>`, `sfx_<key>`, `amb_<key>`, `cover`, `music_01..`, `voice_<char|narrator>`.
+Asset ids: `bg_<place>_<time>` (a picture book: `bg_<chapter>_<scene>`, one page per scene), `sheet_<char>`, `sprite_<char>_<expression>`, `cg_<key>`, `sfx_<key>`, `amb_<key>`, `cover`, `music_01..`, `voice_<char|narrator>`.
 
 | Command | Effect |
 | --- | --- |
