@@ -1,12 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ProjectDetail } from '../../../shared/protocol'
+import { SFX_IMPORT_ONLY, isHandArt } from '../../../shared/vn'
 import { readText, sendCommand, tailText } from '../../api'
+import { missingAssets } from '../../lib/assets'
 import { failedStep, isRunning, lastLines, mergeSteps, progressFraction, progressText, STATE_TONE, stepRows, suggestedStart } from '../../lib/pipeline'
 import { useVn } from '../../store/hooks'
 import { Pill, ProgressBar, useRecentError } from '../common'
 
+/** How many missing asset ids the card lists before "and N more". */
+const MISSING_SHOWN = 24
+
 export function PipelineTab({ slug, detail }: { slug: string; detail: ProjectDetail }) {
   const live = useVn((s) => s.progress[slug])
+  const assets = useVn((s) => s.assets[slug])
   const steps = mergeSteps(detail.summary.pipeline, live)
   const rows = stepRows(steps, detail.settings.voice.enabled)
   const running = isRunning(rows)
@@ -18,6 +24,15 @@ export function PipelineTab({ slug, detail }: { slug: string; detail: ProjectDet
   const warnings = detail.book.warnings
   const jobs = detail.jobs
 
+  const handArt = isHandArt(detail.settings.art)
+  const missing = useMemo(() => missingAssets(Object.values(assets ?? {}), { handArt }), [assets, handArt])
+  const missingList = useMemo(() => [...missing.all].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)), [missing.all])
+  // Before the asset list arrives, the summary is all the page knows: use its count (it excludes the same unused/hand-made assets).
+  const summaryMissing = detail.summary.assets.missing
+  const missingCount = assets ? missing.all.length : summaryMissing
+  const generatableCount = assets ? missing.generatable.length : summaryMissing
+  const continueFrom = suggestedStart(rows, { missingAssets: generatableCount })
+
   return (
     <div className="stack" data-testid="tab-pipeline-body">
       <div className="row spread">
@@ -25,8 +40,8 @@ export function PipelineTab({ slug, detail }: { slug: string; detail: ProjectDet
           <button className="primary" onClick={() => sendCommand({ type: 'runPipeline', slug, force })} data-testid="run-all">
             Run pipeline
           </button>
-          <button onClick={() => sendCommand({ type: 'runPipeline', slug, from: suggestedStart(rows), force })} title="Starts at the first step that did not finish" data-testid="run-resume">
-            Continue from {suggestedStart(rows)}
+          <button onClick={() => sendCommand({ type: 'runPipeline', slug, from: continueFrom, force })} title="Starts at the first step that did not finish" data-testid="run-resume">
+            Continue from {continueFrom}
           </button>
           {(running || jobs.running + jobs.queued > 0) && (
             <button onClick={() => sendCommand({ type: 'stopPipeline', slug })} data-testid="stop-pipeline" title="Abort running jobs and clear the queue for this project">
@@ -78,7 +93,58 @@ export function PipelineTab({ slug, detail }: { slug: string; detail: ProjectDet
           {uncertain === null ? 'uncertain: ?' : `${uncertain} uncertain`}
         </Pill>
         <Pill tone={warnings.length ? 'warn' : 'dim'}>{warnings.length} warnings</Pill>
+        {missingCount > 0 && (
+          <Pill tone="warn" testId="assets-missing" title="Assets that have no file yet">
+            {missingCount} assets missing
+          </Pill>
+        )}
       </div>
+
+      {summaryMissing > 0 && (
+        <div className="card stack" style={{ gap: 8 }} data-testid="missing-assets">
+          <div className="row spread">
+            <b>Missing assets</b>
+            <span className="dim">
+              {missingCount} with no file yet
+              {generatableCount !== missingCount ? ` · ${generatableCount} can be generated` : ''}
+            </span>
+          </div>
+          {assets ? (
+            <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
+              {missingList.slice(0, MISSING_SHOWN).map((a) => {
+                const none = a.kind === 'sfx' && a.engine === SFX_IMPORT_ONLY
+                return (
+                  <span key={a.id} className="pill dim" title={a.prompt} data-testid={`missing-asset-${a.id}`}>
+                    {a.id}{' '}
+                    <span style={{ opacity: 0.75 }}>
+                      · {a.kind}
+                      {a.locked ? ' · locked' : ''}
+                      {a.source === 'custom' ? ' · custom' : ''}
+                      {none ? ' · none' : ''}
+                    </span>
+                  </span>
+                )
+              })}
+              {missingList.length > MISSING_SHOWN && <span className="dim">and {missingList.length - MISSING_SHOWN} more</span>}
+            </div>
+          ) : (
+            <div className="dim">The list appears when the assets have loaded; the count comes from the project summary.</div>
+          )}
+          <div className="dim">Locked, custom and voice-reference files are never generated: import or upload them in Assets.</div>
+          <div className="row">
+            <button
+              className="primary"
+              onClick={() => sendCommand({ type: 'runPipeline', slug, from: 'generate' })}
+              disabled={running || generatableCount === 0}
+              title="Generates every asset that has no file, then runs the rest of the pipeline"
+              data-testid="generate-missing"
+            >
+              Generate missing ({generatableCount})
+            </button>
+            {generatableCount === 0 && <span className="dim">Nothing here can be generated: these files need a hand import or upload.</span>}
+          </div>
+        </div>
+      )}
 
       {warnings.length > 0 && (
         <details open={warnings.length <= 5}>

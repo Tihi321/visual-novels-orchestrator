@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AssetView } from '../src/shared/protocol'
-import { charKeyOf, groupAssets, isAudioPath, isImagePath, readyCount, reviewBadge } from '../src/renderer/lib/assets'
+import { charKeyOf, groupAssets, isAudioPath, isImagePath, missingAssets, readyCount, reviewBadge } from '../src/renderer/lib/assets'
 import { engineChoices } from '../src/renderer/lib/engines'
 
 function asset(id: string, kind: AssetView['kind'], extra: Partial<AssetView> = {}): AssetView {
@@ -87,5 +87,73 @@ describe('engineChoices', () => {
   })
   it('works before the engines are known', () => {
     expect(engineChoices('cover', null, [], 'cur').map((c) => c.id)).toEqual(['cur'])
+  })
+  it('offers audio engines (not image ones) and non-TTS audio workflows for every audio kind', () => {
+    const audioEngines = {
+      image: engines.image,
+      audio: [
+        { id: 'ace', kind: 'audio' as const, label: 'Ace', edit: false },
+        { id: 'chiptune', kind: 'audio' as const, label: 'Chiptune', edit: false }
+      ]
+    }
+    for (const kind of ['music', 'sfx', 'ambience'] as const) {
+      expect(engineChoices(kind, audioEngines, wfs).map((c) => c.id)).toEqual(['ace', 'chiptune', 'custom:song'])
+    }
+  })
+  it('keeps chiptune and none as the current engine for audio', () => {
+    expect(engineChoices('sfx', engines, wfs, 'chiptune').map((c) => c.id)).toEqual(['ace', 'custom:song', 'chiptune'])
+    expect(engineChoices('sfx', null, [], 'none').map((c) => c.id)).toEqual(['none'])
+  })
+})
+
+describe('missingAssets', () => {
+  it('lists the non-orphaned assets without a file and what the pipeline may generate', () => {
+    const list = [
+      asset('bg_missing', 'background'),
+      asset('bg_ready', 'background', { fileRel: 'assets/bg_ready/v1.webp' }),
+      asset('bg_unused', 'background', { orphaned: true }),
+      asset('bg_locked', 'background', { locked: true }),
+      asset('bg_custom', 'background', { source: 'custom' }),
+      asset('voice_narrator', 'voiceRef'),
+      asset('sheet_petra', 'sheet'),
+      asset('sprite_petra_neutral', 'sprite'),
+      asset('cg_missing', 'cg'),
+      asset('music_01', 'music'),
+      asset('sfx_door', 'sfx', { engine: 'ace-step-v1-instrumental' }),
+      asset('sfx_bell', 'sfx', { engine: 'none' }),
+      asset('amb_rain', 'ambience')
+    ]
+    const m = missingAssets(list, { handArt: false })
+    expect(m.all.map((a) => a.id)).toEqual([
+      'bg_missing',
+      'bg_locked',
+      'bg_custom',
+      'voice_narrator',
+      'sheet_petra',
+      'sprite_petra_neutral',
+      'cg_missing',
+      'music_01',
+      'sfx_door',
+      'sfx_bell',
+      'amb_rain'
+    ])
+    expect(m.generatable.map((a) => a.id)).toEqual([
+      'bg_missing',
+      'sheet_petra',
+      'sprite_petra_neutral',
+      'cg_missing',
+      'music_01',
+      'sfx_door',
+      'amb_rain'
+    ])
+  })
+  it('leaves hand-made sheets out and never generates hand-made images', () => {
+    const list = [asset('sheet_petra', 'sheet'), asset('bg_cave', 'background'), asset('music_01', 'music'), asset('sfx_door', 'sfx', { engine: 'none' })]
+    const m = missingAssets(list, { handArt: true })
+    expect(m.all.map((a) => a.id)).toEqual(['bg_cave', 'music_01', 'sfx_door'])
+    expect(m.generatable.map((a) => a.id)).toEqual(['music_01'])
+  })
+  it('treats assets without a file only', () => {
+    expect(missingAssets([asset('cover', 'cover', { fileRel: 'assets/cover/v1.webp' })], { handArt: false })).toEqual({ all: [], generatable: [] })
   })
 })

@@ -45,10 +45,11 @@ class FakeComfy implements ComfyClient {
       return { bytes, ext: 'png', kind: 'image', seed: req.seed ?? 0, engine: req.engine, lane: 'l', promptId: 'p' }
     }
     if (req.prompt && this.fail.has(req.prompt)) throw new Error('ComfyUI exploded')
-    const kind = req.engine.startsWith('ace-step') ? 'audio' : 'image'
-    if (kind === 'audio') return { bytes: Buffer.from('MP3DATA'), ext: 'mp3', kind, seed: req.seed ?? 0, engine: req.engine, lane: 'l', promptId: 'p' }
+    // audio engines (ACE-Step, a custom audio workflow) answer with sound; everything else with a picture
+    const audio = req.engine.startsWith('ace-step') || req.engine.startsWith('custom:')
+    if (audio) return { bytes: Buffer.from('MP3DATA'), ext: req.engine.startsWith('custom:') ? 'flac' : 'mp3', kind: 'audio', seed: req.seed ?? 0, engine: req.engine, lane: 'l', promptId: 'p' }
     const bytes = req.references?.length ? await figure() : await landscape()
-    return { bytes, ext: 'png', kind, seed: req.seed ?? 0, engine: req.engine, lane: 'l', promptId: 'p' }
+    return { bytes, ext: 'png', kind: 'image', seed: req.seed ?? 0, engine: req.engine, lane: 'l', promptId: 'p' }
   }
   async removeBackground(image: Buffer): Promise<Buffer | null> {
     this.removalCalls++
@@ -311,15 +312,35 @@ describe('generateAsset', () => {
       expect(comfy.requests).toHaveLength(0)
     })
 
-    it('an sfx without an engine is skipped with the reason; a custom engine makes it', async () => {
+    it('a default sfx is made by the audio engine for five seconds; a custom engine still makes it', async () => {
       const r = await generateAsset(mctx(), mstub('sfx_bell'))
-      expect(r).toMatchObject({ ok: true, skipped: true, reason: 'no SFX engine: import a file (vno_asset_import)' })
-      expect(comfy.requests).toHaveLength(0)
+      if (!r.ok || r.skipped) throw new Error(`expected a version: ${JSON.stringify(r)}`)
+      expect(comfy.requests[0]).toMatchObject({ engine: 'ace-step-v1-instrumental', prompt: 'a ship bell', seconds: 5 })
+      expect(r.version).toMatchObject({ file: 'v1.mp3', engine: 'ace-step-v1-instrumental' })
+      expect(await readFile(resolveFile(dir, r.entry)!, 'utf8')).toBe('MP3DATA')
 
       const custom = settings({ sound: { ambienceEngine: 'ace-step-v1-instrumental', sfxEngine: 'custom:foley' } })
       const made = await generateAsset(mctx({ settings: custom }), mstub('sfx_bell', custom))
       if (!made.ok || made.skipped) throw new Error(`expected a version: ${JSON.stringify(made)}`)
-      expect(comfy.requests[0]).toMatchObject({ engine: 'custom:foley', prompt: 'a ship bell', seconds: 5 })
+      expect(comfy.requests[1]).toMatchObject({ engine: 'custom:foley', prompt: 'a ship bell', seconds: 5 })
+      expect(made.version).toMatchObject({ file: 'v1.flac', engine: 'custom:foley' })
+    })
+
+    it('sound.sfxEngine "none" skips with an import reason', async () => {
+      const importOnly = settings({ sound: { ambienceEngine: 'ace-step-v1-instrumental', sfxEngine: 'none' } })
+      const r = await generateAsset(mctx({ settings: importOnly }), mstub('sfx_bell', importOnly))
+      expect(r).toMatchObject({ ok: true, skipped: true })
+      if (r.ok && r.skipped) expect(r.reason).toMatch(/import a file/)
+      expect(comfy.requests).toHaveLength(0)
+    })
+
+    it('an old sfx entry with an empty engine falls back to the audio engine and generates', async () => {
+      const old: AssetEntry = { ...mstub('sfx_bell'), engine: '' }
+      const r = await generateAsset(mctx(), old)
+      if (!r.ok || r.skipped) throw new Error(`expected a version: ${JSON.stringify(r)}`)
+      expect(comfy.requests[0]).toMatchObject({ engine: 'ace-step-v1-instrumental', seconds: 5 })
+      expect(r.version).toMatchObject({ engine: 'ace-step-v1-instrumental' })
+      expect(r.entry.engine).toBe('ace-step-v1-instrumental')
     })
 
     it('an ambience calls the audio engine for a minute of sound', async () => {

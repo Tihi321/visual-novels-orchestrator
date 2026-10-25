@@ -70,7 +70,7 @@ describe('pure helpers', () => {
   it('engine for a flow project is flow for every image kind and unchanged for the rest', () => {
     const s = flowSettings()
     for (const k of ['background', 'sheet', 'sprite', 'cover', 'cg'] as const) expect(engineFor(k, s, k === 'cg' ? ['sheet_petra'] : undefined)).toBe('flow')
-    expect(engineFor('sfx', s)).toBeNull()
+    expect(engineFor('sfx', s)).toBe('ace-step-v1-instrumental')
     expect(engineFor('ambience', s)).toBe('ace-step-v1-instrumental')
     expect(engineFor('background', settings())).toBe('qwen-image-2.1')
     expect(deriveAssets(mediaBook(), s).filter((a) => ['background', 'sheet', 'sprite', 'cover', 'cg'].includes(a.kind)).every((a) => a.engine === 'flow')).toBe(true)

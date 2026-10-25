@@ -42,6 +42,38 @@ describe('stepRows', () => {
   })
 })
 
+describe('suggestedStart with missing assets', () => {
+  it('keeps unrun planning steps first', () => {
+    const afterImport = stepRows({ import: st('done', 'a'), analyse: st('done', 'b') }, false)
+    expect(suggestedStart(afterImport, { missingAssets: 3 })).toBe('art')
+    const afterArt = stepRows({ analyse: st('done', 'b'), art: st('done', 'c') }, false)
+    expect(suggestedStart(afterArt, { missingAssets: 3 })).toBe('music')
+    expect(suggestedStart(stepRows({}, false), { missingAssets: 3 })).toBe('analyse')
+  })
+  it('switches to generate when the normal next step is after it', () => {
+    const planned = stepRows({ import: st('done', 'a'), analyse: st('done', 'b'), art: st('done', 'c'), music: st('done', 'd') }, false)
+    expect(suggestedStart(planned)).toBe('generate')
+    expect(suggestedStart(planned, { missingAssets: 2 })).toBe('generate')
+    const generated = stepRows({ import: st('done', 'a'), analyse: st('done', 'b'), art: st('done', 'c'), music: st('done', 'd'), generate: st('done', 'e') }, false)
+    expect(suggestedStart(generated)).toBe('stage')
+    expect(suggestedStart(generated, { missingAssets: 2 })).toBe('generate')
+  })
+  it('switches to generate when the pipeline finished', () => {
+    const done: Record<string, StepStatus> = {}
+    for (const id of ['import', 'analyse', 'art', 'music', 'generate', 'stage', 'build', 'lint']) done[id] = st('done', id)
+    const rows = stepRows(done, false)
+    expect(suggestedStart(rows)).toBe('lint')
+    expect(suggestedStart(rows, { missingAssets: 1 })).toBe('generate')
+    expect(suggestedStart(rows, { missingAssets: 0 })).toBe('lint')
+  })
+  it('does not jump to generate over a failed or running step', () => {
+    const failed = stepRows({ analyse: st('done', 'a'), art: st('failed', 'b'), music: st('done', 'c'), generate: st('done', 'd') }, false)
+    expect(suggestedStart(failed, { missingAssets: 5 })).toBe('art')
+    const queued = stepRows({ music: st('done', 'a'), generate: st('queued', 'b') }, false)
+    expect(suggestedStart(queued, { missingAssets: 5 })).toBe('generate')
+  })
+})
+
 describe('progress', () => {
   it('formats and clamps counts', () => {
     expect(progressText({ done: 3, total: 10 })).toBe('3 / 10')

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { AssetView, ProjectDetail } from '../../../shared/protocol'
+import { AUDIO_KINDS } from '../../../shared/vn'
 import { pickFile, sendCommand } from '../../api'
 import { groupAssets, isAudioPath, isImagePath, readyCount, reviewBadge } from '../../lib/assets'
 import { engineChoices } from '../../lib/engines'
@@ -96,13 +97,19 @@ function AssetCard({ asset, slug, small }: { asset: AssetView; slug: string; sma
   const [pendingRev, setPendingRev] = useState<number | null>(null)
   const regenerating = pendingRev !== null && pendingRev === rev
   const badge = reviewBadge(asset)
-  const audio = asset.kind === 'music' || asset.kind === 'voiceRef' || asset.kind === 'sfx' || asset.kind === 'ambience'
+  const audioKind = AUDIO_KINDS.has(asset.kind)
+  const audio = audioKind || asset.kind === 'voiceRef'
   const file = asset.fileRel
   const versionNumbers = Object.keys(asset.versionFiles).map(Number).sort((a, b) => a - b)
-  const studio = asset.kind === 'voiceRef' ? null : asset.kind === 'music' ? 'Chiptune Studio' : 'Pixel Studio'
   const opened = useVn((s) => s.studioOpened[`${slug}:${asset.id}`])
   const warnings = asset.versions.find((v) => v.n === asset.selected)?.warnings ?? []
   const selectedVersion = asset.versions.find((v) => v.n === asset.selected)
+  const studio = asset.kind === 'voiceRef' ? null : audioKind ? 'Chiptune Studio' : 'Pixel Studio'
+  const studioBlocked = !file
+    ? 'This asset has no file yet: upload or generate one first'
+    : audioKind && !selectedVersion?.songFile
+      ? 'Only a version saved by Chiptune Studio can be opened there: this one has no song file'
+      : null
 
   const upload = () =>
     void pickFile(audio ? 'Choose an audio file' : 'Choose an image', audio ? 'audio' : 'image').then((f) => {
@@ -181,8 +188,8 @@ function AssetCard({ asset, slug, small }: { asset: AssetView; slug: string; sma
         {studio && (
           <button
             onClick={() => sendCommand({ type: 'openInStudio', slug, id: asset.id })}
-            disabled={!file || (asset.kind === 'music' && !selectedVersion?.songFile)}
-            title={asset.kind === 'music' && !selectedVersion?.songFile ? 'Only music made by Chiptune Studio can be opened there' : `Edit in ${studio}; saving there makes a new version`}
+            disabled={!!studioBlocked}
+            title={studioBlocked ?? `Edit in ${studio}; saving there makes a new version`}
             data-testid={`open-studio-${asset.id}`}
           >
             Open in {studio}
@@ -211,6 +218,8 @@ function RegenerateDialog({ asset, slug, onClose, onSent }: { asset: AssetView; 
   const engines = useVn((s) => s.engines)
   const workflows = useVn((s) => s.workflows)
   const choices = engineChoices(asset.kind, engines, workflows, asset.engine)
+  // The entry's engine may be gone from the inventory (an old empty or unknown id): start on a real choice, so the select is never blank.
+  const initialEngine = choices.some((c) => c.id === asset.engine) ? asset.engine : choices[0]?.id ?? asset.engine
   const [prompt, setPrompt] = useState(asset.prompt)
   const suggestion = useVn((s) => s.promptSuggestions[`${slug}:${asset.id}`])
   const [seenRev, setSeenRev] = useState(() => suggestion?.rev ?? 0)
@@ -226,7 +235,7 @@ function RegenerateDialog({ asset, slug, onClose, onSent }: { asset: AssetView; 
   useEffect(() => {
     if (suggestError) setSuggesting(false)
   }, [suggestError])
-  const [engine, setEngine] = useState(asset.engine)
+  const [engine, setEngine] = useState(initialEngine)
   const [seed, setSeed] = useState(asset.seed === null ? '' : String(asset.seed))
   const seedNum = seed.trim() === '' ? undefined : Number(seed)
   const seedBad = seedNum !== undefined && !Number.isInteger(seedNum)
@@ -258,7 +267,7 @@ function RegenerateDialog({ asset, slug, onClose, onSent }: { asset: AssetView; 
         <select value={engine} onChange={(e) => setEngine(e.target.value)} data-testid="regen-engine">
           {choices.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.label}
+              {c.id === 'none' ? 'None (import a file)' : c.label}
             </option>
           ))}
         </select>

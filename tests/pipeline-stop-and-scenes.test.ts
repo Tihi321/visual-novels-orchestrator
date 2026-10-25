@@ -133,6 +133,31 @@ describe('VnService.suggestAssetPrompt', () => {
 })
 
 describe('VnService.updateSceneCues & VnService.updateSceneStory', () => {
+  it('exposes scene music/ambience, beat cues and the menu/chapter tracks on ProjectDetail', async () => {
+    env = await makeVnEnv({ sdk: false })
+    const { slug } = await env.engine.vn.importProject(book('linear-en'))
+    const first = await env.engine.vn.detail(slug)
+    const scene = first.book.chapters[0]!.scenes[0]!
+    const line = scene.beats.find((b) => b.type === 'line')!
+    await env.engine.vn.store.writeJson(slug, 'cues.json', {
+      menuMusic: 'music_01',
+      chapters: { 1: { music: 'music_02' } },
+      scenes: { [scene.id]: { transition: 'fade', pause: 0.5, music: 'music_02', ambience: null } },
+      casts: {},
+      beats: { [line.id]: { image: 'ledger', sfx: 'bell', ambience: null } }
+    })
+
+    const d = await env.engine.vn.detail(slug)
+    expect(d.stageMusic).toEqual({ menu: 'music_01', chapters: { '1': 'music_02' } })
+    expect(d.cues[scene.id]).toMatchObject({
+      transition: 'fade',
+      pause: 0.5,
+      music: 'music_02',
+      ambience: null,
+      beats: { [line.id]: { image: 'ledger', sfx: 'bell', ambience: null } }
+    })
+  })
+
   it('updates scene cues and story metadata/beats and exposes them on ProjectDetail.cues and ProjectDetail.book', async () => {
     env = await makeVnEnv({ sdk: false })
     await env.engine.setPaused(true)

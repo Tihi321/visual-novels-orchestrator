@@ -8,7 +8,7 @@ import { generateAsset } from '../src/engine/assets/generate'
 import type { GenerateContext } from '../src/engine/assets/generate'
 import { pickChipSound } from '../src/engine/studios/chip-sound'
 import { engineFor } from '../src/engine/vn/service'
-import type { AssetEntry } from '../src/shared/vn'
+import type { AssetEntry, ProjectSettings } from '../src/shared/vn'
 import { mediaBook, settings } from './assets-fixtures'
 import { FakeChiptune } from './studio-fakes'
 import { FakeComfy } from './vn-helpers'
@@ -37,22 +37,39 @@ describe('pickChipSound', () => {
   })
 })
 
+const pixelSettings = (over: Partial<ProjectSettings> = {}) => settings({ art: { style: 'pixel', generator: 'z-image-turbo', editor: 'qwen-image-2.1-edit', review: false, bgRemoval: 'birefnet' }, ...over })
+
 describe('sound engines', () => {
-  it('the default is unchanged: no sfx engine, ambience on the music engine, also for a pixel book', () => {
-    for (const s of [settings(), settings({ art: { style: 'pixel', generator: 'z-image-turbo', editor: 'qwen-image-2.1-edit', review: false, bgRemoval: 'birefnet' } } as never)]) {
-      expect(engineFor('sfx', s)).toBeNull()
-      expect(engineFor('ambience', s)).toBe('ace-step-v1-instrumental')
-      const assets = deriveAssets(mediaBook(), s)
-      expect(assets.find((a) => a.id === 'sfx_bell')!.engine).toBe('')
-      expect(assets.find((a) => a.id === 'amb_waves')!.engine).toBe('ace-step-v1-instrumental')
-    }
+  it('a default illustrated project makes an sfx with the ambience (ACE-Step) engine', () => {
+    const s = settings()
+    expect(engineFor('sfx', s)).toBe('ace-step-v1-instrumental')
+    expect(engineFor('ambience', s)).toBe('ace-step-v1-instrumental')
+    const assets = deriveAssets(mediaBook(), s)
+    expect(assets.find((a) => a.id === 'sfx_bell')!.engine).toBe('ace-step-v1-instrumental')
+    expect(assets.find((a) => a.id === 'amb_waves')!.engine).toBe('ace-step-v1-instrumental')
   })
 
-  it('"chiptune" is the engine of the sfx and ambience assets', () => {
+  it('a pixel project with no music provider makes an sfx with Chiptune Studio, unless a music provider is set', () => {
+    expect(engineFor('sfx', pixelSettings())).toBe('chiptune')
+    expect(deriveAssets(mediaBook(), pixelSettings()).find((a) => a.id === 'sfx_bell')!.engine).toBe('chiptune')
+    // the music provider decides, not the art style on its own
+    expect(engineFor('sfx', pixelSettings({ music: { engine: 'ace-step-v1-instrumental', tracks: 3, provider: 'comfy' } }))).toBe('ace-step-v1-instrumental')
+    expect(engineFor('sfx', settings({ music: { engine: 'ace-step-v1-instrumental', tracks: 3, provider: 'chiptune' } }))).toBe('chiptune')
+  })
+
+  it('an explicit sfx engine is respected: chiptune, a custom workflow and "none"', () => {
     expect(engineFor('sfx', chipSettings())).toBe('chiptune')
+    expect(engineFor('sfx', settings({ sound: { ambienceEngine: 'ace-step-v1-instrumental', sfxEngine: 'custom:foley' } }))).toBe('custom:foley')
+    expect(engineFor('sfx', settings({ sound: { ambienceEngine: 'ace-step-v1-instrumental', sfxEngine: 'none' } }))).toBe('none')
+  })
+
+  it('the settings of the ambience are independent of the sfx engine', () => {
     expect(stub('sfx_bell').engine).toBe('chiptune')
     expect(stub('amb_waves').engine).toBe('chiptune')
     expect(stub('amb_waves', chipSettings({ sfxEngine: 'chiptune' })).engine).toBe('ace-step-v1-instrumental')
+    const importOnly = settings({ sound: { ambienceEngine: 'ace-step-v1-instrumental', sfxEngine: 'none' } })
+    expect(deriveAssets(mediaBook(), importOnly).find((a) => a.id === 'sfx_bell')!.engine).toBe('none')
+    expect(deriveAssets(mediaBook(), importOnly).find((a) => a.id === 'amb_waves')!.engine).toBe('ace-step-v1-instrumental')
   })
 })
 
@@ -124,14 +141,25 @@ describe('generating sounds with Chiptune Studio', () => {
     expect(await generateAsset(ctx(chip), stub('amb_waves'))).toMatchObject({ ok: false })
   })
 
-  it('the default engines are unchanged: no engine skips the sfx, the ComfyUI engine makes the ambience', async () => {
+  it('a default project generates its sfx with ACE-Step; "none" keeps it import-only', async () => {
     const chip = new FakeChiptune()
     const comfy = new FakeComfy()
     const plain = settings()
-    expect(await generateAsset(ctx(chip, comfy, { settings: plain }), stub('sfx_bell', plain))).toMatchObject({ ok: true, skipped: true })
+    const made = await generateAsset(ctx(chip, comfy, { settings: plain }), stub('sfx_bell', plain))
+    if (!made.ok || made.skipped) throw new Error(JSON.stringify(made))
+    expect(made.version).toMatchObject({ file: 'v1.mp3', engine: 'ace-step-v1-instrumental' })
+    expect(comfy.requests[0]).toMatchObject({ engine: 'ace-step-v1-instrumental', seconds: 5 })
     const amb = await generateAsset(ctx(chip, comfy, { settings: plain }), stub('amb_waves', plain))
     expect(amb).toMatchObject({ ok: true, version: { engine: 'ace-step-v1-instrumental' } })
-    expect(comfy.requests).toHaveLength(1)
+    expect(comfy.requests).toHaveLength(2)
+    expect(chip.calls).toHaveLength(0)
+
+    // the old behaviour is now opt-in: sound.sfxEngine "none" means the file is imported by hand
+    const importOnly = settings({ sound: { ambienceEngine: 'ace-step-v1-instrumental', sfxEngine: 'none' } })
+    const skipped = await generateAsset(ctx(chip, comfy, { settings: importOnly }), stub('sfx_bell', importOnly))
+    expect(skipped).toMatchObject({ ok: true, skipped: true })
+    if (skipped.ok && skipped.skipped) expect(skipped.reason).toMatch(/import a file/)
+    expect(comfy.requests).toHaveLength(2)
     expect(chip.calls).toHaveLength(0)
   })
 })

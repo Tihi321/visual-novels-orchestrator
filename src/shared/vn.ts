@@ -301,8 +301,9 @@ export const projectSettingsSchema = z.object({
     .default({ enabled: false, langs: [], provider: 'vibetts', engines: {}, voices: {} }),
   /**
    * Sound effects and ambiences. `ambienceEngine` is a ComfyUI music engine (the default) or `chiptune` (Chiptune Studio's `compose_sfx` ambience loops).
-   * There is no sound-effect engine by default: an effect without a file waits for `vno_asset_import`, unless `sfxEngine` is `chiptune`
-   * (Chiptune Studio's `compose_sfx`) or a `custom:<workflow>`.
+   * `sfxEngine` names the engine of a sound effect: an audio engine, `chiptune` (Chiptune Studio's `compose_sfx`) or a `custom:<workflow>`.
+   * Missing: the music provider's engine (Chiptune Studio for a pixel book) or else `ambienceEngine`. `"none"` keeps sound effects import-only
+   * (`vno_asset_import`).
    */
   sound: z
     .object({
@@ -340,6 +341,19 @@ export const CHIPTUNE_ENGINE = 'chiptune'
 export const FLOW_ENGINE = 'flow'
 /** The pseudo engine id of a track made by Flow Music (spends Flow Music credits). */
 export const FLOW_MUSIC_ENGINE = 'flow-music'
+/** `sound.sfxEngine` set to this: sound effects are imported by hand, never generated. */
+export const SFX_IMPORT_ONLY = 'none'
+
+/**
+ * The engine that makes a sound effect: `sound.sfxEngine` when set (`chiptune`, an audio engine or `custom:<workflow>`;
+ * `"none"` keeps effects import-only), else the music provider's engine (Chiptune Studio for a pixel book) or the ambience engine.
+ */
+export function resolveSfxEngine(settings: Pick<ProjectSettings, 'art' | 'music' | 'sound'>): string {
+  const chosen = settings.sound.sfxEngine?.trim()
+  if (chosen === SFX_IMPORT_ONLY) return SFX_IMPORT_ONLY
+  if (chosen) return chosen
+  return resolveMusicProvider(settings) === 'chiptune' ? CHIPTUNE_ENGINE : settings.sound.ambienceEngine
+}
 
 // ---- assets (assets.json) ----
 

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { computeStageAtBeat } from '../../lib/stage-preview'
+import { computeStageAtBeat, resolveSceneAudio } from '../../lib/stage-preview'
 import { expressionsOf } from '../../../shared/vn'
 import type { AssetView, ProjectDetail, SceneTransitionView, StageSlotView } from '../../../shared/protocol'
-import type { VnBeat, VnScene } from '../../../shared/vn'
+import type { VnBeat } from '../../../shared/vn'
 import { sendCommand } from '../../api'
 import { projectAssetUrl } from '../../lib/urls'
 import { useVn } from '../../store/hooks'
@@ -11,13 +11,7 @@ import { Pill, useRecentError } from '../common'
 const SLOTS: StageSlotView[] = ['left', 'center', 'right']
 const TRANSITIONS: SceneTransitionView[] = ['dissolve', 'fade', 'none']
 const TIME_PRESETS = ['', 'day', 'night', 'dawn', 'dusk']
-
-interface AccumulatedStage {
-  slots: Partial<Record<StageSlotView, { charKey: string; expression: string }>>
-  cg: string | null
-  activeSpeaker: string | null
-}
-
+const SOURCE_LABELS: Record<'cue' | 'story' | 'chapter', string> = { cue: 'scene cue', story: 'story', chapter: 'chapter' }
 
 function resolveSpriteAsset(
   assets: Record<string, AssetView> | undefined,
@@ -29,6 +23,63 @@ function resolveSpriteAsset(
     assets[`sprite_${charKey}_${expression}`] ??
     assets[`sprite_${charKey}_neutral`] ??
     assets[`sheet_${charKey}`]
+  )
+}
+
+/** One row of the scene audio card: the effective cue, where it comes from, and a player when it has a file. */
+function SceneAudioRow({
+  label,
+  cue,
+  from,
+  asset,
+  rev,
+  slug,
+  loop,
+  audioKey,
+  emptyLabel,
+  testId
+}: {
+  label: string
+  cue: string | null
+  from: 'cue' | 'story' | 'chapter' | null
+  asset: AssetView | undefined
+  rev: number
+  slug: string
+  loop: boolean
+  audioKey: string
+  emptyLabel: string
+  testId: string
+}) {
+  return (
+    <div className="row" style={{ gap: 10, alignItems: 'center', flexWrap: 'wrap' }} data-testid={testId}>
+      <span className="dim" style={{ width: 78, flexShrink: 0 }}>
+        {label}
+      </span>
+      <span style={{ minWidth: 120 }}>
+        {cue ? <b>{cue}</b> : <span className="dim">{emptyLabel}</span>}
+        {from && (
+          <span className="dim" style={{ fontSize: 11, marginLeft: 6 }}>
+            · {SOURCE_LABELS[from]}
+          </span>
+        )}
+      </span>
+      <div style={{ flex: 1, minWidth: 220 }}>
+        {asset?.fileRel ? (
+          <audio
+            key={audioKey}
+            controls
+            preload="none"
+            loop={loop}
+            src={projectAssetUrl(slug, asset.fileRel, rev)}
+            style={{ width: '100%', height: 32 }}
+          />
+        ) : cue ? (
+          <span className="dim" style={{ fontSize: 12 }}>
+            no file yet: generate or import it in Assets
+          </span>
+        ) : null}
+      </div>
+    </div>
   )
 }
 
@@ -81,8 +132,16 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
 
   const currentBeat: VnBeat | undefined = scene?.beats[beatIdx]
   const stage = useMemo(
-    () => (scene ? computeStageAtBeat(scene, castsMap, beatIdx) : { slots: {}, cg: null, activeSpeaker: null }),
-    [scene, castsMap, beatIdx]
+    () => (scene ? computeStageAtBeat(scene, castsMap, beatIdx, cuesMap[scene.id]?.beats) : { slots: {}, cg: null, activeSpeaker: null }),
+    [scene, castsMap, beatIdx, cuesMap]
+  )
+  const sceneAudio = useMemo(
+    () => (scene ? resolveSceneAudio(book, cuesMap, detail.stageMusic ?? { chapters: {} }, scene.id, beatIdx) : null),
+    [book, cuesMap, detail.stageMusic, scene, beatIdx]
+  )
+  const chapterTrack = useMemo(
+    () => (activeEntry ? (detail.stageMusic?.chapters[String(activeEntry.chapterN)] ?? null) : null),
+    [activeEntry, detail.stageMusic]
   )
 
   const charByKey = useMemo(() => new Map(book.characters.map((c) => [c.key, c])), [book.characters])
@@ -110,9 +169,22 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
   const transition: SceneTransitionView = sceneCue?.transition ?? 'dissolve'
   const pauseVal = sceneCue?.pause ?? 0
 
-  const bgAssetId = stage.cg ? `cg_${stage.cg}` : scene.placeKey ? `bg_${scene.placeKey}` : null
+  // The background is the scene's own asset id, exactly as the game builder uses it.
+  const bgAssetId = scene.backgroundId || null
   const bgAsset = bgAssetId ? assetMap?.[bgAssetId] : undefined
   const bgUrl = bgAsset?.fileRel ? projectAssetUrl(slug, bgAsset.fileRel, assetRev[`${slug}:${bgAsset.id}`] ?? 0) : null
+
+  // The CG or insert shown over the stage: a full picture covers it, an insert is shown small in the middle.
+  const cgKey = stage.cg
+  const cgEntry = cgKey ? book.images?.find((i) => i.key === cgKey) : undefined
+  const cgDisplay = cgEntry?.display ?? 'full'
+  const cgAsset = cgKey ? assetMap?.[`cg_${cgKey}`] : undefined
+  const cgUrl = cgAsset?.fileRel ? projectAssetUrl(slug, cgAsset.fileRel, assetRev[`${slug}:${cgAsset.id}`] ?? 0) : null
+
+  const revOf = (asset: AssetView | undefined): number => (asset ? (assetRev[`${slug}:${asset.id}`] ?? 0) : 0)
+  const musicAsset = sceneAudio?.music ? assetMap?.[sceneAudio.music] : undefined
+  const ambienceAsset = sceneAudio?.ambience ? assetMap?.[`amb_${sceneAudio.ambience}`] : undefined
+  const sfxAsset = sceneAudio?.sfx ? assetMap?.[`sfx_${sceneAudio.sfx}`] : undefined
 
   const handleCastSlotChange = (beat: Extract<VnBeat, { type: 'cast' }>, charKey: string, targetSlot: StageSlotView) => {
     const existingSlots: Record<string, StageSlotView> = { ...(sceneCue?.casts?.[beat.id] ?? {}) }
@@ -235,6 +307,7 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
             >
               {!bgUrl && (
                 <div
+                  data-testid="scene-bg-missing"
                   className="dim"
                   style={{ position: 'absolute', top: 10, left: 12, fontSize: 12, background: 'rgba(0,0,0,0.55)', padding: '2px 8px', borderRadius: 4 }}
                 >
@@ -302,6 +375,47 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
                 )
               })}
 
+              {/* CG / insert overlay: above the characters, below the dialogue box */}
+              {cgKey && (
+                <div
+                  data-testid="scene-cg"
+                  style={
+                    cgDisplay === 'insert'
+                      ? { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }
+                      : { position: 'absolute', inset: 0, pointerEvents: 'none' }
+                  }
+                >
+                  {cgUrl ? (
+                    <img
+                      src={cgUrl}
+                      alt={cgKey}
+                      style={
+                        cgDisplay === 'insert'
+                          ? { width: '60%', height: '60%', objectFit: 'contain', filter: 'drop-shadow(0 10px 28px rgba(0,0,0,0.6))' }
+                          : { width: '100%', height: '100%', objectFit: 'cover' }
+                      }
+                    />
+                  ) : (
+                    <div
+                      className="dim"
+                      style={{
+                        position: 'absolute',
+                        top: cgDisplay === 'insert' ? '50%' : 10,
+                        right: cgDisplay === 'insert' ? 'auto' : 12,
+                        left: cgDisplay === 'insert' ? '50%' : 'auto',
+                        transform: cgDisplay === 'insert' ? 'translate(-50%, -50%)' : undefined,
+                        fontSize: 12,
+                        background: 'rgba(0,0,0,0.55)',
+                        padding: '2px 8px',
+                        borderRadius: 4
+                      }}
+                    >
+                      {`cg_${cgKey} (no image yet)`}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Dialogue Overlay Box */}
               <div
                 className="vnp-textbox"
@@ -344,6 +458,54 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
               </div>
             </div>
           </div>
+
+          {/* Scene Audio: the effective cues at this beat, as the game plays them */}
+          {sceneAudio && (
+            <div className="card stack" style={{ gap: 8 }} data-testid="scene-audio">
+              <div className="row spread">
+                <b>Scene audio</b>
+                <span className="dim" style={{ fontSize: 12 }}>
+                  What the game plays at {scene.id} · beat {beatIdx + 1}
+                </span>
+              </div>
+              <SceneAudioRow
+                label="Music"
+                cue={sceneAudio.music}
+                from={sceneAudio.musicFrom}
+                asset={musicAsset}
+                rev={revOf(musicAsset)}
+                slug={slug}
+                loop
+                audioKey={`music:${sceneAudio.music ?? 'none'}`}
+                emptyLabel={sceneAudio.musicFrom ? '(silence)' : '(none)'}
+                testId="scene-audio-music"
+              />
+              <SceneAudioRow
+                label="Ambience"
+                cue={sceneAudio.ambience}
+                from={sceneAudio.ambienceFrom}
+                asset={ambienceAsset}
+                rev={revOf(ambienceAsset)}
+                slug={slug}
+                loop
+                audioKey={`ambience:${sceneAudio.ambience ?? 'none'}`}
+                emptyLabel={sceneAudio.ambienceFrom ? '(stopped)' : '(none)'}
+                testId="scene-audio-ambience"
+              />
+              <SceneAudioRow
+                label="SFX (this beat)"
+                cue={sceneAudio.sfx}
+                from={sceneAudio.sfxFrom}
+                asset={sfxAsset}
+                rev={revOf(sfxAsset)}
+                slug={slug}
+                loop={false}
+                audioKey={`${scene.id}:${beatIdx}`}
+                emptyLabel="(none)"
+                testId="scene-audio-sfx"
+              />
+            </div>
+          )}
 
           {/* Scene Header Controls */}
           <div className="card stack" style={{ gap: 10 }}>
@@ -449,7 +611,7 @@ export function ScenesTab({ slug, detail }: { slug: string; detail: ProjectDetai
                   }}
                   data-testid="scene-music-select"
                 >
-                  <option value="">(chapter default)</option>
+                  <option value="">{chapterTrack ? `(chapter default: ${chapterTrack})` : '(chapter default)'}</option>
                   <option value="__silence__">(silence)</option>
                   {musicIds.map((m) => (
                     <option key={m} value={m}>
