@@ -99,8 +99,22 @@ describe('graphs', () => {
     expect(yue[7]!.inputs).toMatchObject({ format: 'opus', 'format.quality': '128k' })
     const mm = ENGINES['minimax-music-3']!.build(baseOpts({ files: audioFiles, caption: 'c', seconds: 20 }))
     expect(mm[4]!.inputs).toMatchObject({ caption: 'c', max_duration: 20 })
-    expect(enginesOfKind('audio')).toHaveLength(4)
+    // the audio registry also carries the TTS Audio Suite voice engines and MOSS-SoundEffect v2
+    const music = enginesOfKind('audio').filter((id) => (ENGINES[id]!.task ?? 'music') === 'music')
+    expect(music).toEqual(['ace-step-v1', 'ace-step-v1-instrumental', 'yue2', 'minimax-music-3'])
+    expect(enginesOfKind('audio')).toHaveLength(12)
+    expect(enginesOfKind('audio').filter((id) => ENGINES[id]!.task === 'tts')).toHaveLength(7)
+    expect(enginesOfKind('audio').filter((id) => ENGINES[id]!.task === 'sfx')).toEqual(['moss-soundeffect-v2'])
     expect(enginesOfKind('image')).toHaveLength(5)
+  })
+
+  it('saves an OmniVoice clip as mp3 through SaveAudioAdvanced and as wav through SaveAudio', () => {
+    const opts = (format: string): BuildOpts => ({ files: {}, filenamePrefix: 'vno_voice', seed: 1, text: 'Dobar dan.', format })
+    const mp3 = ENGINES['omnivoice']!.build(opts('mp3'))
+    expect(mp3[5]).toMatchObject({ class_type: 'SaveAudioAdvanced', inputs: { audio: ['4', 0], format: 'mp3', 'format.quality': 'V0' } })
+    const wav = ENGINES['omnivoice']!.build(opts('wav'))
+    expect(wav[5]).toMatchObject({ class_type: 'SaveAudio', inputs: { audio: ['4', 0], filename_prefix: 'vno_voice' } })
+    expect(ENGINES['omnivoice']!.outputNode).toBe('5')
   })
 
   it('builds the background removal graph', () => {
@@ -366,6 +380,25 @@ describe('inventory', () => {
   it('treats an unlistable folder as unknown', () => {
     const { engines } = engineReports(parseComfyConfig({}), {})
     expect(engines.every((e) => e.ready)).toBe(true)
+  })
+
+  it('reports the missing TTS Audio Suite nodes and the task and languages of every engine', () => {
+    const { engines } = engineReports(parseComfyConfig({}), {}, ['OmniVoiceEngineNode', 'UnifiedTTSTextNode', 'CharacterVoicesNode', 'LoadAudio'])
+    const omni = engines.find((e) => e.id === 'omnivoice')!
+    expect(omni).toMatchObject({ kind: 'audio', task: 'tts', languages: '*', ready: false })
+    expect(omni.missing).toEqual(['node:SaveAudio', 'node:SaveAudioAdvanced'])
+    const moss = engines.find((e) => e.id === 'moss-soundeffect-v2')!
+    expect(moss).toMatchObject({ task: 'sfx', languages: [], ready: false })
+    expect(moss.missing).toEqual(expect.arrayContaining(['node:UnifiedSoundEffectsNode', 'node:MossSoundEffectV2EngineNode']))
+    // a music engine has no suite nodes to need; a TTS engine reports the language codes it reads
+    expect(engines.find((e) => e.id === 'ace-step-v1')).toMatchObject({ task: 'music', languages: [], ready: true })
+    const chatterbox = engines.find((e) => e.id === 'chatterbox-23lang')!
+    expect(chatterbox.languages).toContain('en')
+    expect(chatterbox.languages).not.toContain('hr')
+    // every registry node known: the TTS/SFX engines are ready
+    const nodes = [...new Set(Object.values(ENGINES).flatMap((e) => e.requiresNodes ?? []))]
+    const all = engineReports(parseComfyConfig({}), {}, nodes).engines
+    expect(all.filter((e) => e.task === 'tts' || e.task === 'sfx').every((e) => e.ready)).toBe(true)
   })
 
   it('reads removal model names from both object_info shapes', () => {

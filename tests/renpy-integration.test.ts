@@ -35,7 +35,7 @@ async function build(name: FixtureName, dir: string, opts: { hr: boolean; voice?
     projectDir: path.join(root, dir),
     book,
     editions,
-    settings: loadSettings(book, { editions: opts.hr ? ['en', 'hr'] : ['en'], voice: { enabled: !!opts.voice, langs: ['en', 'hr'], provider: 'vibetts', engines: {}, voices: {} } }),
+    settings: loadSettings(book, { editions: opts.hr ? ['en', 'hr'] : ['en'], voice: { enabled: !!opts.voice, langs: ['en', 'hr'], provider: 'comfy', engine: 'omnivoice', engines: {}, styles: {}, refTexts: {}, voices: {} } }),
     resolveAsset: () => null,
     voice: opts.voice ? { has: (lang, id) => (fs.existsSync(path.join(clips, lang, `${id}.ogg`)) ? path.join(clips, lang, `${id}.ogg`) : null) } : undefined,
     sdkPath

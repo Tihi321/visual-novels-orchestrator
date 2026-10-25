@@ -10,9 +10,12 @@ import {
   randomSeed,
   sizeOf,
   snap16,
+  type BuildOpts,
+  type EngineDef,
   type EngineKind,
   type Graph
 } from './graphs'
+import { engineLanguageList, engineLanguageValue, engineReadsLanguage } from './tts-engines'
 
 /**
  * ComfyUI client, ported from dsh-comfyui `lib/comfy.js`.
@@ -387,10 +390,22 @@ export interface ComfyRequest {
   seconds?: number
   format?: 'flac' | 'mp3' | 'opus' | 'wav'
   lyrics?: string
-  /** Custom TTS workflows. */
+  /** TTS and SFX: what the voice says (TTS) or the sound effect is (SFX). */
   text?: string
+  /** The project's language code (`en`, `hr`). */
   language?: string
+  /** The value the engine's language input takes, when the caller already mapped it (`English`, `F5-DE`, ...). */
+  languageName?: string
+  /** The delivery style: the `instruct` input of OmniVoice/Qwen3, or inline tags for Higgs Audio v3. */
+  instruct?: string
+  /** The transcript of the voice reference clip. */
+  voiceRefText?: string
+  /** The voice reference clip of the speaker: a file path or its bytes (uploaded first). */
   voiceRef?: string | Buffer
+  /** `UnifiedTTSTextNode.max_chars_per_chunk` (`config/voice.md`). */
+  chunkChars?: number
+  /** The speed multiplier of the engines that take one (`config/voice.md`). */
+  speed?: number
   filenamePrefix?: string
   onProgress?: (p: ComfyProgress) => void
   signal?: AbortSignal
@@ -516,10 +531,71 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
     return { bytes, ext: extOf(item.filename, wanted.length > 0 ? kind : kind === 'image' ? 'audio' : 'image'), kind, seed, engine: req.engine, lane, promptId }
   }
 
+  /**
+   * The guard of a built-in TTS/SFX engine: ComfyUI must have the suite's nodes. An unreachable ComfyUI is left to `chooseLane`
+   * (its message says which lane did not answer), an installation without the suite gets the install hint.
+   */
+  async function requireNodes(id: string, engine: EngineDef): Promise<void> {
+    if (!engine.requiresNodes?.length) return
+    const info = await getInfo()
+    if (!info) return
+    const missing = engine.requiresNodes.filter((node) => !info[node])
+    if (missing.length > 0) throw new Error(`engine "${id}" needs the ComfyUI nodes ${missing.join(', ')} (TTS Audio Suite): install it or pick another voice engine`)
+  }
+
+  /** A built-in TTS or SFX engine: the graph comes from `tts-engines.ts`, the clip from the suite's save node. */
+  async function generateBuiltinAudio(req: ComfyRequest, engine: EngineDef): Promise<ComfyResult> {
+    // the language either goes into the engine's language input or is worked out from the text, but the model must read it
+    let languageName = req.languageName
+    if (languageName === undefined && req.language !== undefined) {
+      if (engine.language) languageName = engineLanguageValue(engine, req.language)
+      if (!engineReadsLanguage(engine, req.language) || (engine.language && languageName === undefined)) {
+        throw new Error(`engine "${req.engine}" does not read ${req.language} (it reads: ${engineLanguageList(engine)})`)
+      }
+    }
+    await requireNodes(req.engine, engine)
+    const lane = await chooseLane(req.signal)
+    req.onProgress?.({ stage: 'lane', message: lane })
+    let voiceRef: string | undefined
+    // an upload only makes sense for the engines that clone (never chatterbox/vibevoice, which ignore it)
+    if (req.voiceRef !== undefined && engine.clone !== 'none') {
+      const ext = typeof req.voiceRef === 'string' ? path.extname(req.voiceRef) : ''
+      const name = `vno_voice_${Date.now().toString(36)}${ext || `.${req.format ?? config.audioFormat}`}`
+      req.onProgress?.({ stage: 'upload', message: 'voice reference' })
+      voiceRef = (await uploadImage(lane, req.voiceRef, { name })).filename
+    }
+    const seed = req.seed ?? randomSeed()
+    const overrides = config.engineSettings[req.engine] ?? {}
+    const opts: BuildOpts = {
+      ...engine.defaults,
+      ...overrides,
+      files: (engine.fileGroup ? files[engine.fileGroup] : {}) ?? {},
+      filenamePrefix: req.filenamePrefix ?? (engine.task === 'sfx' ? 'vno_sfx' : 'vno_voice'),
+      seed,
+      prompt: req.prompt ?? '',
+      text: req.text ?? req.prompt ?? '',
+      negativePrompt: req.negative ?? '',
+      format: req.format ?? config.audioFormat,
+      ...(languageName !== undefined ? { languageName } : {}),
+      ...(req.instruct !== undefined ? { instruct: req.instruct } : {}),
+      ...(req.voiceRefText !== undefined ? { voiceRefText: req.voiceRefText } : {}),
+      ...(voiceRef !== undefined ? { voiceRef } : {}),
+      ...(req.chunkChars !== undefined ? { chunkChars: req.chunkChars } : {}),
+      ...(req.speed !== undefined ? { speed: req.speed } : {}),
+      ...(req.seconds !== undefined ? { seconds: req.seconds } : {}),
+      ...(req.steps !== undefined ? { steps: req.steps } : {}),
+      ...(req.cfg !== undefined ? { cfg: req.cfg } : {})
+    }
+    const graph = engine.build(opts)
+    const { promptId, collected } = await runGraph(lane, graph, req, engine.outputNode)
+    return finish(lane, promptId, engine.kind, collected, req, seed)
+  }
+
   async function generate(req: ComfyRequest): Promise<ComfyResult> {
     if (req.engine.startsWith('custom:')) return generateCustom(req)
     const engine = ENGINES[req.engine]
     if (!engine) throw new Error(`unknown engine "${req.engine}"`)
+    if (engine.task === 'tts' || engine.task === 'sfx') return generateBuiltinAudio(req, engine)
     const lane = await chooseLane(req.signal)
     req.onProgress?.({ stage: 'lane', message: lane })
 
@@ -539,7 +615,7 @@ export function createComfyClient(opts: ComfyClientOptions): ComfyClient {
       ...overrides,
       ...(req.steps !== undefined ? { steps: req.steps } : {}),
       ...(req.cfg !== undefined ? { cfg: req.cfg } : {}),
-      files: files[engine.fileGroup],
+      files: (engine.fileGroup ? files[engine.fileGroup] : {}) ?? {},
       filenamePrefix: req.filenamePrefix ?? (engine.kind === 'image' ? 'vno_image' : 'vno_audio'),
       seed,
       prompt,

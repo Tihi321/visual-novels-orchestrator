@@ -1,3 +1,4 @@
+import type { EngineTask } from '../../shared/vn'
 import {
   freeMemory,
   lanesOf,
@@ -42,6 +43,10 @@ export interface EngineReport {
   id: string
   kind: 'image' | 'audio'
   label: string
+  /** What it makes: `music` (the default), speech (`tts`) or a sound effect (`sfx`). */
+  task: EngineTask
+  /** The codes a TTS engine reads, `'*'` for any language; empty when it has no language input. */
+  languages: string[] | '*'
   ready: boolean
   missing: string[]
 }
@@ -59,21 +64,27 @@ export interface Inventory {
   backgroundRemoval: { available: boolean; models: string[] }
 }
 
-/** Per-engine readiness from model files; unknown (`null`) file presence is not a failure. */
-export function engineReports(config: ComfyConfig, models: Record<string, string[]>): { checks: FileCheck[]; engines: EngineReport[] } {
+/**
+ * Per-engine readiness from model files and (for the TTS/SFX engines) the ComfyUI node catalog. `nodes` is undefined when no lane
+ * answered, so unknown nodes are not failures. The engines that the TTS Audio Suite manages (`task` tts/sfx) have no model files:
+ * they are ready when their nodes are listed.
+ */
+export function engineReports(config: ComfyConfig, models: Record<string, string[]>, nodes?: readonly string[]): { checks: FileCheck[]; engines: EngineReport[] } {
   const groups = mergeFiles(config.files as never)
   const checks: FileCheck[] = []
   const engines: EngineReport[] = []
   for (const [id, engine] of Object.entries(ENGINES)) {
     const missing: string[] = []
-    for (const [key, folder] of engine.requires) {
-      const value = groups[engine.fileGroup][key] ?? ''
+    for (const [key, folder] of engine.requires ?? []) {
+      const group = engine.fileGroup ?? 'audio'
+      const value = groups[group][key] ?? ''
       const listed = models[folder] ?? []
       const present = listed.length === 0 ? null : listed.includes(value)
-      if (!checks.some((c) => c.group === engine.fileGroup && c.key === key)) checks.push({ group: engine.fileGroup, key, value, folder, present })
+      if (!checks.some((c) => c.group === group && c.key === key)) checks.push({ group, key, value, folder, present })
       if (present === false) missing.push(`${key}=${value}`)
     }
-    engines.push({ id, kind: engine.kind, label: engine.label, ready: missing.length === 0, missing })
+    if (nodes) for (const node of engine.requiresNodes ?? []) if (!nodes.includes(node)) missing.push(`node:${node}`)
+    engines.push({ id, kind: engine.kind, label: engine.label, task: engine.task ?? 'music', languages: engine.languages ?? [], ready: missing.length === 0, missing })
   }
   return { checks, engines }
 }
@@ -84,6 +95,8 @@ export async function buildInventory(config: ComfyConfig, opts: { workflowDirs?:
   let models: Record<string, string[]> = {}
   let info: ObjectInfo = {}
   let listed = false
+  /** The node classes ComfyUI lists; undefined when no lane answered (then node readiness is unknown, not a failure). */
+  let knownNodes: string[] | undefined
   for (const url of lanesOf(config)) {
     const report: LaneReport = { url, reachable: false, running: 0, pending: 0, error: '' }
     try {
@@ -96,7 +109,12 @@ export async function buildInventory(config: ComfyConfig, opts: { workflowDirs?:
         for (const folder of Object.keys(MODEL_FOLDERS)) {
           models[folder] = await listModelFiles(url, folder).catch(() => [])
         }
-        info = await objectInfo(url).catch(() => ({}))
+        try {
+          info = await objectInfo(url)
+          knownNodes = Object.keys(info)
+        } catch {
+          info = {}
+        }
       }
     } catch (error) {
       report.error = (error as Error).message
@@ -104,13 +122,13 @@ export async function buildInventory(config: ComfyConfig, opts: { workflowDirs?:
     lanes.push(report)
   }
   if (!listed) models = {}
-  const { checks, engines } = engineReports(config, models)
+  const { checks, engines } = engineReports(config, models, knownNodes)
   const removal = removalModelsOf(info)
   return {
     ok: lanes.some((l) => l.reachable),
     lanes,
     models,
-    nodes: Object.keys(info),
+    nodes: knownNodes ?? [],
     checks,
     engines,
     customWorkflows: opts.workflowDirs ? await listCustomWorkflows(opts.workflowDirs) : [],

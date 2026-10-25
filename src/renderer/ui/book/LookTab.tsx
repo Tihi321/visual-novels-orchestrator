@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { ProjectDetail, ThemeInfo } from '../../../shared/protocol'
-import { CHIPS, DITHERS, isPictureBook, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../../shared/vn'
+import { CHIPS, CHIPTUNE_ENGINE, DITHERS, MOSS_SFX_ENGINE, SFX_IMPORT_ONLY, isPictureBook, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider, resolveSfxEngine } from '../../../shared/vn'
 import { updateSettings } from '../../api'
-import { editorChoices, generatorChoices, musicChoices } from '../../lib/engines'
+import { ambienceChoices, editorChoices, generatorChoices, musicChoices, sfxChoices } from '../../lib/engines'
 import { useVn } from '../../store/hooks'
 import { Pill } from '../common'
 
@@ -13,6 +13,7 @@ export function LookTab({ slug, detail }: { slug: string; detail: ProjectDetail 
       <ArtCard slug={slug} detail={detail} />
       <ThemeCard slug={slug} theme={settings.theme} resolved={detail.resolvedTheme} />
       <MusicCard slug={slug} detail={detail} />
+      <SoundCard slug={slug} detail={detail} />
     </div>
   )
 }
@@ -253,6 +254,49 @@ function MusicCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
         )}
         <label className="dim">Tracks</label>
         <input type="number" min={0} max={20} style={{ width: 80 }} value={tracks} onChange={(e) => setTracks(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} data-testid="music-tracks" />
+      </div>
+    </div>
+  )
+}
+
+/** Sound effects and ambiences: which engine makes them (the music/ambience engine by default; MOSS-SoundEffect v2 explicitly; Chiptune Studio for a chiptune project). */
+function SoundCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
+  const sound = detail.settings.sound
+  const engines = useVn((s) => s.engines)
+  const workflows = useVn((s) => s.workflows)
+  const sfx = sfxChoices(engines, workflows)
+  const ambience = ambienceChoices(engines, workflows, sound.ambienceEngine)
+  const labelOf = (id: string): string => [...sfx, ...ambience].find((o) => o.id === id)?.label ?? id
+  // what Auto resolves to: Chiptune Studio for a chiptune project, else the ambience engine (ACE-Step)
+  const autoSfx = resolveSfxEngine({ art: detail.settings.art, music: detail.settings.music, sound: { ambienceEngine: sound.ambienceEngine } })
+  const moss = sfx.find((o) => o.id === MOSS_SFX_ENGINE) ?? { id: MOSS_SFX_ENGINE, label: 'MOSS-SoundEffect v2 (sound effects)' }
+  const chiptune = sfx.find((o) => o.id === CHIPTUNE_ENGINE) ?? { id: CHIPTUNE_ENGINE, label: 'Chiptune Studio (compose_sfx)' }
+  const rest = sfx.filter((o) => o.id !== MOSS_SFX_ENGINE && o.id !== CHIPTUNE_ENGINE)
+  const current = sound.sfxEngine ?? ''
+  const sfxOptions = [{ id: '', label: `Auto (${labelOf(autoSfx)})` }, moss, ...rest, chiptune]
+  if (current && current !== SFX_IMPORT_ONLY && !sfxOptions.some((o) => o.id === current)) sfxOptions.push({ id: current, label: current })
+  sfxOptions.push({ id: SFX_IMPORT_ONLY, label: 'None (import only)' })
+  return (
+    <div className="card" data-testid="look-sound">
+      <h3>Sound</h3>
+      <div className="form-grid">
+        <label className="dim">Sound effects</label>
+        <Select
+          value={current}
+          options={sfxOptions}
+          onChange={(v) => updateSettings(slug, { sound: { sfxEngine: v === '' ? null : v } })}
+          testId="sound-sfx-engine"
+        />
+        <label className="dim">Ambience</label>
+        <Select
+          value={sound.ambienceEngine}
+          options={ambience}
+          onChange={(v) => updateSettings(slug, { sound: { ambienceEngine: v } })}
+          testId="sound-ambience-engine"
+        />
+      </div>
+      <div className="dim" style={{ marginTop: 6 }} data-testid="sound-note">
+        MOSS-SoundEffect v2 makes sound effects when its models load (pick it explicitly); Auto uses the ambience engine (ACE-Step) for a ComfyUI project and Chiptune Studio for a pixel one. None keeps sound effects import-only (vno_asset_import). The ambience engine also makes the ambience loops.
       </div>
     </div>
   )

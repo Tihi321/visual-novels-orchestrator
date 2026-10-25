@@ -68,10 +68,14 @@ describe('badges and file kinds', () => {
 describe('engineChoices', () => {
   const engines = {
     image: [
-      { id: 'gen', kind: 'image' as const, label: 'Gen', edit: false },
-      { id: 'ed', kind: 'image' as const, label: 'Ed', edit: true }
+      { id: 'gen', kind: 'image' as const, label: 'Gen', edit: false, task: 'music' as const, languages: [] as string[] },
+      { id: 'ed', kind: 'image' as const, label: 'Ed', edit: true, task: 'music' as const, languages: [] as string[] }
     ],
-    audio: [{ id: 'ace', kind: 'audio' as const, label: 'Ace', edit: false }]
+    audio: [
+      { id: 'ace', kind: 'audio' as const, label: 'Ace', edit: false, task: 'music' as const, languages: [] as string[] },
+      { id: 'moss', kind: 'audio' as const, label: 'MOSS', edit: false, task: 'sfx' as const, languages: [] as string[] },
+      { id: 'tts', kind: 'audio' as const, label: 'TTS', edit: false, task: 'tts' as const, languages: ['en'] }
+    ]
   }
   const wfs = [
     { name: 'img', kind: 'image' as const, languages: [] },
@@ -85,6 +89,11 @@ describe('engineChoices', () => {
   it('offers music workflows but not TTS ones, and keeps the current engine', () => {
     expect(engineChoices('music', engines, wfs, 'old').map((c) => c.id)).toEqual(['ace', 'custom:song', 'old'])
   })
+  it('filters the audio engines by what they make: music leaves out speech and effects, effects leave out speech', () => {
+    expect(engineChoices('music', engines, wfs).map((c) => c.id)).toEqual(['ace', 'custom:song'])
+    expect(engineChoices('sfx', engines, wfs).map((c) => c.id)).toEqual(['ace', 'moss', 'custom:song'])
+    expect(engineChoices('ambience', engines, wfs).map((c) => c.id)).toEqual(['ace', 'custom:song'])
+  })
   it('works before the engines are known', () => {
     expect(engineChoices('cover', null, [], 'cur').map((c) => c.id)).toEqual(['cur'])
   })
@@ -92,8 +101,8 @@ describe('engineChoices', () => {
     const audioEngines = {
       image: engines.image,
       audio: [
-        { id: 'ace', kind: 'audio' as const, label: 'Ace', edit: false },
-        { id: 'chiptune', kind: 'audio' as const, label: 'Chiptune', edit: false }
+        { id: 'ace', kind: 'audio' as const, label: 'Ace', edit: false, task: 'music' as const, languages: [] as string[] },
+        { id: 'chiptune', kind: 'audio' as const, label: 'Chiptune', edit: false, task: 'music' as const, languages: [] as string[] }
       ]
     }
     for (const kind of ['music', 'sfx', 'ambience'] as const) {
@@ -101,7 +110,7 @@ describe('engineChoices', () => {
     }
   })
   it('keeps chiptune and none as the current engine for audio', () => {
-    expect(engineChoices('sfx', engines, wfs, 'chiptune').map((c) => c.id)).toEqual(['ace', 'custom:song', 'chiptune'])
+    expect(engineChoices('sfx', engines, wfs, 'chiptune').map((c) => c.id)).toEqual(['ace', 'moss', 'custom:song', 'chiptune'])
     expect(engineChoices('sfx', null, [], 'none').map((c) => c.id)).toEqual(['none'])
   })
 })

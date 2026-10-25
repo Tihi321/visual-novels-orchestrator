@@ -55,7 +55,7 @@ describe('VN contract schemas', () => {
     const p = projectSettingsSchema.parse({ slug: 'demo', source: 'C:/books/demo', primaryLang: 'hr' })
     expect(p.art).toEqual({ style: 'illustrated', generator: 'qwen-image-2.1', editor: 'qwen-image-2.1-edit', review: false, bgRemoval: 'birefnet' })
     expect(p.music).toEqual({ engine: 'ace-step-v1-instrumental', tracks: 3 })
-    expect(p.voice).toEqual({ enabled: false, langs: [], provider: 'vibetts', engines: {}, voices: {} })
+    expect(p.voice).toEqual({ enabled: false, langs: [], provider: 'comfy', engine: 'omnivoice', engines: {}, styles: {}, refTexts: {}, voices: {} })
     expect(p.editions).toEqual([])
     expect(p.theme).toBeNull()
   })

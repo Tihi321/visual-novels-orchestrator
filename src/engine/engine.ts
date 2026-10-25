@@ -24,7 +24,6 @@ import { agentSummary, modelSummaries, providerSummaries, roleDefaults, serverSt
 import { registerVnHandlers } from './vn/handlers'
 import type { VnService } from './vn/service'
 import type { ComfyClient } from './comfy/client'
-import type { VibeTtsClient } from './voice/vibetts'
 import type { PixelClient } from './studios/pixel'
 import type { ChiptuneClient } from './studios/chiptune'
 import type { FlowClient } from './studios/flow'
@@ -47,8 +46,6 @@ export interface EngineOptions {
   discover?: boolean
   /** A ComfyUI client for the asset and voice jobs (tests pass a fake). Default: one made from `config/comfy.md`. */
   comfy?: ComfyClient
-  /** A VibeTTS client for the voice jobs (tests pass a fake). Default: one made from `config/voice.md`. */
-  vibetts?: VibeTtsClient
   /** Pixel Studio and Chiptune Studio clients for the asset jobs (tests pass fakes). Default: made from `config/studios.md`. */
   pixel?: PixelClient
   chiptune?: ChiptuneClient
@@ -158,7 +155,6 @@ export class Engine {
       kick: () => this.scheduler.kick(),
       stopBook: (slug, reason) => this.scheduler.stopBook(slug, reason),
       comfy: opts.comfy,
-      vibetts: opts.vibetts,
       pixel: opts.pixel,
       chiptune: opts.chiptune,
       flow: opts.flow,

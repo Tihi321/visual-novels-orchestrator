@@ -3,7 +3,7 @@ kind: mcp
 # The MCP server (Streamable HTTP, on 127.0.0.1 only) that lets an outside agent drive VN Studio.
 # It runs inside the app's engine while VN Studio is open, or alone with `yarn mcp` / `<exe> --mcp-only` (no window).
 enabled: true
-# 7457 (Pixel Studio), 7458 (Chiptune Studio) and 7723 (VibeTTS) are taken.
+# 7457 (Pixel Studio) and 7458 (Chiptune Studio) are taken.
 port: 7459
 # A bearer token clients must send as `Authorization: Bearer <token>`. Empty: no token (the server only listens on this computer).
 token: ''

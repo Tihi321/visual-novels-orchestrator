@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { BUILTIN_LANGUAGES, LEGACY_LANGS } from './languages'
+import { BUILTIN_LANGUAGES } from './languages'
 import { editionPuzzleSchema, puzzleEntrySchema } from './puzzle'
 
 /**
@@ -257,19 +257,53 @@ export const pixelSchema = z.object({
 export const PIXEL_DEFAULTS = { width: 320, height: 180, dither: 'none' as Dither, outline: false }
 
 /**
- * Projects from before per-language voices stored one voice id per speaker. An OmniVoice id (`omni:*`) is dropped (the speaker needs
- * a new plan), a Supertonic id reads English and Croatian (the languages of that time), any other id (Kokoro) reads English only.
+ * Projects from before per-language voices stored one voice id per speaker. Only the Google Flow ids (`gemini:`, `windows:`) still mean
+ * something: the old Kokoro/Supertonic ids are dropped (a local TTS engine makes the clip from the speaker's uploaded reference instead).
  */
 function legacyVoices(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
+  const flowVoice = (id: unknown): boolean => typeof id === 'string' && (id.startsWith('gemini:') || id.startsWith('windows:'))
   const out: Record<string, unknown> = {}
   for (const [speaker, v] of Object.entries(raw)) {
-    if (typeof v !== 'string') out[speaker] = v
-    else if (v.startsWith('supertonic:')) out[speaker] = Object.fromEntries(LEGACY_LANGS.map((l) => [l, v]))
-    else if (!v.startsWith('omni:') && v) out[speaker] = { en: v }
+    if (typeof v === 'string') {
+      if (flowVoice(v)) out[speaker] = { en: v }
+      continue
+    }
+    if (!v || typeof v !== 'object' || Array.isArray(v)) continue
+    const langs = Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([, id]) => flowVoice(id)))
+    if (Object.keys(langs).length > 0) out[speaker] = langs
   }
   return out
 }
+
+/**
+ * Brings a `voice` block from before the local engines in line with the schema: the old Flow delivery notes (`flowStyles`) become
+ * `styles`, and `englishEngine` (Kokoro or Supertonic) is dropped together with a `vibetts` provider.
+ */
+function upgradeVoice(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw
+  const out: Record<string, unknown> = { ...(raw as Record<string, unknown>) }
+  const styles: Record<string, unknown> = out.styles && typeof out.styles === 'object' && !Array.isArray(out.styles) ? { ...(out.styles as Record<string, unknown>) } : {}
+  const flowStyles = out.flowStyles
+  if (flowStyles && typeof flowStyles === 'object' && !Array.isArray(flowStyles)) {
+    for (const [speaker, style] of Object.entries(flowStyles as Record<string, unknown>)) {
+      const kept = typeof styles[speaker] === 'string' ? (styles[speaker] as string).trim() : ''
+      if (typeof style === 'string' && style.trim() && !kept) styles[speaker] = style
+    }
+  }
+  out.styles = styles
+  delete out.flowStyles
+  delete out.englishEngine
+  if (out.provider === 'vibetts') out.provider = 'comfy'
+  return out
+}
+
+/** The default local TTS engine: OmniVoice reads every language, Croatian included. */
+export const DEFAULT_VOICE_ENGINE = 'omnivoice'
+/** The engine id of MOSS-SoundEffect v2: a selectable sound-effect engine (see `resolveSfxEngine` for the default). */
+export const MOSS_SFX_ENGINE = 'moss-soundeffect-v2'
+/** What an engine makes: music (the default), speech (TTS) or a sound effect. */
+export type EngineTask = 'music' | 'tts' | 'sfx'
 
 export const projectSettingsSchema = z.object({
   slug: z.string(),
@@ -326,26 +360,32 @@ export const projectSettingsSchema = z.object({
     })
     .default({ engine: 'ace-step-v1-instrumental', tracks: 3 }),
   voice: z
-    .object({
-      enabled: z.boolean().default(false),
-      langs: z.array(langSchema).default([]),
-      /** Where clips come from: VibeTTS (Kokoro and Supertonic over its local MCP server) or a ComfyUI TTS workflow. */
-      provider: z.enum(['vibetts', 'comfy', 'flow']).default('vibetts'),
-      /** `flow` only: a delivery note per speaker (character key or `narrator`) for the Gemini voice, e.g. "gruffly, tired". */
-      flowStyles: z.record(z.string(), z.string()).optional(),
-      /** Language -> TTS engine id (ComfyUI custom workflow name), used when `provider` is `comfy`. */
-      engines: z.record(z.string(), z.string()).default({}),
-      /** Which engine reads English: the Kokoro voices (the default) or the Supertonic ones. Other languages always use Supertonic. Missing: `kokoro`. */
-      englishEngine: z.enum(['kokoro', 'supertonic']).optional(),
-      /** Speaker key (character key or `narrator`) -> language -> VibeTTS voice id such as `af_heart` (en) or `supertonic:F2`. */
-      voices: z.preprocess(legacyVoices, z.record(z.string(), z.record(langSchema, z.string()))).default({})
-    })
-    .default({ enabled: false, langs: [], provider: 'vibetts', engines: {}, voices: {} }),
+    .preprocess(
+      upgradeVoice,
+      z.object({
+        enabled: z.boolean().default(false),
+        langs: z.array(langSchema).default([]),
+        /** Where the clips come from: the local ComfyUI TTS Audio Suite (`comfy`, the default) or Google Flow (`flow`, cloud). */
+        provider: z.enum(['comfy', 'flow']).default('comfy'),
+        /** The local TTS engine of every language without an `engines` entry. */
+        engine: z.string().default(DEFAULT_VOICE_ENGINE),
+        /** Language -> a built-in TTS engine id (`omnivoice`, `f5-tts` ...) or `custom:<workflow>`. */
+        engines: z.record(z.string(), z.string()).default({}),
+        /** Speaker key (a character key or `narrator`) -> delivery style: the OmniVoice/Qwen3 instruct, Higgs inline tags, or the Flow style note. */
+        styles: z.record(z.string(), z.string()).default({}),
+        /** Speaker key -> the transcript of the speaker's `voice_<key>` reference clip (needed for cloning on F5, optional elsewhere). */
+        refTexts: z.record(z.string(), z.string()).default({}),
+        /** Speaker -> language -> Flow voice id (`gemini:<Name>` or `windows:<Voice Name>`); Flow only. */
+        voices: z.preprocess(legacyVoices, z.record(z.string(), z.record(langSchema, z.string()))).default({})
+      })
+    )
+    .default({ enabled: false, langs: [], provider: 'comfy', engine: DEFAULT_VOICE_ENGINE, engines: {}, styles: {}, refTexts: {}, voices: {} }),
   /**
    * Sound effects and ambiences. `ambienceEngine` is a ComfyUI music engine (the default) or `chiptune` (Chiptune Studio's `compose_sfx` ambience loops).
-   * `sfxEngine` names the engine of a sound effect: an audio engine, `chiptune` (Chiptune Studio's `compose_sfx`) or a `custom:<workflow>`.
-   * Missing: the music provider's engine (Chiptune Studio for a pixel book) or else `ambienceEngine`. `"none"` keeps sound effects import-only
-   * (`vno_asset_import`).
+   * `sfxEngine` names the engine of a sound effect: an audio engine (MOSS-SoundEffect v2 included), `chiptune` (Chiptune Studio's `compose_sfx`) or a
+   * `custom:<workflow>`. Missing: the music provider's engine (Chiptune Studio for a pixel book) or else `ambienceEngine`; MOSS-SoundEffect v2 is
+   * offered as an explicit choice (its suite loader conflicts with some ComfyUI custom nodes, so it is not forced as the default).
+   * `"none"` keeps sound effects import-only (`vno_asset_import`).
    */
   sound: z
     .object({
@@ -377,6 +417,11 @@ export function resolveMusicProvider(settings: Pick<ProjectSettings, 'art' | 'mu
   return settings.music.provider ?? (settings.art.style === 'pixel' ? 'chiptune' : 'comfy')
 }
 
+/** The TTS engine of one language: its `voice.engines` entry, else the project's default `voice.engine`. */
+export function resolveVoiceEngine(settings: Pick<ProjectSettings, 'voice'>, lang: Lang | string): string {
+  return settings.voice.engines[lang] ?? settings.voice.engine
+}
+
 /** The pseudo engine id of a music asset made by Chiptune Studio. */
 export const CHIPTUNE_ENGINE = 'chiptune'
 /** The pseudo engine id of an image made by Google Flow (through flow-music-mcp). */
@@ -388,13 +433,16 @@ export const SFX_IMPORT_ONLY = 'none'
 
 /**
  * The engine that makes a sound effect: `sound.sfxEngine` when set (`chiptune`, an audio engine or `custom:<workflow>`;
- * `"none"` keeps effects import-only), else the music provider's engine (Chiptune Studio for a pixel book) or the ambience engine.
+ * `"none"` keeps effects import-only). Else the music provider's engine: Chiptune Studio for a chiptune project, the ambience engine
+ * (ACE-Step by default) for a ComfyUI one. MOSS-SoundEffect v2 is chosen explicitly when the installation can load it.
  */
 export function resolveSfxEngine(settings: Pick<ProjectSettings, 'art' | 'music' | 'sound'>): string {
   const chosen = settings.sound.sfxEngine?.trim()
   if (chosen === SFX_IMPORT_ONLY) return SFX_IMPORT_ONLY
   if (chosen) return chosen
-  return resolveMusicProvider(settings) === 'chiptune' ? CHIPTUNE_ENGINE : settings.sound.ambienceEngine
+  const provider = resolveMusicProvider(settings)
+  if (provider === 'chiptune') return CHIPTUNE_ENGINE
+  return settings.sound.ambienceEngine
 }
 
 // ---- assets (assets.json) ----

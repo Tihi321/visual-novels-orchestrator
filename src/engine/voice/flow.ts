@@ -59,7 +59,7 @@ const realSleep = (ms: number, signal?: AbortSignal): Promise<void> =>
 
 /**
  * vn.voice.generate with the Flow provider, for one language: one beat is one `flow_narrate` call and one file. The hash is
- * `flow|engine|voice|lang|style|format|text`, so a changed voice, style, format or text makes the clip again and nothing else. Clips you
+ * `flow|voice|lang|style|format|text`, so a changed voice, style, format or text makes the clip again and nothing else. Clips you
  * imported are kept. One call at a time with a pause; a rate limit is retried with a growing wait, then that clip fails and the others
  * go on. The index is saved after every clip, so a stopped job continues where it was.
  */
@@ -102,7 +102,7 @@ export async function generateFlowClips(svc: VnService, slug: string, lang: Lang
           missing.add(own)
           continue
         }
-        const style = settings.voice.flowStyles?.[own]?.trim() || undefined
+        const style = settings.voice.styles[own]?.trim() || undefined
         const hash = sha1(['flow', voice, lang, style ?? '', o.format, text].join('\u0000'))
         const file = `${beat.id}.${o.format}`
         const known = index[beat.id]
@@ -215,5 +215,5 @@ export async function setFlowVoice(svc: VnService, slug: string, speakerKey: str
   const cur = settings.voice.voices
   await svc.updateSettings(slug, { voice: { voices: { ...cur, [speakerKey]: { ...cur[speakerKey], [lang]: voice } } } })
   await invalidateSpeaker(svc, slug, speakerKey, lang)
-  return previewFlowVoice(svc, slug, speakerKey, voice, lang, { flow: o.flow, style: settings.voice.flowStyles?.[speakerKey], format: o.format })
+  return previewFlowVoice(svc, slug, speakerKey, voice, lang, { flow: o.flow, style: settings.voice.styles[speakerKey], format: o.format })
 }

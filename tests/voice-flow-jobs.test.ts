@@ -142,7 +142,7 @@ describe('voice clips (Google Flow)', () => {
     await writeFile(clip, 'MINE')
     await h.svc.importVoice(h.slug, 'en', { beatId: other, file: clip })
     const before = h.flow.calls.filter((c) => c.tool === 'flow_narrate').length
-    await h.svc.updateSettings(h.slug, { voice: { flowStyles: { mara: 'gruffly, tired' } } })
+    await h.svc.updateSettings(h.slug, { voice: { styles: { mara: 'gruffly, tired' } } })
     await h.svc.generateVoice(h.slug, { lang: 'en' })
     await waitIdle(h.env, h.slug)
     const again = h.flow.calls.filter((c) => c.tool === 'flow_narrate').slice(before).map((c) => c.args as { name: string; style?: string })

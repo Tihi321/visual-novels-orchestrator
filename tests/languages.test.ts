@@ -12,15 +12,15 @@ import { writeUiStrings } from '../src/engine/game/tl'
 
 afterEach(() => resetLanguages())
 
-const SUPERTONIC = 'en ko ja ar bg cs da de el es et fi fr hi hr hu id it lt lv nl pl pt ro ru sk sl sv tr uk vi'.split(' ')
-
 describe('the language table', () => {
-  it('has the 31 Supertonic and 6 Book Translator languages', () => {
+  it('has the 37 built-in languages', () => {
     expect(BUILTIN_LANGUAGES).toHaveLength(37)
     expect(LANGS).toHaveLength(37)
-    for (const code of SUPERTONIC) expect(languageInfo(code)?.supertonic).toBe(true)
+    for (const code of ['en', 'hr', 'ko', 'ja', 'ar', 'bg', 'de', 'fr', 'hi', 'zh']) expect(isKnownLang(code)).toBe(true)
     for (const code of ['sr', 'bs', 'no', 'he', 'fa', 'zh']) expect(isKnownLang(code)).toBe(true)
     expect(languages().filter((l) => l.rtl).map((l) => l.code)).toEqual(['ar', 'he', 'fa'])
+    // TTS coverage is the engine registry's, not a language flag
+    expect(languages().some((l) => 'supertonic' in l)).toBe(false)
   })
   it('has unique Ren’Py identifiers made of lowercase ascii', () => {
     const ids = BUILTIN_LANGUAGES.map((l) => l.renpy)
@@ -108,7 +108,6 @@ describe('UI strings of the built-in languages', () => {
     expect(de.native).toBe('Deutsch (CH)')
     expect(de.renpy).toBe('german')
     expect(de.script).toBe('latin')
-    expect(de.supertonic).toBe(true)
     expect(de.ui!.Start).toBe('Los')
     expect(de.ui!.Load).toBe('Laden')
     expect(Object.keys(de.ui!)).toEqual(hr)
@@ -129,10 +128,17 @@ describe('language codes in the project files', () => {
     expect(langSchema.safeParse('Croatian').success).toBe(false)
     expect(langSchema.safeParse('e').success).toBe(false)
   })
-  it('keeps a legacy Supertonic voice for en and hr only', () => {
-    const s = projectSettingsSchema.parse({ slug: 'a', source: '', primaryLang: 'hr', voice: { voices: { mara: 'supertonic:F1', ivo: 'af_heart' } } })
-    expect(s.voice.voices.mara).toEqual({ en: 'supertonic:F1', hr: 'supertonic:F1' })
-    expect(s.voice.voices.ivo).toEqual({ en: 'af_heart' })
+  it('keeps the legacy Flow voice ids (gemini/windows) and drops the old Kokoro/Supertonic ones', () => {
+    const s = projectSettingsSchema.parse({
+      slug: 'a',
+      source: '',
+      primaryLang: 'hr',
+      voice: { voices: { mara: 'supertonic:F1', ivo: 'af_heart', lena: 'gemini:Charon', ana: 'windows:Zira' } }
+    })
+    expect(s.voice.voices.mara).toBeUndefined()
+    expect(s.voice.voices.ivo).toBeUndefined()
+    expect(s.voice.voices.lena).toEqual({ en: 'gemini:Charon' })
+    expect(s.voice.voices.ana).toEqual({ en: 'windows:Zira' })
   })
 })
 
@@ -149,6 +155,15 @@ describe('config/languages.md', () => {
     await loadLanguageConfig(dir)
     expect(languageInfo('pt-br')?.ui).toEqual({ Start: 'Iniciar' })
     expect(languageTable('pt-br', ['pt-br', 'en']).defaultLanguage).toBe('"brazilian_portuguese"')
+  })
+  it('accepts and ignores a legacy supertonic flag in an entry', async () => {
+    const dir = tmp()
+    write(dir, '---\nkind: languages\nlanguages:\n  - code: pt-br\n    name: Brazilian Portuguese\n    supertonic: true\n---\nbody\n')
+    const log: string[] = []
+    await loadLanguageConfig(dir, (m) => log.push(m))
+    expect(log).toEqual([])
+    expect(languageInfo('pt-br')).toMatchObject({ name: 'Brazilian Portuguese' })
+    expect(languageInfo('pt-br')).not.toHaveProperty('supertonic')
   })
   it('ignores a bad file and says so', async () => {
     const dir = tmp()

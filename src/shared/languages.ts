@@ -2,8 +2,9 @@ import { UI_STRINGS } from './ui-strings'
 import type { Lang } from './vn'
 
 /**
- * The languages a project can use: the built-in table (the union of the VibeTTS Supertonic languages and the Book
- * Translator ones) and a registry that `config/languages.md` adds to or overrides.
+ * The languages a project can use: the built-in table (37 languages, with menu strings for all but English) and a registry
+ * that `config/languages.md` adds to or overrides. Which text-to-speech engine reads a language is no longer a language
+ * property: the local engines report their own coverage in `vno_voice_status`.
  */
 
 export const LANGUAGE_SCRIPTS = ['latin', 'cyrillic', 'greek', 'arabic', 'hebrew', 'devanagari', 'han', 'kana', 'hangul', 'thai', 'other'] as const
@@ -20,8 +21,6 @@ export interface LanguageInfo {
   renpy: string
   rtl?: boolean
   script: LanguageScript
-  /** VibeTTS Supertonic can read it. */
-  supertonic?: boolean
   /** The Ren'Py template's UI strings in this language (`old` -> `new`): the built-in table (`ui-strings.ts`), with the `ui` of `config/languages.md` over it. Without it the menus stay in English. */
   ui?: Record<string, string>
   /** A font with the glyphs of the language: an absolute path, or a file name in `<data>/fonts/` (`font` in `config/languages.md`). */
@@ -33,52 +32,50 @@ export interface LanguageInfo {
 /** The languages that books and voice settings could use before the table existed. */
 export const LEGACY_LANGS = ['en', 'hr']
 
-type Row = [code: string, name: string, native: string, script: LanguageScript, flags: string]
-// flags: s = Supertonic reads it, r = right to left
+type Row = [code: string, name: string, native: string, script: LanguageScript, rtl?: true]
 const ROWS: Row[] = [
-  ['en', 'English', 'English', 'latin', 's'],
-  ['hr', 'Croatian', 'Hrvatski', 'latin', 's'],
-  ['ko', 'Korean', '한국어', 'hangul', 's'],
-  ['ja', 'Japanese', '日本語', 'kana', 's'],
-  ['ar', 'Arabic', 'العربية', 'arabic', 'sr'],
-  ['bg', 'Bulgarian', 'Български', 'cyrillic', 's'],
-  ['cs', 'Czech', 'Čeština', 'latin', 's'],
-  ['da', 'Danish', 'Dansk', 'latin', 's'],
-  ['de', 'German', 'Deutsch', 'latin', 's'],
-  ['el', 'Greek', 'Ελληνικά', 'greek', 's'],
-  ['es', 'Spanish', 'Español', 'latin', 's'],
-  ['et', 'Estonian', 'Eesti', 'latin', 's'],
-  ['fi', 'Finnish', 'Suomi', 'latin', 's'],
-  ['fr', 'French', 'Français', 'latin', 's'],
-  ['hi', 'Hindi', 'हिन्दी', 'devanagari', 's'],
-  ['hu', 'Hungarian', 'Magyar', 'latin', 's'],
-  ['id', 'Indonesian', 'Bahasa Indonesia', 'latin', 's'],
-  ['it', 'Italian', 'Italiano', 'latin', 's'],
-  ['lt', 'Lithuanian', 'Lietuvių', 'latin', 's'],
-  ['lv', 'Latvian', 'Latviešu', 'latin', 's'],
-  ['nl', 'Dutch', 'Nederlands', 'latin', 's'],
-  ['pl', 'Polish', 'Polski', 'latin', 's'],
-  ['pt', 'Portuguese', 'Português', 'latin', 's'],
-  ['ro', 'Romanian', 'Română', 'latin', 's'],
-  ['ru', 'Russian', 'Русский', 'cyrillic', 's'],
-  ['sk', 'Slovak', 'Slovenčina', 'latin', 's'],
-  ['sl', 'Slovenian', 'Slovenščina', 'latin', 's'],
-  ['sv', 'Swedish', 'Svenska', 'latin', 's'],
-  ['tr', 'Turkish', 'Türkçe', 'latin', 's'],
-  ['uk', 'Ukrainian', 'Українська', 'cyrillic', 's'],
-  ['vi', 'Vietnamese', 'Tiếng Việt', 'latin', 's'],
-  ['sr', 'Serbian', 'Српски', 'cyrillic', ''],
-  ['bs', 'Bosnian', 'Bosanski', 'latin', ''],
-  ['no', 'Norwegian', 'Norsk', 'latin', ''],
-  ['he', 'Hebrew', 'עברית', 'hebrew', 'r'],
-  ['fa', 'Persian', 'فارسی', 'arabic', 'r'],
-  ['zh', 'Chinese', '中文', 'han', '']
+  ['en', 'English', 'English', 'latin'],
+  ['hr', 'Croatian', 'Hrvatski', 'latin'],
+  ['ko', 'Korean', '한국어', 'hangul'],
+  ['ja', 'Japanese', '日本語', 'kana'],
+  ['ar', 'Arabic', 'العربية', 'arabic', true],
+  ['bg', 'Bulgarian', 'Български', 'cyrillic'],
+  ['cs', 'Czech', 'Čeština', 'latin'],
+  ['da', 'Danish', 'Dansk', 'latin'],
+  ['de', 'German', 'Deutsch', 'latin'],
+  ['el', 'Greek', 'Ελληνικά', 'greek'],
+  ['es', 'Spanish', 'Español', 'latin'],
+  ['et', 'Estonian', 'Eesti', 'latin'],
+  ['fi', 'Finnish', 'Suomi', 'latin'],
+  ['fr', 'French', 'Français', 'latin'],
+  ['hi', 'Hindi', 'हिन्दी', 'devanagari'],
+  ['hu', 'Hungarian', 'Magyar', 'latin'],
+  ['id', 'Indonesian', 'Bahasa Indonesia', 'latin'],
+  ['it', 'Italian', 'Italiano', 'latin'],
+  ['lt', 'Lithuanian', 'Lietuvių', 'latin'],
+  ['lv', 'Latvian', 'Latviešu', 'latin'],
+  ['nl', 'Dutch', 'Nederlands', 'latin'],
+  ['pl', 'Polish', 'Polski', 'latin'],
+  ['pt', 'Portuguese', 'Português', 'latin'],
+  ['ro', 'Romanian', 'Română', 'latin'],
+  ['ru', 'Russian', 'Русский', 'cyrillic'],
+  ['sk', 'Slovak', 'Slovenčina', 'latin'],
+  ['sl', 'Slovenian', 'Slovenščina', 'latin'],
+  ['sv', 'Swedish', 'Svenska', 'latin'],
+  ['tr', 'Turkish', 'Türkçe', 'latin'],
+  ['uk', 'Ukrainian', 'Українська', 'cyrillic'],
+  ['vi', 'Vietnamese', 'Tiếng Việt', 'latin'],
+  ['sr', 'Serbian', 'Српски', 'cyrillic'],
+  ['bs', 'Bosnian', 'Bosanski', 'latin'],
+  ['no', 'Norwegian', 'Norsk', 'latin'],
+  ['he', 'Hebrew', 'עברית', 'hebrew', true],
+  ['fa', 'Persian', 'فارسی', 'arabic', true],
+  ['zh', 'Chinese', '中文', 'han']
 ]
 
-export const BUILTIN_LANGUAGES: readonly LanguageInfo[] = ROWS.map(([code, name, native, script, flags]) => {
+export const BUILTIN_LANGUAGES: readonly LanguageInfo[] = ROWS.map(([code, name, native, script, rtl]) => {
   const info: LanguageInfo = { code, name, native, renpy: name.toLowerCase(), script }
-  if (flags.includes('s')) info.supertonic = true
-  if (flags.includes('r')) info.rtl = true
+  if (rtl) info.rtl = true
   const ui = UI_STRINGS[code]
   if (ui) info.ui = { ...ui }
   return info

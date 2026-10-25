@@ -1,25 +1,34 @@
 import type { Lang, ProjectSettings } from '../../shared/vn'
-import type { VibeVoice } from './vibetts'
 import { sha1 } from './vocab'
 
-/** The voices VibeTTS offers are fixed: this picks among them (gender, language, spreading) without any model. */
+/**
+ * The voice lists the planners work from: Google Flow's free narration engines and, for the local TTS engines, the engine
+ * catalogue. `pickVoices` and `describeVoices` spread the Flow voices over a cast without any model; the local engines need no
+ * voice ids (each speaker's identity comes from the uploaded reference clip and its delivery style).
+ */
 
 export type Gender = 'female' | 'male'
 
-export type EnglishEngine = NonNullable<ProjectSettings['voice']['englishEngine']>
-
 export const NARRATOR = 'narrator'
 
-/** Shown when a language other than English needs Supertonic and VibeTTS does not have it yet. */
-export const SUPERTONIC_HINT = 'Supertonic is not installed in VibeTTS: download it in VibeTTS Settings > Supertonic (about 400 MB), then plan the voices again'
+/**
+ * One voice of a list: a Flow voice (`gemini:<Name>`, `windows:<Voice Name>`) or, when the list describes local engines, an
+ * engine id (`omnivoice`). `languages` holds the codes it reads; `engine` says where it comes from.
+ */
+export interface VoiceEntry {
+  id: string
+  label: string
+  /** `gemini`, `windows`, or a local TTS engine id (`omnivoice`). */
+  engine?: string
+  /** The language codes it reads. */
+  languages: string[]
+  /** Known from the list (Google Flow's voices carry one). */
+  gender?: Gender
+}
 
-/** The gender of a voice id: Kokoro `af_`/`bf_` female, `am_`/`bm_` male; Supertonic `F1`..`F5` female, `M1`..`M5` male. Null when unknown. */
-export function voiceGender(id: string): Gender | null {
-  const st = /^supertonic:([FM])\d+$/i.exec(id)
-  if (st) return st[1]!.toUpperCase() === 'F' ? 'female' : 'male'
-  const k = /^[a-z]([fm])_/.exec(id)
-  if (k) return k[1] === 'f' ? 'female' : 'male'
-  return null
+/** A list of voices as a planner (and `pickVoices`) takes it. */
+export interface VoiceList {
+  voices: VoiceEntry[]
 }
 
 /** `female` / `male` from a model's word (case and a few near-misses tolerated), else null. */
@@ -52,22 +61,8 @@ export function guessGender(h: VoiceHints): Gender {
   return parseInt(sha1(h.key).slice(0, 2), 16) % 2 === 0 ? 'female' : 'male'
 }
 
-/**
- * The voices that can read `lang`. English: the `englishEngine`'s voices (Kokoro by default), or every voice that reads English when that
- * engine has none. Any other language: the voices whose `languages` include it (Supertonic).
- */
-export function voicesFor(voices: readonly VibeVoice[], lang: Lang | string, englishEngine: EnglishEngine = 'kokoro'): VibeVoice[] {
-  const reads = voices.filter((v) => v.languages.includes(lang))
-  if (lang !== 'en') return reads
-  const own = reads.filter((v) => v.engine === englishEngine)
-  return own.length ? own : reads
-}
-
-/** True when `id` is listed and reads `lang`. */
-export const readsLang = (voices: readonly VibeVoice[], id: string, lang: Lang | string): boolean => voices.some((v) => v.id === id && v.languages.includes(lang))
-
-/** The gender of a voice: the one the list gives (Google Flow's), else the one in its id (VibeTTS). */
-const genderOf = (v: Pick<VibeVoice, 'id' | 'gender'>): Gender | null => v.gender ?? voiceGender(v.id)
+/** The gender a list gives a voice, else null. */
+const genderOf = (v: Pick<VoiceEntry, 'gender'>): Gender | null => v.gender ?? null
 
 /** One speaker to give a voice. `preferred` is the voice-director's pick: used when it is a candidate of the speaker's gender and not taken. */
 export interface VoiceWish {
@@ -77,12 +72,12 @@ export interface VoiceWish {
 }
 
 /**
- * A voice for each speaker from `candidates` (the result of `voicesFor`), deterministic: the same input gives the same voices.
- * Speakers of one gender spread over that gender's voices, so they differ while there are enough voices; then voices are reused round-robin
- * (Supertonic has 5 per gender). The narrator goes last and takes a voice the cast does not use where it can. `taken` voices (already
- * given to other speakers of this language) count as used. A gender with no candidates draws from all of them.
+ * A voice for each speaker from `candidates`, deterministic: the same input gives the same voices.
+ * Speakers of one gender spread over that gender's voices, so they differ while there are enough voices; then voices are reused round-robin.
+ * The narrator goes last and takes a voice the cast does not use where it can. `taken` voices (already given to other speakers of this
+ * language) count as used. A gender with no candidates draws from all of them.
  */
-export function pickVoices(speakers: readonly VoiceWish[], candidates: readonly VibeVoice[], taken: readonly string[] = []): Record<string, string> {
+export function pickVoices(speakers: readonly VoiceWish[], candidates: readonly VoiceEntry[], taken: readonly string[] = []): Record<string, string> {
   const out: Record<string, string> = {}
   if (!candidates.length) return out
   const uses = new Map<string, number>(candidates.map((v) => [v.id, 0]))
@@ -93,7 +88,10 @@ export function pickVoices(speakers: readonly VoiceWish[], candidates: readonly 
     const same = candidates.filter((v) => genderOf(v) === s.gender)
     const pool = same.length ? same : candidates
     let id: string | undefined
-    if (s.preferred && ids.has(s.preferred) && uses.get(s.preferred) === 0 && [s.gender, null].includes(genderOf(candidates.find((v) => v.id === s.preferred)!))) id = s.preferred
+    if (s.preferred && ids.has(s.preferred) && uses.get(s.preferred) === 0) {
+      const preferred = candidates.find((v) => v.id === s.preferred)
+      if (preferred && (genderOf(preferred) === s.gender || genderOf(preferred) === null)) id = s.preferred
+    }
     if (!id) {
       const start = parseInt(sha1(s.key).slice(0, 8), 16) % pool.length
       const least = Math.min(...pool.map((v) => uses.get(v.id)!))
@@ -118,12 +116,33 @@ export const voiceLangsOf = (settings: Pick<ProjectSettings, 'primaryLang' | 'vo
   return langs
 }
 
-/** The voice list as the voice-director prompt shows it: per language, the voices that can read it with their gender. */
-export function describeVoices(voices: readonly VibeVoice[], langs: readonly Lang[], englishEngine: EnglishEngine = 'kokoro'): string {
+/** The voice list as the Flow planner's prompt shows it: per language, the voices that can read it with their gender. */
+export function describeVoices(voices: readonly VoiceEntry[], langs: readonly Lang[] | readonly string[]): string {
   return langs
     .map((lang) => {
-      const list = voicesFor(voices, lang, englishEngine)
+      const list = voices.filter((v) => v.languages.includes(lang))
       return `${lang}: ${list.length ? list.map((v) => `${v.id} (${genderOf(v) ?? 'any'}, ${v.label})`).join('; ') : '(no voice reads this language)'}`
+    })
+    .join('\n')
+}
+
+/** One local TTS engine as the planner's prompt shows it. */
+export interface TtsEngineInfo {
+  id: string
+  label: string
+  /** The codes it reads, `'*'` for any language. */
+  languages: readonly string[] | '*'
+}
+
+/**
+ * The local engine list the voice-director sees: per project language, the TTS engines that read it (id and label), so it can pick
+ * one engine per language. Empty groups say so, which is how the planner learns a language needs the default engine.
+ */
+export function describeTtsEngines(engines: readonly TtsEngineInfo[], langs: readonly Lang[] | readonly string[]): string {
+  return langs
+    .map((lang) => {
+      const list = engines.filter((e) => e.languages === '*' || e.languages.includes(lang))
+      return `${lang}: ${list.length ? list.map((e) => `${e.id} (${e.label})`).join('; ') : '(no engine reads this language)'}`
     })
     .join('\n')
 }

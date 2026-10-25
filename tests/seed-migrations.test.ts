@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { initDataFolder } from '../src/engine/store/dataFolder'
+import { applySeedMigrations, SEED_MIGRATIONS } from '../src/engine/store/seedMigrations'
 import { SEED_HASHES_FILE, loadSeedState } from '../src/engine/store/seedRefresh'
 import { splitFrontmatter } from '../src/shared/md'
 import { parse as parseYaml } from 'yaml'
@@ -61,7 +62,7 @@ describe('seed migrations', () => {
     // the client entry comes from the seed, so it already has antigravity
     expect(providers[1]).toMatchObject({ kind: 'client', models: [{ id: 'claude-code', context: 200000 }, { id: 'antigravity', vision: true, context: 1000000 }] })
     expect(providers[2]).toMatchObject({ id: 'acp', kind: 'openai-compat', enabled: false, local: true, base_url: 'http://127.0.0.1:7461/v1', concurrency: 2, json_schema: false, discover: true, models: [] })
-    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1', 'settings-fallbacks-v1'])
+    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1', 'settings-fallbacks-v1', 'voice-local-v1'])
   })
 
   it('gives a client model without context 200000 and never changes one that has a value', async () => {
@@ -87,7 +88,7 @@ describe('seed migrations', () => {
     const res = await initDataFolder(data, seedDir)
     expect(res.migrated).toEqual([])
     expect(await readFile(file(), 'utf8')).toBe(bad)
-    expect((await loadSeedState(data)).migrations).toEqual(['settings-fallbacks-v1'])
+    expect((await loadSeedState(data)).migrations).toEqual(['settings-fallbacks-v1', 'voice-local-v1'])
   })
 
   it('an untouched file is updated by the seed refresh, and the migrations change nothing', async () => {
@@ -106,7 +107,7 @@ describe('seed migrations', () => {
     expect(res.updated).toContain('config/providers.md')
     expect(res.migrated).toEqual([])
     expect(await readFile(file(), 'utf8')).toBe(seedText)
-    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1', 'settings-fallbacks-v1'])
+    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1', 'settings-fallbacks-v1', 'voice-local-v1'])
   })
 
   it('adds acp and the antigravity client model once, and does not bring them back when you delete them', async () => {
@@ -148,5 +149,49 @@ model_order:
     expect(updated).toContain('fallback_shared: true')
     expect(updated).not.toContain('group_defaults:')
     expect(updated).not.toContain('model_order:')
+  })
+
+  it('voice-local-v1 strips the VibeTTS keys from an edited voice.md and adds chunkChars, never touching format or speed', async () => {
+    await initDataFolder(data, seedDir)
+    const voicePath = path.join(data, 'config', 'voice.md')
+    const oldVoice = `---
+kind: voice
+vibettsUrl: http://127.0.0.1:7723/mcp
+vibettsToken: ''
+timeoutS: 15
+voiceTimeoutS: 180
+batchTimeoutS: 900
+chunkSize: 20
+format: wav
+speed: 1.2
+---
+# My voice
+
+Edited body stays.
+`
+    await writeFile(voicePath, oldVoice)
+    const state = JSON.parse(await readFile(path.join(data, SEED_HASHES_FILE), 'utf8')) as { migrations: string[] }
+    state.migrations = state.migrations.filter((m) => m !== 'voice-local-v1')
+    await writeFile(path.join(data, SEED_HASHES_FILE), JSON.stringify(state))
+
+    const res = await initDataFolder(data, seedDir)
+    expect(res.migrated).toContain('voice-local-v1')
+    const text = await readFile(voicePath, 'utf8')
+    expect(text).not.toMatch(/vibetts|timeoutS|chunkSize/)
+    expect(text).toContain('chunkChars: 400')
+    expect(text).toContain('format: wav')
+    expect(text).toContain('speed: 1.2')
+    expect(text).toContain('# My voice')
+    expect(text).toContain('Edited body stays.')
+  })
+
+  it('voice-local-v1 is skipped when voice.md is missing, and not recorded', async () => {
+    await initDataFolder(data, seedDir)
+    await rm(path.join(data, 'config', 'voice.md'))
+    const state = await loadSeedState(data)
+    state.migrations = state.migrations.filter((m) => m !== 'voice-local-v1')
+    const changed = await applySeedMigrations(data, seedDir, state, SEED_MIGRATIONS)
+    expect(changed).not.toContain('voice-local-v1')
+    expect(state.migrations).not.toContain('voice-local-v1')
   })
 });

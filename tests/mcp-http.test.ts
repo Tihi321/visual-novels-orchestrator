@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import http from 'node:http'
 import net from 'node:net'
 import path from 'node:path'
@@ -7,37 +7,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { McpHttpServer } from '../src/engine/mcp/http'
 import { buildTools } from '../src/engine/mcp/tools'
-import type { BatchItem, BatchResult, FileResult, VibeTtsClient, VibeVoiceList } from '../src/engine/voice/vibetts'
 import { waitFor } from './helpers'
 import { book, makeVnEnv } from './vn-helpers'
 import type { VnEnv } from './vn-helpers'
-
-/** A VibeTTS with a few fixed voices that writes tiny "audio" files. */
-class FakeVibeTts implements VibeTtsClient {
-  url = 'http://fake/mcp'
-  async listVoices(): Promise<VibeVoiceList> {
-    return {
-      voices: [
-        { id: 'af_heart', label: 'af_heart (Kokoro)', engine: 'kokoro', languages: ['en'] },
-        { id: 'supertonic:F2', label: 'F2 (Supertonic)', engine: 'supertonic', languages: ['en', 'hr'] }
-      ],
-      languages: [{ code: 'en', name: 'English' }, { code: 'hr', name: 'Croatian' }],
-      english: { engine: 'kokoro', voice: 'af_heart' },
-      other: { language: 'hr', voice: 'supertonic:F2' },
-      language_mode: 'auto',
-      supertonic_installed: true
-    }
-  }
-  async synthesizeToFile(a: { text: string; output: string }): Promise<FileResult> {
-    await mkdir(path.dirname(a.output), { recursive: true })
-    await writeFile(a.output, `AUDIO:${a.text}`)
-    return { path: a.output, duration_seconds: 1 }
-  }
-  async synthesizeBatch(items: BatchItem[]): Promise<BatchResult> {
-    return { results: items.map((i) => ({ output: i.output, duration_s: 1, ok: true, error: null })) }
-  }
-  async stop() {}
-}
 
 let env: VnEnv | undefined
 let server: McpHttpServer | undefined
@@ -51,7 +23,7 @@ afterEach(async () => {
 })
 
 async function start(o: { token?: string; port?: number; client?: boolean } = {}): Promise<McpHttpServer> {
-  env = await makeVnEnv({ sdk: false, client: o.client, engine: { vibetts: new FakeVibeTts() } })
+  env = await makeVnEnv({ sdk: false, client: o.client })
   server = new McpHttpServer({ host: { tools: buildTools(env.engine.vn, { control: env.engine.mcpControl(), clientQueue: env.engine.clientQueue }) }, port: o.port ?? 0, token: o.token })
   const st = await server.start()
   expect(st.running).toBe(true)
@@ -96,28 +68,47 @@ describe('MCP over HTTP', () => {
     const list = await client.callTool({ name: 'vno_list_projects', arguments: {} })
     expect((list.structuredContent as { projects: unknown[] }).projects).toHaveLength(1)
     const guide = await client.readResource({ uri: 'vn-studio://guide' })
-    expect((guide.contents[0] as { text: string }).text).toMatch(/Kokoro voices/)
+    expect((guide.contents[0] as { text: string }).text).toMatch(/OmniVoice/)
     await s.stop()
     expect(s.getStatus()).toMatchObject({ running: false, url: null, sessions: 0 })
   })
 
-  it('lists the voices and sets one through the voice tools', async () => {
+  it('lists the local voice engines hermetically and steers local voices to the settings', async () => {
     const s = await start()
     const client = await connect(s.url()!)
-    const status = (await client.callTool({ name: 'vno_voice_status', arguments: {} })).structuredContent as { ok: boolean; supertonicInstalled: boolean; voices: { id: string; languages: string[] }[] }
-    expect(status).toMatchObject({ ok: true, supertonicInstalled: true })
-    expect(status.voices.map((v) => v.id)).toEqual(['af_heart', 'supertonic:F2'])
+    // An unreachable lane keeps the status test hermetic: the engines and their languages are still listed.
+    await writeFile(path.join(env!.dir, 'config', 'comfy.md'), '---\nkind: comfy\nlanes: [http://127.0.0.1:9]\n---\n')
+    const status = (await client.callTool({ name: 'vno_voice_status', arguments: {} })).structuredContent as {
+      ok: boolean
+      error: string
+      comfyUrl: string
+      defaultEngine: string
+      engines: { id: string; task: string; languages: string[] | '*'; ready: boolean; missing: string[] }[]
+      workflows: { name: string; languages: string[] }[]
+    }
+    expect(status.ok).toBe(false)
+    expect(status.error).toMatch(/not reachable/)
+    expect(status.comfyUrl).toBe('http://127.0.0.1:9')
+    expect(status.defaultEngine).toBe('omnivoice')
+    expect(status.engines.map((e) => e.id)).toEqual(expect.arrayContaining(['omnivoice', 'higgs-audio-v3', 'chatterbox-23lang', 'moss-soundeffect-v2']))
+    expect(status.engines.find((e) => e.id === 'omnivoice')).toMatchObject({ task: 'tts', languages: '*' })
+    expect(status.engines.find((e) => e.id === 'moss-soundeffect-v2')).toMatchObject({ task: 'sfx', languages: [] })
+    expect(status.workflows).toEqual([expect.objectContaining({ name: 'chatterbox-multilingual' })])
+
     await env!.engine.vn.importProject(book('linear-en'))
     const slug = 'lighthouse-letters'
-    const set = await client.callTool({ name: 'vno_voice_set', arguments: { slug, speakerKey: 'narrator', lang: 'en', voice: 'af_heart' } })
-    expect(set.isError).toBeFalsy()
-    expect(set.structuredContent).toMatchObject({ preview: { slug, speakerKey: 'narrator', voice: 'af_heart', lang: 'en' } })
-    expect((await env!.engine.vn.store.loadSettings(slug)).settings.voice.voices.narrator).toEqual({ en: 'af_heart' })
-    // preview without a voice uses the assigned one; a speaker without one is told what to do
-    expect((await client.callTool({ name: 'vno_voice_preview', arguments: { slug, speakerKey: 'narrator', lang: 'en' } })).structuredContent).toMatchObject({ preview: { voice: 'af_heart' } })
-    const none = await client.callTool({ name: 'vno_voice_preview', arguments: { slug, speakerKey: 'narrator', lang: 'hr' } })
-    expect(none.isError).toBe(true)
-    expect((await client.callTool({ name: 'vno_voice_set', arguments: { slug, speakerKey: 'narrator', lang: 'en', voice: 'nope' } })).isError).toBe(true)
+    // A local project picks its voice in the settings: setVoice is Flow-only and returns the local hint.
+    const set = await client.callTool({ name: 'vno_voice_set', arguments: { slug, speakerKey: 'narrator', lang: 'en', voice: 'omnivoice' } })
+    expect(set.isError).toBe(true)
+    expect((set.content as { type: string; text: string }[])[0]!.text).toMatch(/voice\.engine/)
+    // Without a voice, the preview uses the project's local engine (the fake ComfyUI answers).
+    const preview = await client.callTool({ name: 'vno_voice_preview', arguments: { slug, speakerKey: 'narrator', lang: 'en' } })
+    expect(preview.isError).toBeFalsy()
+    expect(preview.structuredContent).toMatchObject({ preview: { slug, speakerKey: 'narrator', voice: 'omnivoice', lang: 'en' } })
+    // force (regenerate) and speakerKey are accepted; voice is off, so nothing is queued.
+    const gen = await client.callTool({ name: 'vno_voice_generate', arguments: { slug, lang: 'en', force: true, speakerKey: 'narrator' } })
+    expect(gen.isError).toBeFalsy()
+    expect(gen.structuredContent).toMatchObject({ jobs: [] })
   })
 
   it('answers vno_status while a vno_wait call is still open', async () => {

@@ -2,7 +2,7 @@
  * A minimal MCP client (Streamable HTTP): `initialize`, then `tools/list` and `tools/call`. The server answers with plain JSON; a
  * `text/event-stream` answer (SSE) is read too. No SDK: this is a few hundred bytes of JSON-RPC over `fetch`.
  *
- * Shared by VibeTTS (`voice/vibetts.ts`), Pixel Studio and Chiptune Studio (`studios/*.ts`).
+ * Shared by Pixel Studio and Chiptune Studio (`studios/*.ts`).
  */
 
 import { resolveKey } from '../models/keys'
@@ -28,7 +28,7 @@ class SessionGone extends McpHttpError {
 
 export interface McpHttpOptions {
   url: string
-  /** The name used in error messages: `VibeTTS`, `Pixel Studio`. */
+  /** The name used in error messages: `Pixel Studio`, `Chiptune Studio`. */
   label: string
   /** The error text when nothing answers (how to start it). */
   notRunningHint: string

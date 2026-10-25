@@ -18,7 +18,7 @@ export function ttsWorkflows(workflows: readonly CustomWorkflowInfo[]): CustomWo
 
 export interface VoiceSupport {
   status: 'ok' | 'unsupported' | 'no-engine' | 'unknown'
-  /** Languages the workflow declares. */
+  /** Languages the engine reads: the workflow's declared ones, or the built-in engine's codes (empty for `'*'`). */
   supported: string[]
   message: string
 }
@@ -39,6 +39,76 @@ export function voiceSupport(engineId: string | undefined | null, lang: string, 
   return { status: 'ok', supported, message: `"${wf.name}" supports ${supported.map(langName).join(', ')}.` }
 }
 
+/** One local voice engine as `voiceStatus` lists it (`VoiceEngineView` has the rest: readiness and missing files). */
+export interface TtsEngineState {
+  id: string
+  label: string
+  task: string
+  /** The codes it reads, `'*'` for any language. */
+  languages: string[] | '*'
+  ready: boolean
+  missing: string[]
+}
+
+/** True when a local voice engine reads a language (`'*'` reads every one). */
+export function engineReadsLang(engine: Pick<TtsEngineState, 'languages'>, lang: string): boolean {
+  return engine.languages === '*' || engine.languages.includes(lang)
+}
+
+/** The list of languages an engine reads, for a message: `any language`, `no language`, or the mapped names. */
+function languageListOf(engine: Pick<TtsEngineState, 'languages'>): string {
+  if (engine.languages === '*') return 'any language'
+  return engine.languages.length ? engine.languages.map(langName).join(', ') : 'no language'
+}
+
+/**
+ * Whether a local TTS engine (a built-in id, or `custom:<workflow>`) can speak a language, for the Voice tab's per-language row.
+ *
+ * - A `custom:` id is answered by `voiceSupport` (the workflow's declared languages).
+ * - An absent engine id is `no-engine`; an id the list does not know (or the list was never checked) is `unknown`.
+ * - An engine that does not read the language is `unsupported` with its codes.
+ * - An engine that reads the language but whose ComfyUI nodes are missing stays `ok` (the language is supported), with a warning
+ *   message naming the missing nodes: the job would fail, so the Voice tab shows the message next to the supported Pill.
+ */
+export function ttsSupport(engineId: string | undefined, lang: string, engines: readonly TtsEngineState[] | null, workflows: readonly CustomWorkflowInfo[]): VoiceSupport {
+  if (!engineId) return { status: 'no-engine', supported: [], message: `Pick a local TTS engine for ${langName(lang)}.` }
+  if (workflowNameOf(engineId)) return voiceSupport(engineId, lang, workflows)
+  const engine = engines?.find((e) => e.id === engineId)
+  if (!engine) {
+    const message =
+      engines && engines.length > 0
+        ? `Engine "${engineId}" is not an installed local voice engine.`
+        : 'The local voice engines could not be checked yet: start ComfyUI with the TTS Audio Suite, then refresh.'
+    return { status: 'unknown', supported: [], message }
+  }
+  if (engine.task !== 'tts') return { status: 'unsupported', supported: [], message: `"${engine.label}" makes sound effects, not speech.` }
+  const supported = engine.languages === '*' ? [] : engine.languages
+  if (!engineReadsLang(engine, lang)) {
+    const extra = lang === 'hr' ? ' Croatian works with OmniVoice (600+ languages) and Higgs Audio v3 (100+).' : ''
+    return { status: 'unsupported', supported, message: `"${engine.label}" reads ${languageListOf(engine)}, not ${langName(lang)}.${extra}` }
+  }
+  if (!engine.ready) {
+    const missing = engine.missing.length ? engine.missing.join(', ') : 'the TTS Audio Suite nodes'
+    return {
+      status: 'ok',
+      supported,
+      message: `"${engine.label}" reads ${langName(lang)}, but its ComfyUI nodes are missing (${missing}): install the TTS Audio Suite in ComfyUI, or pick another voice engine.`
+    }
+  }
+  return {
+    status: 'ok',
+    supported,
+    message: engine.languages === '*' ? `"${engine.label}" reads any language, ${langName(lang)} included.` : `"${engine.label}" reads ${langName(lang)}.`
+  }
+}
+
+/** The label of a local voice engine id: the workflow name for `custom:<name>`, else the engine's label, else the id. */
+export function ttsEngineLabel(engines: readonly { id: string; label: string }[] | null, id: string): string {
+  const workflow = workflowNameOf(id)
+  if (workflow) return `custom: ${workflow}`
+  return engines?.find((e) => e.id === id)?.label ?? id
+}
+
 /** The voice languages that are allowed: only languages that have an edition. */
 export function voiceLangChoices(editions: readonly string[]): string[] {
   return [...new Set(editions)]
@@ -50,44 +120,6 @@ export function toggleLang<L extends string>(current: readonly L[], lang: L, on:
   if (on) set.add(lang)
   else set.delete(lang)
   return editions.filter((l) => set.has(l))
-}
-
-/** The part of `voice.status` the Voice tab needs. */
-export interface VibeVoices {
-  ok: boolean
-  supertonicInstalled: boolean
-  voices: readonly { id: string; label: string; engine: string; languages: readonly string[] }[]
-}
-
-export type EnglishEngine = 'kokoro' | 'supertonic'
-
-/** The voices that can read a language: for English the chosen engine's (every English voice when it has none), else the ones whose languages include it. */
-function voicesReading<V extends { engine: string; languages: readonly string[] }>(voices: readonly V[], lang: string, englishEngine: EnglishEngine): V[] {
-  const reads = voices.filter((v) => v.languages.includes(lang))
-  if (lang !== 'en') return reads
-  const own = reads.filter((v) => v.engine === englishEngine)
-  return own.length ? own : reads
-}
-
-/** What the Voice tab says about a language for the VibeTTS provider: whether VibeTTS has a voice that reads it (Supertonic reads Croatian, Kokoro English only). */
-export function vibettsSupport(status: VibeVoices | null, lang: string, englishEngine: EnglishEngine = 'kokoro'): VoiceSupport {
-  if (!status?.ok) return { status: 'unknown', supported: [], message: 'Check VibeTTS to see which voices it has.' }
-  const n = voicesReading(status.voices, lang, englishEngine).length
-  if (n > 0) return { status: 'ok', supported: [lang], message: `${n} voice(s) read ${langName(lang)}.` }
-  const hint = lang !== 'en' && !status.supertonicInstalled ? ' Download Supertonic in VibeTTS Settings > Supertonic.' : ''
-  return { status: 'unsupported', supported: [], message: `VibeTTS has no voice for ${langName(lang)}.${hint}` }
-}
-
-export interface VoiceOption {
-  id: string
-  label: string
-}
-
-/** The voices a speaker can be given in a language, plus the current one when VibeTTS no longer lists it. */
-export function voiceOptions(status: Pick<VibeVoices, 'voices'> | null, lang: string, englishEngine: EnglishEngine, current: string | undefined): VoiceOption[] {
-  const out: VoiceOption[] = voicesReading(status?.voices ?? [], lang, englishEngine).map((v) => ({ id: v.id, label: v.label || v.id }))
-  if (current && !out.some((o) => o.id === current)) out.push({ id: current, label: `${current} (not in VibeTTS for ${lang})` })
-  return out
 }
 
 /** The message shown for a voice job step (`voice ... 12/40 clips`) and its fraction. */

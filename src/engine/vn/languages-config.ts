@@ -15,7 +15,6 @@ const languageEntrySchema = z.object({
     .optional(),
   rtl: z.boolean().optional(),
   script: z.enum(LANGUAGE_SCRIPTS).optional(),
-  supertonic: z.boolean().optional(),
   ui: z.record(z.string(), z.string()).optional(),
   /** A font file with the glyphs of the language: an absolute path, or a file name in `<data>/fonts/`. */
   font: z.string().min(1).optional(),

@@ -1,4 +1,4 @@
-import { FLOW_ENGINE, FLOW_MUSIC_ENGINE, isPictureBook, resolveSfxEngine } from '../../shared/vn'
+import { FLOW_ENGINE, FLOW_MUSIC_ENGINE, isPictureBook, resolveSfxEngine, resolveVoiceEngine } from '../../shared/vn'
 import type { AssetEntry, AssetKind, ImageEntry, ProjectSettings, SoundEntry, VnBook, VnScene } from '../../shared/vn'
 import { ambId, cgId, coverId, musicId, normText, sfxId, sheetId, spriteId, voiceRefId } from '../vn/ids'
 
@@ -147,7 +147,7 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
   for (const k of effects) if (book.sounds?.some((s) => s.key === k && s.kind === 'sfx')) out.push(stub({ id: assetIds.sfx(k), kind: 'sfx', engine: resolveSfxEngine(settings), size: null }))
   for (const k of ambiences) if (book.sounds?.some((s) => s.key === k && s.kind === 'ambience')) out.push(stub({ id: assetIds.amb(k), kind: 'ambience', engine: settings.sound.ambienceEngine, size: null }))
   if (settings.voice.enabled) {
-    const engine = settings.voice.engines[settings.primaryLang] ?? settings.voice.engines[book.primaryLang] ?? ''
+    const engine = resolveVoiceEngine(settings, settings.primaryLang)
     for (const key of speakers) out.push(stub({ id: assetIds.voiceRef(key), kind: 'voiceRef', engine, size: null }))
     out.push(stub({ id: assetIds.voiceRef(NARRATOR_KEY), kind: 'voiceRef', engine, size: null }))
   }
