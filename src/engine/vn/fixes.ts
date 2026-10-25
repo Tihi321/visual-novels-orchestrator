@@ -1,10 +1,10 @@
-import { CANONICAL_EXPRESSIONS, hasText } from '../../shared/vn'
+import { CANONICAL_EXPRESSIONS, hasText, isPictureBook, presentationOf } from '../../shared/vn'
 import type { CanonicalExpression, Edition, VnBeat, VnBook, VnScene } from '../../shared/vn'
 import { visualWords } from '../assets/derive'
 import type { AlignReport } from './align'
 import type { Decision } from './agents/script-analyst'
 import { uniqueNames } from './aliases'
-import { backgroundId, normText, slugKey, spriteId } from './ids'
+import { backgroundId, backgroundIdFor, normText, slugKey, spriteId } from './ids'
 import { detectTime } from './script'
 import type { Uncertain } from './script'
 
@@ -112,14 +112,16 @@ export function applyDecisions(book: VnBook, edition: Edition | undefined, items
     return key
   }
   const rebackground = (s: VnScene) => {
-    s.backgroundId = backgroundId(s.placeKey, s.placeText, s.time)
+    s.backgroundId = backgroundIdFor(presentationOf(b), s.id, s.placeKey, s.placeText, s.time)
   }
   const hasFile = opts.hasFile
   /**
    * The analysis must not make a new background that has no art when one exists: if the new background has no file and the old one has, the
-   * old time and background stay; if neither has, the nearest time that has art for the place is used.
+   * old time and background stay; if neither has, the nearest time that has art for the place is used. A picture book has one page per
+   * scene, and the page picture shows the scene, not a time: its id does not follow the place, so no rescue is possible or wanted.
    */
   const keepArt = (s: VnScene, was: { time: string | null; backgroundId: string }): void => {
+    if (isPictureBook(b)) return
     if (!hasFile || s.backgroundId === was.backgroundId || hasFile(s.backgroundId)) return
     const wanted = s.backgroundId
     if (hasFile(was.backgroundId)) {

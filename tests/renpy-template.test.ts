@@ -256,6 +256,7 @@ function createPlayerHarness(gameData: GameData) {
   langBarEl.appendChild(stageSelectEl)
 
   const docElement = new FakeElement('html')
+  const bodyElement = new FakeElement('body', '', 'vno-body')
   const storage = new Map<string, string>()
   let domLoadedHandler: (() => void) | null = null
 
@@ -263,6 +264,7 @@ function createPlayerHarness(gameData: GameData) {
     title: gameData.title,
     fullscreenElement: null,
     documentElement: docElement,
+    body: bodyElement,
     getElementById: (id: string) => elementsById.get(id) ?? null,
     createElement: (tag: string) => new FakeElement(tag),
     querySelectorAll: (sel: string) => {
@@ -894,5 +896,161 @@ describe('VNO-42: Web Player Audio Continuity and Responsive Stage Scaling', () 
     // Scene 1 explicitly silences music
     expect(ch.scenes[1]!.music).toBeNull()
     expect(ch.scenes[1]!.musicExplicitNull).toBe(true)
+  })
+})
+
+describe('VNO-47: the picture-book player', () => {
+  /** A three-page picture book: two pages with characters, one landscape page, and an English and a Croatian edition. */
+  function pictureBook() {
+    const book = buildBook(
+      storyInputSchema.parse({
+        title: 'Luna and the Apple Tree',
+        format: 'kids-picture-book',
+        kind: 'linear',
+        characters: [
+          { key: 'luna', name: 'Luna', looks: 'A small girl with two dark braids and a red coat.' },
+          { key: 'pero', name: 'Pero', looks: 'A round grey cat with green eyes and a red scarf.' }
+        ],
+        places: [
+          { key: 'hill', name: 'The Hill', looks: 'A green hill with tall grass and one crooked apple tree.' },
+          { key: 'home', name: 'Home', looks: 'A warm kitchen with a stove and a round window.' }
+        ],
+        chapters: [
+          {
+            title: 'One Morning',
+            scenes: [
+              { place: 'hill', time: 'morning', description: 'Luna runs up the hill, and Pero runs after her.', beats: [{ cast: ['luna', 'pero'] }, { text: 'Luna ran up the hill, and Pero ran after her.' }] },
+              { place: 'hill', time: 'morning', beats: [{ cast: ['pero'] }, { text: 'Pero climbed the crooked apple tree.' }] },
+              { place: 'home', time: 'morning', beats: [{ text: 'Then they went home for breakfast.' }] }
+            ]
+          }
+        ]
+      }),
+      { slug: 'luna', lang: 'en' }
+    ).book
+    expect(book.presentation).toBe('picture-book')
+    return book
+  }
+
+  const editions = (book: VnBook): { en: Edition; hr: Edition } => {
+    const scenes = book.chapters[0]!.scenes
+    const s1 = scenes[0]!.beats.find((b) => b.type === 'narration')!.id
+    const s2 = scenes[1]!.beats.find((b) => b.type === 'narration')!.id
+    const s3 = scenes[2]!.beats.find((b) => b.type === 'narration')!.id
+    const en: Edition = {
+      lang: 'en',
+      title: book.title,
+      characterNames: { luna: 'Luna', pero: 'Pero' },
+      chapterTitles: { 1: 'One Morning' },
+      choiceTexts: {},
+      endings: {},
+      beats: { [s1]: 'Luna ran up the hill, and Pero ran after her.', [s2]: 'Pero climbed the crooked apple tree.', [s3]: 'Then they went home for breakfast.' }
+    }
+    const hr: Edition = {
+      lang: 'hr',
+      title: 'Luna i jabuka',
+      characterNames: { luna: 'Luna', pero: 'Pero' },
+      chapterTitles: { 1: 'Jedno jutro' },
+      choiceTexts: {},
+      endings: {},
+      beats: { [s1]: 'Luna je potrčala uz brijeg, a Pero je trčao za njom.', [s2]: 'Pero se popeo na krivo stablo jabuke.', [s3]: 'Zatim su otišli kući na doručak.' }
+    }
+    return { en, hr }
+  }
+
+  it('ships the page layer, its styles and the page-mode functions in the generated runtime', () => {
+    const runtime = renderPlayerRuntime()
+    for (const id of ['vno-page-layer', 'vno-page-image-area', 'vno-page-image', 'vno-page-caption', 'vno-page-counter', 'vno-page-prev', 'vno-page-next', 'vno-page-replay', 'vno-page-menu']) {
+      expect(runtime.html).toContain(`id="${id}"`)
+    }
+    expect(runtime.css).toContain('.vno-page-layer')
+    expect(runtime.css).toContain('body.vno-picturebook')
+    expect(runtime.css).toContain('height: 800px')
+    expect(runtime.css).toContain('background-size: contain')
+    for (const fn of ['pictureBookPages', 'startPictureBook', 'showPage', 'renderPage', 'renderPageCaption', 'pageCaption', 'nextPage', 'prevPage', 'playPageVoice']) {
+      expect(runtime.js).toContain(`function ${fn}`)
+    }
+    expect(runtime.js).toContain("gameData.presentation === 'picture-book'")
+  })
+
+  it('starts on page 1 (no chapter card), turns pages by image/caption/arrow, re-renders the caption when the language changes and shows The End on the last page', () => {
+    const book = pictureBook()
+    const { en, hr } = editions(book)
+    const voice = { has: (lang: string, beatId: string) => (lang === 'en' && beatId === book.chapters[0]!.scenes[0]!.beats[1]!.id ? 'clip.mp3' : null) }
+    const gd = buildGameData({ book, theme: TEST_THEME, primaryEdition: en, editions: [en, hr], voice })
+    expect(gd.presentation).toBe('picture-book')
+    // no sprites and no CG images are part of a picture book
+    expect(gd.characters.luna!.sprites).toEqual({})
+    expect(gd.cgs).toEqual({})
+
+    const h = createPlayerHarness(gd)
+    expect(h.document.body.classList.contains('vno-picturebook')).toBe(true)
+    expect(h.getById('vno-page-layer').classList.contains('vno-hidden')).toBe(true) // not before Start
+
+    h.getById('vno-mm-start').click()
+    // no chapter card before page 1
+    expect(h.getById('vno-chapter-card').classList.contains('vno-hidden')).toBe(true)
+    expect(h.getById('vno-page-layer').classList.contains('vno-hidden')).toBe(false)
+    expect(h.getById('vno-page-counter').textContent).toBe('Page 1 of 3')
+    expect(h.getById('vno-page-caption').innerHTML).toContain('Luna ran up the hill, and Pero ran after her.')
+    // no sprite <img> was made; the illustration is the scene background
+    for (const slot of ['vno-slot-left', 'vno-slot-center', 'vno-slot-right']) expect(h.getById(slot).innerHTML).toBe('')
+    expect(h.getById('vno-page-image').style.backgroundImage).toContain('images/bg ch01_s01.webp')
+    // read aloud: the page's beat has a clip, so the replay button shows and the clip plays
+    expect(h.getById('vno-page-replay').classList.contains('vno-hidden')).toBe(false)
+    expect(h.getById('vno-audio-voice').src).toContain('voice/en/ch01.s01.b002')
+
+    // language switch re-renders the caption and the page counter in Croatian
+    h.getById('vno-stage-language').change('hr')
+    expect(h.getById('vno-page-counter').textContent).toBe('Stranica 1 od 3')
+    expect(h.getById('vno-page-caption').innerHTML).toContain('Luna je potrčala uz brijeg')
+    // page 2 by clicking the illustration
+    h.getById('vno-page-image-area').click()
+    expect(h.getById('vno-page-counter').textContent).toBe('Stranica 2 od 3')
+    expect(h.getById('vno-page-caption').innerHTML).toContain('Pero se popeo na krivo stablo jabuke.')
+    // page 2 has no clip: the replay button is hidden
+    expect(h.getById('vno-page-replay').classList.contains('vno-hidden')).toBe(true)
+
+    // the quick save was written on the turn: the menu's Load resumes page 2
+    h.getById('vno-page-menu').click()
+    expect(h.getById('vno-screen-main-menu').classList.contains('vno-hidden')).toBe(false)
+    h.getById('vno-mm-load').click()
+    expect(h.getById('vno-page-counter').textContent).toBe('Stranica 2 od 3')
+    expect(h.getById('vno-page-caption').innerHTML).toContain('Pero se popeo')
+
+    // an arrow key goes on; the caption click too; the last page shows The End with restart
+    h.window.dispatchEvent('keydown', { code: 'ArrowRight', key: 'ArrowRight', preventDefault: () => {} })
+    expect(h.getById('vno-page-counter').textContent).toBe('Stranica 3 od 3')
+    expect(h.getById('vno-page-caption').innerHTML).toContain('Zatim su otišli kući na doručak.')
+    h.getById('vno-page-caption').click()
+    expect(h.getById('vno-ending-card').classList.contains('vno-hidden')).toBe(false)
+    expect(h.getById('vno-ending-card-text').textContent).toBe('Kraj')
+    // Start again begins at page 1
+    h.getById('vno-btn-restart').click()
+    expect(h.getById('vno-page-counter').textContent).toBe('Stranica 1 od 3')
+    expect(h.getById('vno-ending-card').classList.contains('vno-hidden')).toBe(true)
+  })
+
+  it('leaves a visual novel exactly as it was: no picture-book body class and the VN stage renders', () => {
+    const book = buildBook(
+      storyInputSchema.parse({
+        title: 'Harbour',
+        characters: [{ key: 'mara', name: 'Mara', looks: 'a girl in a red coat' }],
+        places: [{ key: 'harbour', name: 'Harbour', looks: 'a stone harbour' }],
+        chapters: [{ title: 'One', scenes: [{ place: 'harbour', beats: [{ cast: ['mara'] }, { speaker: 'mara', text: 'Hello.' }] }] }]
+      }),
+      { slug: 'harbour', lang: 'en' }
+    ).book
+    expect(book.presentation).toBe('visual-novel')
+    const gd = buildGameData({ book, theme: TEST_THEME })
+    expect(gd.presentation).toBe('visual-novel')
+    const h = createPlayerHarness(gd)
+    expect(h.document.body.classList.contains('vno-picturebook')).toBe(false)
+    h.getById('vno-mm-start').click()
+    expect(h.getById('vno-chapter-card').classList.contains('vno-hidden')).toBe(false) // the visual novel keeps its chapter card
+    expect(h.getById('vno-page-layer').classList.contains('vno-hidden')).toBe(true)
+    h.getById('vno-chapter-card').click()
+    expect(h.getById('vno-dialogue-text').innerHTML).toBe('Hello.')
+    expect(h.getById('vno-slot-center').innerHTML).toContain('<img')
   })
 })

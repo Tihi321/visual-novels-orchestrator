@@ -1,5 +1,5 @@
 import { basename } from 'node:path'
-import { hasText, vnBookSchema } from '../../shared/vn'
+import { hasText, presentationForFormat, vnBookSchema } from '../../shared/vn'
 import type { Edition, ImageEntry, Lang, SoundEntry, VnBook, VnChapter } from '../../shared/vn'
 import type { PuzzleEntry, PuzzleProof } from '../../shared/puzzle'
 import { mergeBibleAliases } from './aliases'
@@ -50,6 +50,7 @@ export function parseRawBook(raw: RawBook): ParsedFolder {
 
   const outline = parseOutlineChapters(raw.outline)
   const format = str(raw.book.format)
+  const presentation = presentationForFormat(format)
   const map = buildChapterMap(outline, raw.chapters.map((c) => ({ n: c.n, title: c.title })), format)
   warnings.push(...map.warnings)
 
@@ -59,7 +60,7 @@ export function parseRawBook(raw: RawBook): ParsedFolder {
   const puzzleLines: PuzzleLines = { clues: [], evidence: [], puzzles: [], testimonies: [] }
   for (const m of map.chapters) {
     const file = raw.chapters.find((c) => c.n === m.n)!
-    const parsed = parseChapterScript(file.body, { chapter: m.n, bible })
+    const parsed = parseChapterScript(file.body, { chapter: m.n, bible, presentation })
     warnings.push(...parsed.warnings)
     uncertain.push(...parsed.uncertain)
     for (const i of parsed.images) if (!images.has(i.key)) images.set(i.key, i)
@@ -132,12 +133,14 @@ export async function importBook(folderPath: string, opts: { lang?: Lang; prove?
   const lang = opts.lang ?? detected.lang
   const slug = str(raw.book.slug) ?? (basename(folderPath) || 'book')
   const title = str(raw.book.title) ?? slug
+  const format = str(raw.book.format) ?? 'visual-novel'
   const book = vnBookSchema.parse({
     slug,
     title,
     ...(str(raw.book.author) ? { author: str(raw.book.author) } : {}),
     ...(str(raw.book.genre) ? { genre: str(raw.book.genre) } : {}),
-    format: str(raw.book.format) ?? 'visual-novel',
+    format,
+    presentation: presentationForFormat(format),
     kind: parsed.map.kind,
     primaryLang: lang,
     style: parsed.bible.style,

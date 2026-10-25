@@ -1,4 +1,4 @@
-import { FLOW_ENGINE, FLOW_MUSIC_ENGINE, resolveSfxEngine } from '../../shared/vn'
+import { FLOW_ENGINE, FLOW_MUSIC_ENGINE, isPictureBook, resolveSfxEngine } from '../../shared/vn'
 import type { AssetEntry, AssetKind, ImageEntry, ProjectSettings, SoundEntry, VnBook, VnScene } from '../../shared/vn'
 import { ambId, cgId, coverId, musicId, normText, sfxId, sheetId, spriteId, voiceRefId } from '../vn/ids'
 
@@ -56,10 +56,17 @@ function stub(partial: Pick<AssetEntry, 'id' | 'kind' | 'engine' | 'size'> & { r
  * a cover, `settings.music.tracks` music tracks, a CG or insert per `images` entry a beat shows, a sound effect or ambience per `sounds`
  * entry a beat or scene plays, and, only when voice is enabled, a voice reference per speaking character and the narrator.
  * Order is by first appearance, so the output is deterministic.
+ *
+ * A picture book (D4) is simpler: every scene is a page, so its background id is the page illustration (`bg_ch01_s01`); there are no sprites,
+ * expression variants or CGs, but every character that appears keeps a `sheet_<char>` as an internal reference (never drawn in the book), and a
+ * page whose scene has characters is made by the edit engine from their sheets, the same rule a CG with characters uses.
  */
 export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntry[] {
   const out: AssetEntry[] = []
+  const pictureBook = isPictureBook(book)
   const backgrounds = new Set<string>()
+  /** A picture book background id -> the characters drawn into its page. */
+  const pagePeople = new Map<string, string[]>()
   const castChars: string[] = []
   const speakers: string[] = []
   const appearing: string[] = []
@@ -78,10 +85,13 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
 
   for (const chapter of book.chapters) {
     for (const scene of chapter.scenes) {
-      if (scene.backgroundId) backgrounds.add(scene.backgroundId)
+      if (scene.backgroundId) {
+        backgrounds.add(scene.backgroundId)
+        if (pictureBook) pagePeople.set(scene.backgroundId, charactersOnPage(book, scene))
+      }
       if (scene.ambience) note(ambiences, scene.ambience)
       for (const beat of scene.beats) {
-        if (beat.image) note(pictures, beat.image)
+        if (!pictureBook && beat.image) note(pictures, beat.image)
         if (beat.sfx) note(effects, beat.sfx)
         if (beat.ambience) note(ambiences, beat.ambience)
         if (beat.type === 'cast') {
@@ -100,11 +110,11 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
   }
 
   // an item of a puzzle that is a picture of the story (an insert: a weapon, a letter) is made too, even when no beat shows it
-  for (const p of book.puzzles ?? []) for (const l of Object.values(p.links ?? {})) if (l.type === 'image' && book.images?.some((i) => i.key === l.key)) note(pictures, l.key)
+  if (!pictureBook) for (const p of book.puzzles ?? []) for (const l of Object.values(p.links ?? {})) if (l.type === 'image' && book.images?.some((i) => i.key === l.key)) note(pictures, l.key)
 
   // the characters of a picture have sheets (they are its references)
   const imageEntries = pictures.flatMap((k) => book.images?.find((i) => i.key === k) ?? [])
-  for (const img of imageEntries) for (const c of (img.characters ?? []).slice(0, 3)) if (book.characters.some((x) => x.key === c)) note(appearing, c)
+  if (!pictureBook) for (const img of imageEntries) for (const c of (img.characters ?? []).slice(0, 3)) if (book.characters.some((x) => x.key === c)) note(appearing, c)
 
   // every listed sound has an asset, also one no beat plays (the stage director may cue it, and a person may add one with `vno_sound_set`)
   for (const snd of book.sounds ?? []) note(snd.kind === 'sfx' ? effects : ambiences, snd.key)
@@ -113,17 +123,24 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
   // a Flow project makes every image with Flow, whatever the ComfyUI engines are
   const gen = art.provider === 'flow' ? FLOW_ENGINE : art.generator
   const edit = art.provider === 'flow' ? FLOW_ENGINE : art.editor
-  for (const id of backgrounds) out.push(stub({ id, kind: 'background', engine: gen, size: { ...LANDSCAPE } }))
-  for (const key of appearing) out.push(stub({ id: assetIds.sheet(key), kind: 'sheet', engine: gen, size: { ...PORTRAIT } }))
-  for (const key of appearing) {
-    for (const expression of spriteKeys.get(key) ?? []) {
-      out.push(stub({ id: assetIds.sprite(key, expression), kind: 'sprite', engine: edit, size: { ...PORTRAIT }, refs: [assetIds.sheet(key)] }))
-    }
+  for (const id of backgrounds) {
+    const people = pictureBook ? (pagePeople.get(id) ?? []) : []
+    // a picture-book page with characters is made by the edit engine from their sheets; a page without them by the generator
+    const refs = people.slice(0, 3).map((k) => assetIds.sheet(k))
+    out.push(stub({ id, kind: 'background', engine: refs.length ? edit : gen, size: { ...LANDSCAPE }, ...(refs.length ? { refs } : {}) }))
   }
-  for (const img of imageEntries) {
-    const refs = (img.characters ?? []).filter((c) => book.characters.some((x) => x.key === c)).slice(0, 3).map((c) => assetIds.sheet(c))
-    // a picture with characters is made by the edit engine from their sheets, one without by the generator
-    out.push(stub({ id: assetIds.cg(img.key), kind: 'cg', engine: refs.length ? edit : gen, size: { ...(img.display === 'insert' ? SQUARE : LANDSCAPE) }, ...(refs.length ? { refs } : {}) }))
+  for (const key of appearing) out.push(stub({ id: assetIds.sheet(key), kind: 'sheet', engine: gen, size: { ...PORTRAIT } }))
+  if (!pictureBook) {
+    for (const key of appearing) {
+      for (const expression of spriteKeys.get(key) ?? []) {
+        out.push(stub({ id: assetIds.sprite(key, expression), kind: 'sprite', engine: edit, size: { ...PORTRAIT }, refs: [assetIds.sheet(key)] }))
+      }
+    }
+    for (const img of imageEntries) {
+      const refs = (img.characters ?? []).filter((c) => book.characters.some((x) => x.key === c)).slice(0, 3).map((c) => assetIds.sheet(c))
+      // a picture with characters is made by the edit engine from their sheets, one without by the generator
+      out.push(stub({ id: assetIds.cg(img.key), kind: 'cg', engine: refs.length ? edit : gen, size: { ...(img.display === 'insert' ? SQUARE : LANDSCAPE) }, ...(refs.length ? { refs } : {}) }))
+    }
   }
   out.push(stub({ id: assetIds.cover(), kind: 'cover', engine: gen, size: { ...LANDSCAPE } }))
   for (let n = 1; n <= settings.music.tracks; n++) out.push(stub({ id: assetIds.music(n), kind: 'music', engine: settings.music.provider === 'flow' ? FLOW_MUSIC_ENGINE : settings.music.engine, size: null }))
@@ -134,6 +151,18 @@ export function deriveAssets(book: VnBook, settings: ProjectSettings): AssetEntr
     for (const key of speakers) out.push(stub({ id: assetIds.voiceRef(key), kind: 'voiceRef', engine, size: null }))
     out.push(stub({ id: assetIds.voiceRef(NARRATOR_KEY), kind: 'voiceRef', engine, size: null }))
   }
+  return out
+}
+
+/** The characters a picture-book page shows, in the order they enter the scene: the cast beats; a scene without one shows its line speakers. */
+export function charactersOnPage(book: Pick<VnBook, 'characters'>, scene: Pick<VnScene, 'beats'>): string[] {
+  const known = new Set(book.characters.map((c) => c.key))
+  const out: string[] = []
+  const add = (key: string) => {
+    if (known.has(key) && !out.includes(key)) out.push(key)
+  }
+  for (const b of scene.beats) if (b.type === 'cast') for (const c of b.cast) add(c.charKey)
+  if (!out.length) for (const b of scene.beats) if (b.type === 'line' && b.speakerKey) add(b.speakerKey)
   return out
 }
 
@@ -221,12 +250,22 @@ export function withoutCharacterSentences(text: string | undefined, book: Pick<V
 /** The framing words that keep an image model to one figure, or to an empty place. */
 export const SHEET_FRAMING = 'single character, one full-body figure only, front view, standing, centered, plain white background'
 export const BACKGROUND_FRAMING = 'empty environment, no people, no characters, no creatures, no animals'
+/** The framing words of a picture-book page: the whole illustration shows the scene, with its characters drawn into it. */
+export const PAGE_FRAMING = "children's picture book illustration, full-bleed artwork filling the whole page, no border, no frame, no text, no lettering, no speech bubbles"
 export const spriteFraming = (expression: string): string =>
   `Show only this one character as a single full-body figure, centered, facing the viewer, ${expression} facial expression, plain pure white background, nothing else`
 
 /** The style words for a kind of asset: an empty background must not be told about characters ("cute friendly characters" draws one). */
 export function styleForKind(style: string, kind: AssetKind): string {
   return kind === 'background' ? style.split(',').filter((part) => !/characters?|people|figures?/i.test(part)).map((p) => p.trim()).join(', ') : style
+}
+
+/** One person drawn into a picture-book page: their name and looks (a page may show one; `peopleClause` needs two or three). */
+export function personLine(book: Pick<VnBook, 'characters'>, key: string): string {
+  const c = book.characters.find((x) => x.key === key)
+  if (!c) return ''
+  const looks = visualLooks(c.looks) || c.looks
+  return looks.trim() ? `${c.name} (${looks.slice(0, 160).replace(/[.\s]+$/, '')})` : c.name
 }
 
 function styleLine(book: VnBook, opts: { pixel?: boolean; stylePrompt?: string }): string {
@@ -273,25 +312,38 @@ function splitSpriteId(id: string): { charKey: string; expression: string } {
 }
 
 /** The fixed negative prompt for a kind of asset. Audio has none. */
-export function fallbackNegative(kind: AssetKind): string {
+export function fallbackNegative(kind: AssetKind, opts: { pictureBook?: boolean } = {}): string {
   if (kind === 'music' || kind === 'voiceRef' || kind === 'sfx' || kind === 'ambience') return ''
   if (kind === 'sheet' || kind === 'sprite') return `${DEFAULT_NEGATIVE}, character sheet, turnaround, model sheet, multiple views, collage, panels, labels, captions, multiple characters`
-  if (kind === 'background') return `${DEFAULT_NEGATIVE}, person, people, character, creature, animal`
+  if (kind === 'background') {
+    if (opts.pictureBook) return `${DEFAULT_NEGATIVE}, page border, cut-out figures, stickers`
+    return `${DEFAULT_NEGATIVE}, person, people, character, creature, animal`
+  }
   return DEFAULT_NEGATIVE
 }
 
 /**
  * A deterministic English prompt built from the book (used when the art-director has not written one):
  * style prefix + bible looks / place looks + scene description. `opts.pixel` adds pixel-art wording.
+ *
+ * A picture-book page is not an empty background: it is one illustration of the scene with its characters drawn into it, so the place and the
+ * scene description keep the people they mention, and the scene's cast is named with their looks and a place from left to right (`peopleClause`).
  */
 export function fallbackPrompt(asset: Pick<AssetEntry, 'id' | 'kind'>, book: VnBook, opts: { pixel?: boolean; stylePrompt?: string } = {}): string {
-  const style = styleForKind(styleLine(book, opts), asset.kind)
+  const pictureBook = isPictureBook(book)
+  // a page keeps the style's character words: the illustration is of people, not of an empty place
+  const style = pictureBook ? styleLine(book, opts) : styleForKind(styleLine(book, opts), asset.kind)
   switch (asset.kind) {
     case 'background': {
       const scene = sceneOf(book, asset.id)
       const place = scene?.placeKey ? book.places.find((p) => p.key === scene.placeKey) : undefined
       const placeName = place?.name ?? scene?.placeText ?? asset.id.replace(/^bg_/, '').replace(/_/g, ' ')
       const time = scene?.time && scene.time !== 'any' ? `${scene.time} lighting` : ''
+      if (pictureBook) {
+        const people = scene ? charactersOnPage(book, scene) : []
+        const clause = peopleClause(book, people) || (people.length === 1 ? personLine(book, people[0]!) : '')
+        return [style, placeName, place?.looks, scene?.description, clause, time, PAGE_FRAMING].filter((part) => part && String(part).trim()).join(', ')
+      }
       return [style, BACKGROUND_FRAMING, placeName, withoutCharacterSentences(place?.looks, book), withoutCharacterSentences(scene?.description, book), time, 'wide landscape composition, full-bleed artwork filling the whole frame, no border, no frame, no text']
         .filter(Boolean)
         .join(', ')

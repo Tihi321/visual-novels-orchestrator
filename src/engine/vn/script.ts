@@ -1,7 +1,7 @@
-import type { Expression, ImageEntry, SoundEntry, VnBeat, VnScene } from '../../shared/vn'
+import type { Expression, ImageEntry, Presentation, SoundEntry, VnBeat, VnScene } from '../../shared/vn'
 import type { Bible, BibleCharacter, BiblePlace } from './bible'
 import { mapExpression } from './expressions'
-import { backgroundId, beatId, normText, sceneId, slugKey } from './ids'
+import { backgroundIdFor, beatId, normText, sceneId, slugKey } from './ids'
 
 // The script grammar (docs/visual-novel.md), with Croatian keyword aliases.
 export const SCENE_RE = /^\**\s*(?:scene|scena)\s*:\s*\**\s*(.+?)\s*\**$/iu
@@ -348,8 +348,8 @@ export function checkCasts(scenes: VnScene[], bible: Pick<Bible, 'characters'>, 
   return out
 }
 
-/** Parses one chapter's script, leniently. Never throws. */
-export function parseChapterScript(body: string, opts: { chapter: number; bible: Bible }): ParsedChapterScript {
+/** Parses one chapter's script, leniently. Never throws. `presentation` gives a picture book one page id per scene (`bg_ch01_s01`). */
+export function parseChapterScript(body: string, opts: { chapter: number; bible: Bible; presentation?: Presentation }): ParsedChapterScript {
   const { chapter, bible } = opts
   const warnings: string[] = []
   const drafts: SceneDraft[] = []
@@ -641,7 +641,7 @@ export function parseChapterScript(body: string, opts: { chapter: number; bible:
       placeKey: d.placeKey,
       placeText: d.placeText,
       time: d.time,
-      backgroundId: backgroundId(d.placeKey, d.placeText, d.time),
+      backgroundId: backgroundIdFor(opts.presentation, id, d.placeKey, d.placeText, d.time),
       description: d.description.join(' ').trim(),
       beats,
       breakBefore: d.breakBefore

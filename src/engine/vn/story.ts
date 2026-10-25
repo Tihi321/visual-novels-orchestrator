@@ -1,10 +1,10 @@
 import { z } from 'zod'
-import { CANONICAL_EXPRESSIONS, EXPRESSION_RE, hasText, langSchema, vnBookSchema } from '../../shared/vn'
+import { CANONICAL_EXPRESSIONS, EXPRESSION_RE, hasText, langSchema, presentationForFormat, presentationOf, presentationSchema, vnBookSchema } from '../../shared/vn'
 import { puzzleCoreSchema, puzzleEntityIds, puzzleEntrySchema, puzzleFindableIds, puzzleTextIds } from '../../shared/puzzle'
-import type { Edition, Lang, VnBeat, VnBook, VnChapter, VnScene } from '../../shared/vn'
+import type { Edition, Lang, Presentation, VnBeat, VnBook, VnChapter, VnScene } from '../../shared/vn'
 import { aliasIndex } from './aliases'
 import { expressionsOf, mapExpression } from './expressions'
-import { backgroundId, beatId, normText, sceneId, slugKey } from './ids'
+import { backgroundIdFor, beatId, normText, sceneId, slugKey } from './ids'
 import { DEFAULT_ENDING } from './outline'
 
 /**
@@ -87,6 +87,7 @@ export const storyInputSchema = z.object({
   author: z.string().optional(),
   genre: z.string().optional(),
   format: z.string().optional().describe('For example visual-novel or choice-visual-novel. Left out: chosen from kind'),
+  presentation: presentationSchema.optional().describe('visual-novel (sprites and a text box) or picture-book (one illustration and a caption per scene). Left out: follows the format (kids-picture-book is a picture book)'),
   kind: z.enum(['linear', 'choice']).optional().describe('choice when a chapter has choices, else linear. Left out: found from the chapters'),
   lang: langSchema.optional().describe('The language of the text. Left out: detected'),
   style: z.string().optional().describe('Writing or art style note'),
@@ -107,6 +108,8 @@ interface Ctx {
   places: VnBook['places']
   /** The book's expression set (default: the standard eight). */
   expressions?: string[]
+  /** How the book is shown: a picture book gives every scene its own page id. Missing: a visual novel. */
+  presentation?: Presentation
 }
 
 /** The cues a beat input carries, in a book's terms: catalogue keys (a `cg_`, `sfx_` or `amb_` prefix is allowed). */
@@ -194,7 +197,7 @@ function makeScene(ctx: Ctx, id: string, input: SceneInput): VnScene {
     placeKey: place?.key ?? null,
     placeText: place?.name ?? placeText,
     time,
-    backgroundId: backgroundId(place?.key ?? null, place?.name ?? placeText, time),
+    backgroundId: backgroundIdFor(ctx.presentation, id, place?.key ?? null, place?.name ?? placeText, time),
     description: input.description?.trim() ?? '',
     beats: input.beats.map((b, i) => makeBeat(ctx, beatId(id, i + 1), b)),
     breakBefore: input.breakBefore ?? false,
@@ -284,15 +287,20 @@ export function buildBook(input: StoryInput, o: { slug: string; lang: Lang }): {
   const sounds = makeCatalogue(input.sounds, 'sound', (s) => s.key ?? cueKeyOf(s.description), (s) => s.kind).map((s, n) => ({ key: s.key, kind: input.sounds[n]!.kind, description: s.description.trim() }))
   const ctx: Ctx = { characters, places, expressions: input.expressions }
   const ns = input.chapters.map((c, i) => c.n ?? i + 1)
-  const chapters = input.chapters.map((c, i) => makeChapter(ctx, ns[i]!, c))
-  const kind: VnBook['kind'] = chapters.some((c) => c.choices.length) ? 'choice' : 'linear'
+  const kind: VnBook['kind'] = input.chapters.some((c) => (c.choices?.length ?? 0) > 0) ? 'choice' : 'linear'
   if (input.kind && input.kind !== kind) throw new Error(input.kind === 'choice' ? 'kind is "choice" but no chapter has choices' : 'kind is "linear" but a chapter has choices')
+  // the presentation decides the background ids (one page per scene in a picture book), so it is settled before the scenes are built
+  const format = input.format?.trim() || defaultFormat(kind)
+  const presentation = input.presentation ?? presentationForFormat(format)
+  ctx.presentation = presentation
+  const chapters = input.chapters.map((c, i) => makeChapter(ctx, ns[i]!, c))
   const book: VnBook = {
     slug: o.slug,
     title: input.title,
     ...(input.author?.trim() ? { author: input.author.trim() } : {}),
     ...(input.genre?.trim() ? { genre: input.genre.trim() } : {}),
-    format: input.format?.trim() || defaultFormat(kind),
+    format,
+    presentation,
     kind,
     primaryLang: o.lang,
     style: input.style?.trim() ?? '',
@@ -413,13 +421,14 @@ export function validateBook(book: VnBook): { errors: string[]; warnings: string
 }
 
 /** The numbers of a book for a reply. */
-export function storySummary(book: VnBook): { slug: string; title: string; kind: VnBook['kind']; format: string; primaryLang: Lang; chapters: number; scenes: number; beats: number; characters: number; places: number } {
+export function storySummary(book: VnBook): { slug: string; title: string; kind: VnBook['kind']; format: string; presentation: Presentation; primaryLang: Lang; chapters: number; scenes: number; beats: number; characters: number; places: number } {
   const scenes = book.chapters.flatMap((c) => c.scenes)
   return {
     slug: book.slug,
     title: book.title,
     kind: book.kind,
     format: book.format,
+    presentation: presentationOf(book),
     primaryLang: book.primaryLang,
     chapters: book.chapters.length,
     scenes: scenes.length,
@@ -485,6 +494,7 @@ export const storyOpSchema = z.discriminatedUnion('op', [
     style: z.string().optional(),
     coverBrief: nullableText.describe('null clears it'),
     format: z.string().optional(),
+    presentation: presentationSchema.optional().describe('visual-novel or picture-book. Changed: every scene gets the background id of its presentation again (in a picture book one page per scene), so the pages need new prompts and images'),
     expressions: z.array(z.string()).nullable().optional().describe('The expression set of the book (must include neutral); null goes back to the standard eight. A line that uses a word the set loses is refused')
   }),
   z.object({
@@ -625,13 +635,13 @@ const chapterOf = (book: VnBook, n: number): VnChapter => {
   return c
 }
 
-/** Sets the background of a scene from its place and time (it follows them). */
+/** Sets the background of a scene from its place and time (it follows them), or the page id of a picture book. */
 function setPlace(book: VnBook, scene: VnScene, text: string): void {
   const t = text.trim()
   const place = t ? findPlace(book.places, t) : undefined
   scene.placeKey = place?.key ?? null
   scene.placeText = place?.name ?? t
-  scene.backgroundId = backgroundId(scene.placeKey, scene.placeText, scene.time)
+  scene.backgroundId = backgroundIdFor(presentationOf(book), scene.id, scene.placeKey, scene.placeText, scene.time)
 }
 
 const eachScene = (book: VnBook, fn: (s: VnScene) => void) => book.chapters.forEach((c) => c.scenes.forEach(fn))
@@ -648,9 +658,11 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
     try {
       switch (op.op) {
         case 'book.update': {
+          const wasPresentation = presentationOf(book)
           if (op.title !== undefined) book.title = op.title
           if (op.style !== undefined) book.style = op.style
           if (op.format !== undefined) book.format = op.format
+          if (op.presentation !== undefined) book.presentation = op.presentation
           for (const k of ['author', 'genre', 'coverBrief'] as const) {
             const v = op[k]
             if (v === null || (v !== undefined && !v.trim())) delete book[k]
@@ -659,6 +671,15 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
           if (op.expressions !== undefined) {
             if (op.expressions === null) delete book.expressions
             else book.expressions = [...new Set(op.expressions)]
+          }
+          // a new presentation changes what a page is: every scene gets its background id again (one per scene in a picture book)
+          const nowPresentation = presentationOf(book)
+          if (nowPresentation !== wasPresentation) {
+            book.presentation = nowPresentation
+            eachScene(book, (s) => {
+              s.backgroundId = backgroundIdFor(nowPresentation, s.id, s.placeKey, s.placeText, s.time)
+            })
+            changed.add('scenes')
           }
           changed.add('book')
           break
@@ -872,7 +893,7 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
           if (uses.length && !op.force) throw new Error(`place "${op.key}" is used by ${uses.length} scene(s) (${uses.map((s) => s.id).join(', ')}): change those scenes first, or pass force to keep their place text without the place`)
           for (const s of uses) {
             s.placeKey = null
-            s.backgroundId = backgroundId(null, s.placeText, s.time)
+            s.backgroundId = backgroundIdFor(presentationOf(book), s.id, null, s.placeText, s.time)
           }
           book.places = book.places.filter((p) => p.key !== op.key)
           changed.add('places')
@@ -927,7 +948,7 @@ export function applyStoryOps(input: VnBook, ops: StoryOp[]): { book: VnBook; ch
           const { scene } = locateScene(book, op.sceneId)
           if (op.time !== undefined) scene.time = op.time?.trim() || null
           if (op.place !== undefined) setPlace(book, scene, op.place)
-          else if (op.time !== undefined) scene.backgroundId = backgroundId(scene.placeKey, scene.placeText, scene.time)
+          else if (op.time !== undefined) scene.backgroundId = backgroundIdFor(presentationOf(book), scene.id, scene.placeKey, scene.placeText, scene.time)
           if (op.description !== undefined) scene.description = op.description.trim()
           if (op.breakBefore !== undefined) scene.breakBefore = op.breakBefore
           if (op.music !== undefined) {

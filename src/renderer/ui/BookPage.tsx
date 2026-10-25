@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ProjectDetail } from '../../shared/protocol'
+import { isPictureBook } from '../../shared/vn'
 import { sendCommand } from '../api'
 import { useVn } from '../store/hooks'
 import { vnStore } from '../store/store'
@@ -64,6 +65,9 @@ export function BookPage() {
     )
   }
   const summary = projects[slug]
+  // a picture book has pages, not scenes: its tab says so
+  const pictureBook = detail ? isPictureBook(detail.book) : false
+  const tabs = pictureBook ? TABS.map((t) => (t.id === 'scenes' ? { ...t, label: 'Pages' } : t)) : TABS
   return (
     <div className="stack" style={{ maxWidth: 1200 }} data-testid="page-book">
       <div className="row spread">
@@ -72,11 +76,12 @@ export function BookPage() {
           <div className="panel-title">{summary?.title ?? slug}</div>
           {summary && <Pill tone={summary.kind === 'choice' ? 'accent' : 'dim'}>{summary.kind}</Pill>}
           {summary && <Pill>{summary.primaryLang.toUpperCase()} primary</Pill>}
+          {pictureBook && <Pill tone="accent">Picture book</Pill>}
         </div>
         <span className="dim">{slug}</span>
       </div>
       <div className="row subtabs" data-testid="book-tabs">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)} data-testid={`tab-${t.id}`}>
             {t.label}
           </button>

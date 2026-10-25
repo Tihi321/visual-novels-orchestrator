@@ -65,6 +65,24 @@ ${extraCss}
         </div>
       </div>
 
+      <!-- Picture book page: one full illustration on top, the page's caption below (a picture-book project only) -->
+      <div id="vno-page-layer" class="vno-page-layer vno-hidden">
+        <div id="vno-page-image-area" class="vno-page-image-area">
+          <div id="vno-page-image" class="vno-page-image"></div>
+          <div id="vno-page-placeholder" class="vno-page-placeholder vno-hidden">Illustration missing</div>
+        </div>
+        <div id="vno-page-caption-area" class="vno-page-caption-area">
+          <div id="vno-page-caption" class="vno-page-caption"></div>
+          <div id="vno-page-footer" class="vno-page-footer">
+            <button id="vno-page-prev" class="vno-page-nav" title="Previous page">&#8249;</button>
+            <span id="vno-page-counter" class="vno-page-counter"></span>
+            <button id="vno-page-next" class="vno-page-nav" title="Next page">&#8250;</button>
+            <button id="vno-page-replay" class="vno-page-nav vno-page-replay vno-hidden" title="Read aloud">&#128266;</button>
+          </div>
+        </div>
+        <button id="vno-page-menu" class="vno-page-menu" title="Main Menu">Menu</button>
+      </div>
+
       <!-- The scene's location title (a catalogue's sceneTitles, else the scene's place text) -->
       <div id="vno-scene-title" class="vno-scene-title vno-hidden"></div>
 
@@ -954,6 +972,182 @@ body.vno-body {
   color: #fff;
 }
 
+/* Picture book (one full illustration on top, the page's caption below, page turns). Nothing of the visual-novel stage is visible. */
+body.vno-picturebook #vno-bg-layer,
+body.vno-picturebook #vno-sprites-layer,
+body.vno-picturebook #vno-cg-layer,
+body.vno-picturebook #vno-chapter-card,
+body.vno-picturebook #vno-scene-title,
+body.vno-picturebook #vno-textbox-container,
+body.vno-picturebook #vno-quick-menu {
+  display: none !important;
+}
+
+.vno-page-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5;
+  display: none;
+  background: var(--vno-color-bg, #101018);
+}
+
+body.vno-picturebook .vno-page-layer {
+  display: block;
+}
+
+.vno-page-image-area {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 800px;
+  overflow: hidden;
+  background: var(--vno-color-bg, #101018);
+  cursor: pointer;
+}
+
+.vno-page-image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-size: contain;
+  background-position: center center;
+  background-repeat: no-repeat;
+  opacity: 1;
+  transition: opacity var(--vno-transition-fade, 0.5s) ease;
+}
+
+.vno-page-image.vno-page-image-fade {
+  opacity: 0;
+}
+
+.vno-page-placeholder {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--vno-font-interface, var(--vno-font-text));
+  font-size: 32px;
+  color: var(--vno-color-idle, #aaa);
+  pointer-events: none;
+}
+
+.vno-page-caption-area {
+  position: absolute;
+  top: 800px;
+  left: 0;
+  width: 100%;
+  height: 280px;
+  padding: 14px 200px 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--vno-color-bg, #101018);
+  color: var(--vno-color-text, #fff);
+  cursor: pointer;
+}
+
+.vno-page-caption {
+  width: 100%;
+  max-width: 1500px;
+  font-family: var(--vno-font-text, serif);
+  font-size: 64px;
+  line-height: 1.45;
+  text-align: center;
+  word-wrap: break-word;
+}
+
+.vno-page-caption.vno-page-caption-medium {
+  font-size: 56px;
+}
+
+.vno-page-caption.vno-page-caption-long {
+  font-size: 48px;
+}
+
+.vno-page-caption .vno-page-line + .vno-page-line {
+  margin-top: 0.2em;
+}
+
+.vno-page-caption .vno-page-speaker {
+  font-weight: bold;
+}
+
+[dir="rtl"] .vno-page-caption {
+  text-align: right;
+  direction: rtl;
+}
+
+.vno-page-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  font-family: var(--vno-font-interface, var(--vno-font-text));
+  font-size: 26px;
+  color: var(--vno-color-idle, #aaa);
+}
+
+.vno-page-nav {
+  background: transparent;
+  border: none;
+  color: var(--vno-color-accent, #fff);
+  font-family: var(--vno-font-interface, var(--vno-font-text));
+  font-size: 40px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 12px;
+  transition: color 0.15s ease;
+}
+
+.vno-page-nav:hover {
+  color: var(--vno-color-hover, #fff);
+}
+
+.vno-page-nav:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.vno-page-replay {
+  font-size: 30px;
+}
+
+.vno-page-menu {
+  position: absolute;
+  top: 20px;
+  left: 28px;
+  z-index: 6;
+  padding: 8px 18px;
+  background: rgba(16, 18, 28, 0.85);
+  border: 1px solid var(--vno-color-idle, #555);
+  border-radius: 6px;
+  color: var(--vno-color-text, #fff);
+  font-family: var(--vno-font-interface, var(--vno-font-text));
+  font-size: 22px;
+  cursor: pointer;
+}
+
+[dir="rtl"] .vno-page-menu {
+  left: auto;
+  right: 28px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vno-page-image {
+    transition: none;
+  }
+}
+
 .vno-hidden {
   display: none !important;
 }
@@ -984,6 +1178,13 @@ export function generatePlayerJs(): string {
   let activeEndingMsg = null;
   let activePuzzle = null;
   let activeSaveScreen = { page: 1, isSaving: false };
+
+  // Picture book (VNO-47): the book is shown as one page per scene. 'visual-novel' keeps every path above untouched.
+  let presentation = 'visual-novel';
+  let pictureBook = false;
+  let pageIdx = 0;
+  let pageVoices = [];
+  let pageVoiceIdx = 0;
 
   let settings = {
     textSpeed: 50,
@@ -1046,6 +1247,16 @@ export function generatePlayerJs(): string {
     dom.chapterCardText = document.getElementById('vno-chapter-card-text');
     dom.endingCard = document.getElementById('vno-ending-card');
     dom.endingCardText = document.getElementById('vno-ending-card-text');
+    dom.pageLayer = document.getElementById('vno-page-layer');
+    dom.pageImageArea = document.getElementById('vno-page-image-area');
+    dom.pageImage = document.getElementById('vno-page-image');
+    dom.pagePlaceholder = document.getElementById('vno-page-placeholder');
+    dom.pageCaption = document.getElementById('vno-page-caption');
+    dom.pageCounter = document.getElementById('vno-page-counter');
+    dom.pagePrev = document.getElementById('vno-page-prev');
+    dom.pageNext = document.getElementById('vno-page-next');
+    dom.pageReplay = document.getElementById('vno-page-replay');
+    dom.pageMenu = document.getElementById('vno-page-menu');
     dom.textboxContainer = document.getElementById('vno-textbox-container');
     dom.textbox = document.getElementById('vno-textbox');
     dom.sceneTitle = document.getElementById('vno-scene-title');
@@ -1115,6 +1326,15 @@ export function generatePlayerJs(): string {
     gameData = data;
     currentLang = gameData.primaryLang || 'en';
     currentEdition = gameData.editions ? gameData.editions[currentLang] : null;
+
+    // missing presentation (an old game-data.json) is a visual novel
+    presentation = gameData.presentation === 'picture-book' ? 'picture-book' : 'visual-novel';
+    pictureBook = presentation === 'picture-book';
+    if (document.body && document.body.classList) {
+      if (pictureBook) document.body.classList.add('vno-picturebook');
+      else document.body.classList.remove('vno-picturebook');
+    }
+    if (pictureBook && dom.pageLayer) dom.pageLayer.classList.add('vno-hidden');
 
     populateLanguageSelect(dom.stageLanguage);
     populateLanguageSelect(dom.prefLanguage);
@@ -1201,6 +1421,18 @@ export function generatePlayerJs(): string {
     setElemText('vno-btn-restart', ui('Start again', 'Restart'));
     setElemText('vno-btn-ending-menu', ui('Main Menu', 'Main Menu'));
 
+    // Picture book footer (hidden on a visual-novel project)
+    if (pictureBook) {
+      setElemText('vno-page-menu', ui('Menu', 'Menu'));
+      const readAloud = ui('Read aloud', 'Read aloud');
+      if (dom.pageReplay) {
+        dom.pageReplay.title = readAloud;
+        dom.pageReplay.setAttribute('aria-label', readAloud);
+      }
+      if (dom.pagePrev) dom.pagePrev.title = ui('Previous', 'Previous');
+      if (dom.pageNext) dom.pageNext.title = ui('Next', 'Next');
+    }
+
     // Modal Headers & Preferences Labels
     setElemText('vno-history-title', ui('History', 'History'));
     setElemText('vno-prefs-title', ui('Preferences', 'Preferences'));
@@ -1222,6 +1454,12 @@ export function generatePlayerJs(): string {
 
   function refreshActiveScreens() {
     if (!gameData) return;
+
+    // A picture book re-renders its page (the caption and the labels are localized); a visual novel goes on below as before.
+    if (pictureBook) {
+      refreshPictureBookScreens();
+      return;
+    }
 
     // 1. Active Dialogue / Narration Beat
     updateCurrentDialogueDisplay();
@@ -1299,7 +1537,14 @@ export function generatePlayerJs(): string {
 
     // Main Menu Buttons
     document.getElementById('vno-mm-start').addEventListener('click', startGame);
-    document.getElementById('vno-mm-load').addEventListener('click', () => openSaveScreen(false));
+    document.getElementById('vno-mm-load').addEventListener('click', () => {
+      // a picture book has no save screens: Load resumes its quick save (written on every page turn); a visual novel keeps its screens
+      if (pictureBook) {
+        if (!quickLoad()) startPictureBook();
+        return;
+      }
+      openSaveScreen(false);
+    });
     document.getElementById('vno-mm-prefs').addEventListener('click', () => openScreen(dom.screenPrefs));
     document.getElementById('vno-mm-about').addEventListener('click', () => openScreen(dom.screenAbout));
 
@@ -1328,6 +1573,30 @@ export function generatePlayerJs(): string {
     bindRange('vno-pref-vol-music', 'volMusic', applyAudioVolumes);
     bindRange('vno-pref-vol-sfx', 'volSfx', applyAudioVolumes);
     bindRange('vno-pref-vol-voice', 'volVoice', applyAudioVolumes);
+
+    // Picture book: click or tap the illustration or the caption goes on; the footer turns the page; Esc (below) opens the menu
+    if (dom.pageImageArea) dom.pageImageArea.addEventListener('click', nextPage);
+    if (dom.pageCaption) dom.pageCaption.addEventListener('click', nextPage);
+    if (dom.pageNext) dom.pageNext.addEventListener('click', (e) => { if (e && e.stopPropagation) e.stopPropagation(); nextPage(); });
+    if (dom.pagePrev) dom.pagePrev.addEventListener('click', (e) => { if (e && e.stopPropagation) e.stopPropagation(); prevPage(); });
+    if (dom.pageReplay) dom.pageReplay.addEventListener('click', (e) => { if (e && e.stopPropagation) e.stopPropagation(); replayPageVoice(); });
+    if (dom.pageMenu) dom.pageMenu.addEventListener('click', (e) => { if (e && e.stopPropagation) e.stopPropagation(); returnToMainMenu(); });
+    if (dom.stage && dom.stage.addEventListener) {
+      let touchStartX = null;
+      dom.stage.addEventListener('touchstart', (e) => {
+        const t = e.touches && e.touches[0] ? e.touches[0] : e;
+        touchStartX = typeof t.clientX === 'number' ? t.clientX : null;
+      });
+      dom.stage.addEventListener('touchend', (e) => {
+        if (!pictureBook || touchStartX === null) return;
+        const start = touchStartX;
+        touchStartX = null;
+        const t = e.changedTouches && e.changedTouches[0] ? e.changedTouches[0] : e;
+        if (typeof t.clientX !== 'number') return;
+        if (t.clientX < start - 40) nextPage();
+        else if (t.clientX > start + 40) prevPage();
+      });
+    }
   }
 
   function bindRange(elemId, key, callback) {
@@ -1345,6 +1614,23 @@ export function generatePlayerJs(): string {
     window.addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT')) return;
       if (dom.mainMenu && !dom.mainMenu.classList.contains('vno-hidden')) return;
+      if (pictureBook) {
+        // page navigation: right/Space/Enter go on, left/PageUp go back, Esc opens the main menu
+        if (e.code === 'ArrowRight' || e.code === 'Space' || e.code === 'Enter') {
+          e.preventDefault();
+          nextPage();
+        } else if (e.code === 'ArrowLeft' || e.code === 'PageUp') {
+          e.preventDefault();
+          prevPage();
+        } else if (e.code === 'Escape') {
+          e.preventDefault();
+          returnToMainMenu();
+        } else if (e.key === 'f' || e.key === 'F' || e.code === 'F11') {
+          e.preventDefault();
+          toggleFullscreen();
+        }
+        return;
+      }
       if (e.code === 'Space' || e.code === 'Enter') {
         e.preventDefault();
         onAdvanceClick();
@@ -1371,6 +1657,10 @@ export function generatePlayerJs(): string {
   }
 
   function startGame() {
+    if (pictureBook) {
+      startPictureBook();
+      return;
+    }
     closeAllScreens();
     dom.mainMenu.classList.add('vno-hidden');
     dom.endingCard.classList.add('vno-hidden');
@@ -1399,6 +1689,7 @@ export function generatePlayerJs(): string {
     activeEndingMsg = null;
     activePuzzle = null;
     dom.mainMenu.classList.remove('vno-hidden');
+    if (dom.pageLayer) dom.pageLayer.classList.add('vno-hidden');
     stopVoice();
     hideSceneTitle();
     if (gameData && gameData.audio && gameData.audio.music && gameData.audio.music.music_01) {
@@ -1493,6 +1784,11 @@ export function generatePlayerJs(): string {
   }
 
   function advance() {
+    // the public advance() (and a stray click) turns the page in a picture book; the visual-novel path below is untouched
+    if (pictureBook) {
+      nextPage();
+      return;
+    }
     clearTimeout(autoTimer);
     const ch = gameData.chapters[currentChapterIdx];
     if (!ch) return;
@@ -1964,7 +2260,12 @@ export function generatePlayerJs(): string {
   }
 
   function stopVoice() {
-    if (dom.audioVoice) dom.audioVoice.pause();
+    if (dom.audioVoice) {
+      dom.audioVoice.onended = null;
+      dom.audioVoice.pause();
+    }
+    pageVoices = [];
+    pageVoiceIdx = 0;
   }
 
   // Localization & Formatting Helpers
@@ -2098,7 +2399,7 @@ export function generatePlayerJs(): string {
   }
 
   function quickLoad() {
-    loadFromSlot('quick');
+    return loadFromSlot('quick');
   }
 
   function saveToSlot(slotId) {
@@ -2107,10 +2408,13 @@ export function generatePlayerJs(): string {
     const data = {
       timestamp: Date.now(),
       title: ch ? ch.title : '',
-      text: dom.dialogueText.textContent.slice(0, 60),
+      text: (pictureBook && dom.pageCaption ? dom.pageCaption.textContent : dom.dialogueText.textContent).slice(0, 60),
       chIdx: currentChapterIdx,
       scIdx: currentSceneIdx,
       beatIdx: currentBeatIdx,
+      // a picture book resumes at the page it was on; a visual novel ignores this field
+      pageIdx: pictureBook ? pageIdx : undefined,
+      presentation: presentation,
       lang: currentLang
     };
     localStorage.setItem(key, JSON.stringify(data));
@@ -2119,14 +2423,25 @@ export function generatePlayerJs(): string {
   function loadFromSlot(slotId) {
     const key = (gameData.saveDir || 'vno-save') + '_' + slotId;
     const raw = localStorage.getItem(key);
-    if (!raw) return;
+    if (!raw) return false;
     const data = JSON.parse(raw);
     closeAllScreens();
+    if (pictureBook) {
+      dom.mainMenu.classList.add('vno-hidden');
+      dom.endingCard.classList.add('vno-hidden');
+      dom.choiceOverlay.classList.add('vno-hidden');
+      if (data.lang) switchLanguage(data.lang);
+      const pages = pictureBookPages();
+      const at = typeof data.pageIdx === 'number' ? Math.max(0, Math.min(data.pageIdx, pages.length - 1)) : 0;
+      showPage(at);
+      return true;
+    }
     currentChapterIdx = data.chIdx;
     currentSceneIdx = data.scIdx;
     currentBeatIdx = data.beatIdx - 1;
     if (data.lang) switchLanguage(data.lang);
     advance();
+    return true;
   }
 
   function openSaveScreen(isSaving) {
@@ -2207,6 +2522,223 @@ export function generatePlayerJs(): string {
     });
   }
 
+  // ---- picture book (VNO-47): one page per scene, page turns, read aloud ----
+
+  /** Every scene of the book in reading order: a page per scene (chapters only group them). */
+  function pictureBookPages() {
+    const pages = [];
+    if (!gameData || !gameData.chapters) return pages;
+    gameData.chapters.forEach((ch) => {
+      (ch.scenes || []).forEach((sc) => pages.push({ chapter: ch, scene: sc }));
+    });
+    return pages;
+  }
+
+  function pageLayerVisible() {
+    return !!(dom.pageLayer && !dom.pageLayer.classList.contains('vno-hidden'));
+  }
+
+  function startPictureBook() {
+    closeAllScreens();
+    dom.mainMenu.classList.add('vno-hidden');
+    dom.endingCard.classList.add('vno-hidden');
+    dom.choiceOverlay.classList.add('vno-hidden');
+    dom.puzzleOverlay.classList.add('vno-hidden');
+    dom.chapterCard.classList.add('vno-hidden');
+    activeChoices = null;
+    activeEndingMsg = null;
+    activePuzzle = null;
+    currentChapterIdx = 0;
+    currentSceneIdx = 0;
+    currentBeatIdx = -1;
+    dialogueHistory.length = 0;
+    seenBeats.clear();
+    pageIdx = 0;
+    // no chapter card before page 1: a picture book starts on its first page
+    showPage(0);
+  }
+
+  function showPage(index) {
+    const pages = pictureBookPages();
+    if (!pages.length) {
+      returnToMainMenu();
+      return;
+    }
+    pageIdx = Math.max(0, Math.min(index, pages.length - 1));
+    dom.pageLayer.classList.remove('vno-hidden');
+    renderPage(pageIdx);
+  }
+
+  function renderPage(index, keepAudio) {
+    const pages = pictureBookPages();
+    if (!pages.length) return;
+    pageIdx = Math.max(0, Math.min(index, pages.length - 1));
+    const entry = pages[pageIdx];
+    const scene = entry.scene;
+    const chapterIdx = gameData.chapters.indexOf(entry.chapter);
+    if (chapterIdx >= 0) currentChapterIdx = chapterIdx;
+    currentSceneIdx = (entry.chapter.scenes || []).indexOf(scene);
+    currentBeatIdx = -1;
+
+    // 1. The illustration is the scene's background, which is the page picture: shown whole and centred
+    if (scene.bgPath) {
+      dom.pageImage.style.backgroundImage = 'url("' + scene.bgPath + '")';
+      dom.pageImage.classList.remove('vno-hidden');
+      dom.pagePlaceholder.classList.add('vno-hidden');
+    } else {
+      dom.pageImage.style.backgroundImage = 'none';
+      dom.pageImage.classList.add('vno-hidden');
+      dom.pagePlaceholder.classList.remove('vno-hidden');
+    }
+
+    // 2. The caption: the scene's narration beats and its lines ("Name: text"), in the current language
+    renderPageCaption(scene);
+
+    // 3. The page counter and the arrows
+    const counter = ui('Page {} of {}', 'Page {} of {}').replace('{}', String(pageIdx + 1)).replace('{}', String(pages.length));
+    if (dom.pageCounter) dom.pageCounter.textContent = counter;
+    if (dom.pagePrev) dom.pagePrev.disabled = pageIdx <= 0;
+    if (dom.pageNext) dom.pageNext.disabled = pageIdx >= pages.length - 1;
+
+    // 4. The page's music and ambience (the scene's, the chapter's or silence, as the build decided)
+    if (!keepAudio) {
+      if (scene.music) playMusic(scene.music, scene.musicLoopStartSec);
+      else if (scene.music === null && scene.musicExplicitNull) stopMusic();
+      if (scene.ambience) playAmbience(scene.ambience);
+    }
+
+    // 5. Read aloud: the clips of the page's text beats play in order when the page appears
+    if (keepAudio) updatePageReplay(scene);
+    else playPageVoice(scene);
+
+    // 6. A quick save on every page turn: the main menu's Load resumes the page
+    if (!keepAudio) quickSave();
+  }
+
+  function renderPageCaption(scene) {
+    if (!dom.pageCaption) return;
+    const html = pageCaption(scene);
+    dom.pageCaption.innerHTML = html;
+    const length = html.replace(/<[^>]*>/g, '').length;
+    dom.pageCaption.classList.remove('vno-page-caption-medium', 'vno-page-caption-long');
+    if (length > 240) dom.pageCaption.classList.add('vno-page-caption-long');
+    else if (length > 120) dom.pageCaption.classList.add('vno-page-caption-medium');
+  }
+
+  /** The words under the picture: narration and lines of the scene, with the emphasis kept as HTML. */
+  function pageCaption(scene) {
+    const parts = [];
+    (scene.beats || []).forEach((beat) => {
+      if (beat.type === 'line') {
+        const name = escapePageText(getLocalizedCharacterName(beat, beat.speakerLabel));
+        const text = formatBeatHtml(getLocalizedBeatText(beat.id, beat.text));
+        parts.push('<div class="vno-page-line"><span class="vno-page-speaker">' + name + ':</span> ' + text + '</div>');
+      } else if (beat.type === 'narration') {
+        const text = formatBeatHtml(getLocalizedBeatText(beat.id, beat.text));
+        parts.push('<div class="vno-page-line">' + text + '</div>');
+      }
+    });
+    return parts.join('');
+  }
+
+  function escapePageText(s) {
+    return String(s === null || s === undefined ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  /** A language switch (or any screen refresh) re-renders the page and the ending in the new language. */
+  function refreshPictureBookScreens() {
+    if (!gameData) return;
+    if (dom.endingCard && !dom.endingCard.classList.contains('vno-hidden')) {
+      dom.endingCardText.textContent = ui('The End', 'The End');
+    }
+    if (pageLayerVisible() && dom.mainMenu && dom.mainMenu.classList.contains('vno-hidden')) renderPage(pageIdx, true);
+    if (dom.screenSave && !dom.screenSave.classList.contains('vno-hidden') && activeSaveScreen) {
+      setElemText('vno-save-screen-title', activeSaveScreen.isSaving ? ui('Save', 'Save Game') : ui('Load', 'Load Game'));
+      renderSaveSlots(activeSaveScreen.page, activeSaveScreen.isSaving);
+    }
+  }
+
+  function nextPage() {
+    const pages = pictureBookPages();
+    if (!pages.length) return;
+    if (pageIdx + 1 >= pages.length) {
+      finishPictureBook(pages[pages.length - 1]);
+      return;
+    }
+    showPage(pageIdx + 1);
+  }
+
+  function prevPage() {
+    if (pageIdx <= 0) return;
+    showPage(pageIdx - 1);
+  }
+
+  function finishPictureBook(lastEntry) {
+    stopVoice();
+    const ch = lastEntry ? lastEntry.chapter : null;
+    // a book with choices still offers them at the end
+    if (ch && ch.choices && ch.choices.length > 0) {
+      showChoices(ch.choices);
+      return;
+    }
+    activeEndingMsg = ui('The End', 'The End');
+    if (dom.endingCardText) dom.endingCardText.textContent = activeEndingMsg;
+    if (dom.pageLayer) dom.pageLayer.classList.add('vno-hidden');
+    if (dom.endingCard) dom.endingCard.classList.remove('vno-hidden');
+  }
+
+  /** The clips the current edition has for the page's text beats, in the order they are read. */
+  function pageVoiceClips(scene) {
+    const clips = [];
+    const voice = currentEdition && currentEdition.voice ? currentEdition.voice : null;
+    if (!voice) return clips;
+    (scene.beats || []).forEach((beat) => {
+      if (beat.type !== 'line' && beat.type !== 'narration') return;
+      const rel = voice[beat.id];
+      if (rel) clips.push(rel);
+    });
+    return clips;
+  }
+
+  function updatePageReplay(scene) {
+    pageVoices = pageVoiceClips(scene);
+    pageVoiceIdx = 0;
+    const has = pageVoices.length > 0;
+    if (dom.pageReplay) {
+      if (has) dom.pageReplay.classList.remove('vno-hidden');
+      else dom.pageReplay.classList.add('vno-hidden');
+    }
+  }
+
+  function playPageVoice(scene) {
+    stopVoice();
+    updatePageReplay(scene);
+    playNextPageVoiceClip();
+  }
+
+  function playNextPageVoiceClip() {
+    if (!pageVoices || pageVoiceIdx >= pageVoices.length) return;
+    const rel = pageVoices[pageVoiceIdx];
+    pageVoiceIdx++;
+    if (!rel || !dom.audioVoice) return;
+    dom.audioVoice.src = rel;
+    dom.audioVoice.onended = function () {
+      dom.audioVoice.onended = null;
+      playNextPageVoiceClip();
+    };
+    dom.audioVoice.play().catch(() => {});
+  }
+
+  function replayPageVoice() {
+    const pages = pictureBookPages();
+    const entry = pages[pageIdx];
+    if (entry) playPageVoice(entry.scene);
+  }
+
   function loadSettings() {
     const raw = localStorage.getItem('vno_settings');
     if (raw) {
@@ -2231,6 +2763,8 @@ export function generatePlayerJs(): string {
         chapterIdx: currentChapterIdx,
         sceneIdx: currentSceneIdx,
         beatIdx: currentBeatIdx,
+        pageIdx: pageIdx,
+        presentation: presentation,
         lang: currentLang
       };
     },

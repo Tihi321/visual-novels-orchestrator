@@ -1,6 +1,6 @@
 import path from 'node:path'
-import type { Edition, Lang, VnBeat, VnBook, VnChapter, VnScene } from '../../shared/vn'
-import { hasText } from '../../shared/vn'
+import type { Edition, Lang, Presentation, VnBeat, VnBook, VnChapter, VnScene } from '../../shared/vn'
+import { hasText, isPictureBook, presentationOf } from '../../shared/vn'
 import { languageInfo } from '../../shared/languages'
 import type { Theme } from '../themes/load'
 import { aliasIndex } from '../vn/aliases'
@@ -549,6 +549,11 @@ export interface GameData {
   slug: string
   title: string
   primaryLang: string
+  /**
+   * How the player shows the book: `visual-novel` (sprites and a text box), or `picture-book` (one illustration over a caption per scene, page
+   * turns). Missing in an old game-data.json means a visual novel.
+   */
+  presentation: Presentation
   saveDir: string
   resolution: Resolution
   theme: Theme & { pixel?: boolean }
@@ -589,6 +594,7 @@ export interface BuildGameDataInput {
  */
 export function buildGameData(inp: BuildGameDataInput): GameData {
   const { book, theme } = inp
+  const pictureBook = isPictureBook(book)
   const resolution = inp.resolution ?? { w: 1920, h: 1080 }
   const format: ImageFormat = inp.imageFormat ?? 'webp'
   const warnings = inp.warnings ?? []
@@ -622,9 +628,12 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
 
 
     const sprites: Record<string, string> = {}
-    for (const expr of expressions) {
-      if (!usedSpriteKeys || usedSpriteKeys.has(`${c.key}/${expr}`)) {
-        sprites[expr] = imageFile(spriteImageName(c.key, expr), format)
+    // a picture book draws its characters into the page image: it has no sprites (the sheets stay internal references)
+    if (!pictureBook) {
+      for (const expr of expressions) {
+        if (!usedSpriteKeys || usedSpriteKeys.has(`${c.key}/${expr}`)) {
+          sprites[expr] = imageFile(spriteImageName(c.key, expr), format)
+        }
       }
     }
 
@@ -650,10 +659,13 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
   }
 
   const cgs: Record<string, { path: string; display: 'full' | 'insert' }> = {}
-  for (const img of book.images ?? []) {
-    cgs[img.key] = {
-      path: imageFile(cgImageName(img.key), format),
-      display: img.display
+  // a picture book has one image per page (the scene's background): the CG and insert layer is not part of it
+  if (!pictureBook) {
+    for (const img of book.images ?? []) {
+      cgs[img.key] = {
+        path: imageFile(cgImageName(img.key), format),
+        display: img.display
+      }
     }
   }
 
@@ -762,6 +774,7 @@ export function buildGameData(inp: BuildGameDataInput): GameData {
     slug: book.slug,
     title: book.title,
     primaryLang: book.primaryLang,
+    presentation: presentationOf(book),
     saveDir: `vno-${buildName}`,
     resolution,
     theme: {
@@ -799,11 +812,13 @@ export function emitProject(inp: BuildGameDataInput): { gameData: GameData; file
     lightTheme: !!inp.theme.light,
     uniformNames: !!inp.theme.namebox.textColor
   })
-  const gameData = buildGameData({ ...inp, used: scriptResult.used })
+  // a picture book has no sprite or CG images in the game: its pages are the scene backgrounds (the sheets stay internal references)
+  const used: UsedImages = isPictureBook(inp.book) ? { ...scriptResult.used, sprites: [], cgs: [] } : scriptResult.used
+  const gameData = buildGameData({ ...inp, used })
   return {
     gameData,
     files: scriptResult.files,
     lineMap: scriptResult.lineMap,
-    used: scriptResult.used
+    used
   }
 }

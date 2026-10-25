@@ -5,6 +5,7 @@
 
 import { createHash } from 'node:crypto'
 import { transliterate } from '../../shared/translit'
+import type { Presentation } from '../../shared/vn'
 
 const pad = (n: number, width: number) => String(n).padStart(width, '0')
 export const pad2 = (n: number) => pad(n, 2)
@@ -63,6 +64,19 @@ export function backgroundId(placeKey: string | null, placeText: string, time: s
     place = placeText.trim() ? slugKey(placeText).slice(0, 40).replace(/_+$/, '') : 'unknown'
   }
   return `bg_${place}_${time ? slugKey(time) : 'any'}`
+}
+
+/** `bg_ch01_s01`: a picture book has one page illustration per scene, so the scene id makes the background unique (place and time do not). */
+export function pictureBookBackgroundId(scene: string): string {
+  return `bg_${scene.replace(/\./g, '_')}`
+}
+
+/**
+ * The background id of a scene: outside picture books it is one per place and time (shared by scenes); in a picture book every
+ * scene has its own page (`bg_<chapter>_<scene>`), because place and time no longer decide the picture.
+ */
+export function backgroundIdFor(presentation: Presentation | undefined, scene: string, placeKey: string | null, placeText: string, time: string | null): string {
+  return presentation === 'picture-book' ? pictureBookBackgroundId(scene) : backgroundId(placeKey, placeText, time)
 }
 
 export const sheetId = (charKey: string) => `sheet_${charKey}`

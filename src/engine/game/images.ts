@@ -198,6 +198,8 @@ export interface BuildImagesInput {
   format: ImageFormat
   warnings: string[]
   pixel?: boolean
+  /** A picture book: its backgrounds are the page illustrations, copied whole (contained, never cropped), and it has no sprites or CGs. */
+  pictureBook?: boolean
 }
 
 export interface BuildImagesResult {
@@ -220,7 +222,10 @@ export async function buildImages(inp: BuildImagesInput): Promise<BuildImagesRes
     const src = resolveAsset(id)
     let buf: Buffer
     if (src && fs.existsSync(src)) {
-      buf = await encode(sharp(src).resize(resolution.w, resolution.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }), format, !!inp.pixel)
+      // a page illustration is shown whole on the page: no cropping to the screen, no enlargement of a smaller page image
+      buf = inp.pictureBook
+        ? await encode(sharp(src).resize({ width: resolution.w, height: resolution.h, fit: 'inside', withoutEnlargement: true, ...(kernel ? { kernel } : {}) }), format, !!inp.pixel)
+        : await encode(sharp(src).resize(resolution.w, resolution.h, { fit: 'cover', ...(kernel ? { kernel } : {}) }), format, !!inp.pixel)
     } else {
       const place = id.replace(/^bg_/, '').replace(/_/g, ' ')
       buf = await placeholderBackground(place, resolution, format, !!inp.pixel)

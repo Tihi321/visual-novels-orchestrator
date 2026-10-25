@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ProjectDetail, ThemeInfo } from '../../../shared/protocol'
-import { CHIPS, DITHERS, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../../shared/vn'
+import { CHIPS, DITHERS, isPictureBook, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider } from '../../../shared/vn'
 import { updateSettings } from '../../api'
 import { editorChoices, generatorChoices, musicChoices } from '../../lib/engines'
 import { useVn } from '../../store/hooks'
@@ -42,10 +42,18 @@ function ArtCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
   const [stylePrompt, setStylePrompt] = useState(saved)
   useEffect(() => setStylePrompt(saved), [saved])
   const pixel = art.style === 'pixel'
+  // a picture book has no sprites: its settings and the note about them are left out
+  const pictureBook = isPictureBook(detail.book)
   const palettes = engines?.palettes ?? []
   return (
     <div className="card" data-testid="look-art">
       <h3>Art</h3>
+      {pictureBook && (
+        <p className="dim" data-testid="look-picture-book-note" style={{ margin: '4px 0 10px' }}>
+          Picture book: each page is one illustration with its characters drawn into it, so there are no sprites, expressions or background removal. The edit
+          engine draws a page from the character sheets.
+        </p>
+      )}
       <div className="form-grid">
         <label className="dim">Style</label>
         <div className="row">
@@ -67,7 +75,7 @@ function ArtCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
             />
           </>
         )}
-        {pixel && <PixelControls slug={slug} detail={detail} />}
+        {pixel && <PixelControls slug={slug} detail={detail} pictureBook={pictureBook} />}
         {!pixel && (
           <>
             <label className="dim">Images</label>
@@ -83,17 +91,21 @@ function ArtCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
         <Select value={art.generator} options={generatorChoices(engines, workflows, art.generator)} onChange={(v) => updateSettings(slug, { art: { generator: v } })} testId="art-generator" />
         <label className="dim">Editor engine</label>
         <Select value={art.editor} options={editorChoices(engines, workflows, art.editor)} onChange={(v) => updateSettings(slug, { art: { editor: v } })} testId="art-editor" />
-        <label className="dim">Background removal</label>
-        <Select
-          value={art.bgRemoval}
-          options={[
-            { id: 'birefnet', label: 'BiRefNet' },
-            { id: 'qwen-edit', label: 'Qwen edit + BiRefNet' },
-            { id: 'key', label: 'Flat key' }
-          ]}
-          onChange={(v) => updateSettings(slug, { art: { bgRemoval: v as 'birefnet' | 'qwen-edit' | 'key' } })}
-          testId="art-bg-removal"
-        />
+        {!pictureBook && (
+          <>
+            <label className="dim">Background removal</label>
+            <Select
+              value={art.bgRemoval}
+              options={[
+                { id: 'birefnet', label: 'BiRefNet' },
+                { id: 'qwen-edit', label: 'Qwen edit + BiRefNet' },
+                { id: 'key', label: 'Flat key' }
+              ]}
+              onChange={(v) => updateSettings(slug, { art: { bgRemoval: v as 'birefnet' | 'qwen-edit' | 'key' } })}
+              testId="art-bg-removal"
+            />
+          </>
+        )}
         <label className="dim">Style prompt</label>
         <div className="stack">
           <textarea
@@ -128,7 +140,7 @@ function ArtCard({ slug, detail }: { slug: string; detail: ProjectDetail }) {
 }
 
 /** Pixel art controls: who converts the images (the built-in converter or Pixel Studio), the pixel grid, dither, outline, and who makes the sprites. */
-function PixelControls({ slug, detail }: { slug: string; detail: ProjectDetail }) {
+function PixelControls({ slug, detail, pictureBook }: { slug: string; detail: ProjectDetail; pictureBook: boolean }) {
   const art = detail.settings.art
   const px = resolvePixel(art)
   const [w, setW] = useState(String(px.width))
@@ -166,23 +178,27 @@ function PixelControls({ slug, detail }: { slug: string; detail: ProjectDetail }
       </div>
       <label className="dim">Dither</label>
       <Select value={px.dither} options={DITHERS.map((d) => ({ id: d, label: d }))} onChange={(v) => updateSettings(slug, { art: { pixel: { dither: v as (typeof DITHERS)[number] } } })} testId="art-pixel-dither" />
-      <label className="dim">Outline</label>
-      <label className="inline">
-        <input type="checkbox" checked={px.outline} onChange={(e) => updateSettings(slug, { art: { pixel: { outline: e.target.checked } } })} data-testid="art-pixel-outline" />
-        A 1 px outline round sprites (Pixel Studio)
-      </label>
-      <label className="dim">Sprites</label>
-      <Select
-        value={resolveArtProvider(art)}
-        options={[
-          { id: 'comfy', label: 'ComfyUI edit, then converted' },
-          { id: 'pixel-studio-draw', label: 'Drawn by an agent in Pixel Studio (small sprites)' },
-          FLOW_OPTION,
-          HAND_OPTION
-        ]}
-        onChange={(v) => updateSettings(slug, { art: { provider: v === 'comfy' ? null : (v as 'pixel-studio-draw' | 'hand' | 'flow') } })}
-        testId="art-provider"
-      />
+      {!pictureBook && (
+        <>
+          <label className="dim">Outline</label>
+          <label className="inline">
+            <input type="checkbox" checked={px.outline} onChange={(e) => updateSettings(slug, { art: { pixel: { outline: e.target.checked } } })} data-testid="art-pixel-outline" />
+            A 1 px outline round sprites (Pixel Studio)
+          </label>
+          <label className="dim">Sprites</label>
+          <Select
+            value={resolveArtProvider(art)}
+            options={[
+              { id: 'comfy', label: 'ComfyUI edit, then converted' },
+              { id: 'pixel-studio-draw', label: 'Drawn by an agent in Pixel Studio (small sprites)' },
+              FLOW_OPTION,
+              HAND_OPTION
+            ]}
+            onChange={(v) => updateSettings(slug, { art: { provider: v === 'comfy' ? null : (v as 'pixel-studio-draw' | 'hand' | 'flow') } })}
+            testId="art-provider"
+          />
+        </>
+      )}
     </>
   )
 }
