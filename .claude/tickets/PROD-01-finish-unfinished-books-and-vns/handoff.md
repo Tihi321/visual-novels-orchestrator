@@ -2,7 +2,13 @@
 
 Last updated: 2026-10-26 23:45 (Europe/Warsaw). Read this with `plan.md` and `run-log.md` in
 the same folder. The production is still running: the Scriptorium and VN Studio engines and
-two Windows scheduled tasks keep working while no session is open.
+three Windows scheduled tasks keep working while no session is open.
+
+**Resuming tomorrow:** the session goal is disarmed; a new session starts with this file. Say
+"continue PROD-01" to the agent, then run `node scripts/prod-status.mjs` and pick up at
+"What to do next". Do not re-decide the model/spend choices below; they were agreed with the
+user on 2026-10-26.
+
 
 ## The request
 
@@ -41,6 +47,8 @@ Scripts, all runnable with Node 24 (`fnm exec --using=24 node scripts/<name>.mjs
 - `scripts/scriptorium-nudge.mjs` — restarts Scriptorium only when its scheduler is idle
   (no running job) while jobs are queued or books are unfinished. Log:
   `.claude/temp/prod01/nudge.log`.
+- `scripts/service-guard.mjs` — starts flow-music-mcp / VN Studio / Scriptorium again when
+  their MCP port does not answer. Log: `.claude/temp/prod01/service-guard.log`.
 - `scripts/dup-check.mjs` — 8-word-shingle overlap between adjacent chapters of every book in
   `~/Scriptorium/books`; the detector for the duplicated-climax writer defect below.
 
@@ -72,6 +80,12 @@ Scripts, all runnable with Node 24 (`fnm exec --using=24 node scripts/<name>.mjs
 - Scheduled tasks (user session, survive this session):
   - `VNO-PROD01-watch` — `node scripts/prod-watch.mjs --once`, every 5 minutes.
   - `VNO-PROD01-nudge` — `node scripts/scriptorium-nudge.mjs`, every 10 minutes.
+  - `VNO-PROD01-guard` — `node scripts/service-guard.mjs`, every 10 minutes: starts
+    flow-music-mcp (7462), VN Studio (7459) or Scriptorium (7341) again when one is found
+    down. flow-music-mcp was crash-looping at handoff (prints "MCP listening" then exits
+    within a minute); the guard restarts it, and it answered `flow_status` (Chrome up) after
+    the restart. If a VN pipeline fails its art stage because Flow was down, restart Flow,
+    then continue that project from `art` with `vno_run_pipeline {slug, from: "art"}`.
   Query: `schtasks /Query /TN VNO-PROD01-watch /V /FO LIST`.
   Remove: `schtasks /Delete /TN <name> /F`.
 

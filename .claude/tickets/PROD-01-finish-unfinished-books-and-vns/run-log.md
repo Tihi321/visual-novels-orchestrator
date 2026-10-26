@@ -165,3 +165,16 @@ with a note that quotes the duplicated beats and names the split, and a targeted
   4-11); their two adaptations and VN pipelines are still to come. Spend: 5.19/20 today,
   12.11/40 month.
 
+
+## 2026-10-26 23:45 — handoff, commit, service guard
+
+- Committed and pushed the production tooling, plan, run log and handoff on master
+  (commit `4c4a69d`, repo `Tihi321/visual-novels-orchestrator`).
+- flow-music-mcp was crash-looping at the end of the day (it printed "MCP listening" and then
+  exited within a minute). Added `scripts/service-guard.mjs` and the scheduled task
+  `VNO-PROD01-guard` (every 10 min) that restarts Flow, VN Studio or Scriptorium when their
+  port stops answering; Flow answered `flow_status` after the guard's restart.
+- Scheduled tasks now: `VNO-PROD01-watch` (adapt + import + start pipelines, 5 min),
+  `VNO-PROD01-nudge` (restart a stalled Scriptorium scheduler, 10 min),
+  `VNO-PROD01-guard` (keep the services up, 10 min).
+- Session goal disarmed for the night; the engines and tasks continue without an agent.
