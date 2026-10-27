@@ -62,7 +62,7 @@ async function books() {
     if (st.embeddings) line(`embeddings ${st.embeddings.provider}/${st.embeddings.model} down=${st.embeddings.down}`)
     const all = await mcp('http://127.0.0.1:7341/mcp', 'list_books', {})
     for (const b of all.filter((x) => ['drafting', 'outline', 'reviewing', 'rewriting', 'rejected', 'failed'].includes(x.stage))) {
-      line(`  ${b.slug} stage=${b.stage} ch=${b.chaptersWritten}/${b.chaptersPlanned} words=${b.words}/${b.targetWords} score=${b.score ?? '-'}`)
+      line(`  ${b.slug} stage=${b.stage}${b.paused ? ' PAUSED' : ''} ch=${b.chaptersWritten}/${b.chaptersPlanned} words=${b.words}/${b.targetWords} score=${b.score ?? '-'}`)
     }
     return all
   } catch (e) {

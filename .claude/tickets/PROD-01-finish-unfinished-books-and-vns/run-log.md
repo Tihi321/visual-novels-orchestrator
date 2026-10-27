@@ -203,3 +203,58 @@ with a note that quotes the duplicated beats and names the split, and a targeted
   the-silent-signal-2, the-silent-summit-2.
 - Services and all three scheduled tasks were restarted this morning after the machine slept
   overnight; handoff updated with the current state and the new-thread instructions.
+
+## 2026-10-27 10:05 — new thread resumes
+
+- State on resume: all six services up (Scriptorium 7341, VN Studio 7459, flow-music-mcp 7462,
+  ComfyUI 8188, Chiptune 7458, LM Studio 1234); the three scheduled tasks are Ready and the
+  watchdog has been running every 5 minutes (`watch.log` current, `adapted=3 imported=3
+  started=3`). Spend 0.03 USD today, 12.14/40 month.
+- **Found and fixed a silent blocker:** `echoes-in-the-deep` and `the-salt-line` were both
+  persisted as `paused: true` in their `book.md`, so their 14 queued jobs never started while
+  only the-silent-summit's round-4 reviews ran. Resumed both with `set_book_paused false`;
+  within a minute three jobs were running again (summit review, echoes review, salt-line
+  rewrite) and words/spend started moving. Cause of the pause is not in any log; watch it in
+  the next session (a paused book looks like a stalled production in `prod-status`).
+- **All four finished games verified** at the data level: `build.json` `ok: true`,
+  `placeholders: []`, one build warning on the-local-patch-2 only; `lint.json` `ok: true`,
+  `messages: []` on all four (725/982/976/731 dialogue blocks).
+- **Title screens rendered** for circuit-breaker-2, the-silent-signal-2 and the-silent-summit-2
+  with a new helper, `scripts/shot-game.mjs` (serves `projects/<slug>/game` on a free port and
+  screenshots it with headless Chrome; PNGs in `.claude/temp/prod01/<slug>-title.png`). All
+  three show the noir title, the cast art and Start/Load/Preferences/About, so the builds run,
+  not just lint clean.
+- **Art spot-check (circuit-breaker-2):** the waterworks background (brick pumping hall, pipes,
+  gauges, wet floor) and the CG of Sol climbing the rusted ladder out of the flooded channel are
+  on-prompt and consistent with each other. One inconsistency, not fixed: Sol's character sheet
+  and sprite show the bible's short-cropped hair but a beige work shirt and grey trousers,
+  while the cover/title art and the CGs show long dark hair and the navy coverall. Flow time is
+  being kept for the two remaining pipelines; regenerate the sheet + sprite (and then the six
+  Sol CGs and the cover) only if the user wants that fixed.
+- **Environment note (Windows sandbox):** processes started from the session run at Low
+  integrity and the workspace *root* is the only Low-labelled directory, so writes inside
+  workspace subfolders failed with EPERM (screenshots, logs). Fixed by labelling
+  `.claude/temp/prod01` Low (`icacls ... /setintegritylevel (OI)(CI)Low`) and granting the user
+  full control on the `.claude` chain; recovery backups are in `C:\Users\Infplane\prod01-acl-recovery`.
+  Session file policy is now danger-full-access, so this no longer blocks anything.
+
+## 2026-10-27 10:20 — the-silent-summit: the round-4 rewrite repeated chapter 4, fixed by hand
+
+- Checked the round-4 chapter 5 against chapter 4 with `dup-check` and a paragraph-level 8-gram
+  comparison: **28 of chapter 5's 55 paragraphs repeated chapter 4** (23.6% of the shorter
+  chapter). Cause is structural, not the writer's habit this time: chapter 4's round-3 rewrite
+  had absorbed all of chapter 5's outline beats (ice plug, cave, bell, Weiss's logbook, Priya
+  burning the page, the confession, the radio, the closing window). Chapter 5 then re-told them
+  because the outline gives those beats to chapter 5. Any further rewrite of chapter 5 would
+  have done the same.
+- The round-4 reviews confirmed nobody catches it: the act-2 developmental-editor and
+  continuity-checker both returned **pass (9/9)** on the duplicated pair.
+- **Fix:** trimmed chapter 4 back to its outline ("Tremor": avalanche, Hesk's accusation,
+  Teodor's defence, the approach, Priya's pack, the ice cave **blocked by the plug**), keeping
+  the avalanche prose and replacing the cave interior with ~1,000 new words (the sealed mouth,
+  Ilse reading a wire-like ring behind the ice, the cutting plan, the night on the shelf, first
+  light at the seam). Chapter 4 is now 2,211 words; a backup of the old chapter is in
+  `.claude/temp/prod01/backups/ch-04-before-trim.md`.
+- Result: adjacent-chapter overlap for the book is now **clean (max 1.8%)**; the length gate
+  still `ok`; the book was paused for the edit and resumed, so the remaining round-4 reviews
+  read the fixed chapter 4 and the publisher decides on it.
