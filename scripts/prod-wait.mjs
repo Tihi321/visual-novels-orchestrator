@@ -13,6 +13,8 @@ const arg = (n, d) => {
 }
 const MINUTES = arg('minutes', 60)
 const INTERVAL = arg('interval', 60)
+// --exit-on-change: stop at the first stage change instead of waiting for all five.
+const EXIT_ON_CHANGE = process.argv.includes('--exit-on-change')
 const FIVE = ['circuit-breaker', 'echoes-in-the-deep', 'the-salt-line', 'the-silent-signal', 'the-silent-summit']
 const DIR = '.claude/temp/prod01'
 mkdirSync(DIR, { recursive: true })
@@ -81,17 +83,24 @@ for (;;) {
   if (books) {
     const five = books.filter((b) => FIVE.includes(b.slug))
     const done = []
+    const first = last.size === 0
+    let changed = false
     for (const b of five) {
       const mark = `${b.stage} ${b.chaptersWritten}/${b.chaptersPlanned} ${b.words}w${b.paused ? ' PAUSED' : ''}`
       if (last.get(b.slug) !== mark) {
         log(`${b.slug}: ${mark}${b.score ? ` score=${b.score}` : ''}`)
         last.set(b.slug, mark)
+        changed = true
       }
       if (b.stage === 'published') done.push(b.slug)
       if (b.stage === 'rejected' || b.stage === 'failed') {
         log(`${b.slug} needs the operator (${b.stage}): ${(b.reasons ?? []).join(' | ').slice(0, 300)}`)
         process.exit(1)
       }
+    }
+    if (changed && !first && EXIT_ON_CHANGE) {
+      log('stage changed; exiting (--exit-on-change)')
+      process.exit(0)
     }
     if (done.length === FIVE.length) {
       log('all five published')

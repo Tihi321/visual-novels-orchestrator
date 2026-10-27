@@ -258,3 +258,28 @@ with a note that quotes the duplicated beats and names the split, and a targeted
 - Result: adjacent-chapter overlap for the book is now **clean (max 1.8%)**; the length gate
   still `ok`; the book was paused for the edit and resumed, so the remaining round-4 reviews
   read the fixed chapter 4 and the publisher decides on it.
+
+## 2026-10-27 11:00 — echoes-in-the-deep published, its adaptation started
+
+- **echoes-in-the-deep published at 10:59 with score 8.38** (10 chapters, 36,347 words) after
+  round 2. The watchdog picked it up on its next run (11:01) and created the adaptation:
+  **echoes-in-the-deep-2**, now in `outline` (DeepSeek writes it; no per-book model overrides).
+  When it publishes, the watchdog imports it into VN Studio, applies the production settings and
+  starts its pipeline.
+- Still in review: the-salt-line (11 chapters, 19 review jobs queued) and the-silent-summit
+  (12 review jobs queued, reading the fixed chapter 4). Reviews run two at a time on gemma, so
+  a review job takes ~7 minutes; the two books are ~1.5-2 hours of queue.
+- The four finished games' art is spot-checked and good: circuit-breaker-2 (waterworks
+  background, the ladder CG), the-silent-summit-2 (Ilse on the ice slope as a sérac comes
+  down), the-silent-signal-2 (Mara and Idris in the boat at night). Only the CB-2 Sol
+  sheet/sprite versus cover/CG hairstyle-and-costume mismatch is open (see above).
+- New helper `scripts/prod-wait.mjs`: watches the five books, prints one line per stage change
+  and exits when all five publish (or a book is rejected/failed), so waiting is a background
+  job instead of polling by hand. `--exit-on-change` makes it return at the first change.
+- The-salt-line's chapter 4 repeated one line from chapter 3 almost verbatim (its ch 3/4 share
+  the Voss confrontation). Hand-edited that sentence out (backup
+  `.claude/temp/prod01/backups/salt-ch04-before-edit.md`); the residual 2.3% is a repeated
+  gesture sentence, not a duplicated scene, and was left for the reviewers.
+- The games open from `file://` as well as over HTTP: a headless Chrome screenshot of
+  `game/index.html` opened by path is byte-identical to the served one, so the user can
+  double-click the entry point.
