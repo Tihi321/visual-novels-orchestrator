@@ -1,13 +1,14 @@
 # PROD-01 handoff — finish the unfinished books and their VN games
 
-Last updated: 2026-10-26 23:45 (Europe/Warsaw). Read this with `plan.md` and `run-log.md` in
+Last updated: 2026-10-27 09:55 (Europe/Warsaw). Read this with `plan.md` and `run-log.md` in
 the same folder. The production is still running: the Scriptorium and VN Studio engines and
 three Windows scheduled tasks keep working while no session is open.
 
-**Resuming tomorrow:** the session goal is disarmed; a new session starts with this file. Say
-"continue PROD-01" to the agent, then run `node scripts/prod-status.mjs` and pick up at
-"What to do next". Do not re-decide the model/spend choices below; they were agreed with the
-user on 2026-10-26.
+**Resuming in a new thread:** the session goal is paused; this file is the entry point. Ask
+the agent to continue PROD-01, run `node scripts/prod-status.mjs` and pick up at "What to do
+next". Do not re-decide the model/spend choices below; they were agreed with the user on
+2026-10-26. The machine must be awake for the engines and scheduled tasks to work (it slept
+overnight on 2026-10-26/27, so nothing advanced between 23:46 and 09:20).
 
 
 ## The request
@@ -89,11 +90,12 @@ Scripts, all runnable with Node 24 (`fnm exec --using=24 node scripts/<name>.mjs
   Query: `schtasks /Query /TN VNO-PROD01-watch /V /FO LIST`.
   Remove: `schtasks /Delete /TN <name> /F`.
 
-## State at handoff
+## State at handoff (2026-10-27 09:55)
 
-Scriptorium: **29 published**, `reviewing: 1` (`echoes-in-the-deep`), `rewriting: 1`
-(`the-salt-line`, whole-book rewrite, chapters 4-11 were queued/starting),
-`running: 3` jobs at the time of writing.
+Scriptorium: **28 published** (the-silent-summit was reopened, so it counts as reviewing),
+`reviewing: 2` (`echoes-in-the-deep`, `the-silent-summit` round 4),
+`rewriting: 1` (`the-salt-line`), 29 jobs queued. Two reviewers run at a time on gemma (see
+the review-family note below), which is the current slow lane.
 
 The five stalled books:
 
@@ -101,7 +103,7 @@ The five stalled books:
 |---|---|---|
 | circuit-breaker | published (`out/circuit-breaker.epub`) | 7.33 |
 | the-silent-signal | published | 7.85 |
-| the-silent-summit | published | 7.15 |
+| the-silent-summit | reopened round 4 for the ch 5 duplicate; reviewing now | was 7.15 |
 | echoes-in-the-deep | reviewing (duplication fixed by hand in ch 7) | — |
 | the-salt-line | rewriting (reviewers requested all chapters) | — |
 
@@ -135,6 +137,10 @@ The Local Patch title screen was verified in headless Chrome; the screenshot is
 - Daily DeepSeek cap 20 USD, monthly 40. Do not raise the monthly cap without asking.
 - VN projects use noir theme, illustrated style, 3 music tracks, `sfxEngine: chiptune`,
   `ambienceEngine: ace-step-v1-instrumental`.
+- **Reviews deliberately avoid the writer's model family** (`avoid_family: deepseek` on review
+  jobs). With DeepSeek + gemma available, the reviews therefore run on **gemma at 2 concurrent
+  requests**, which is slow but keeps the quality gate independent. Do not remove gemma from
+  the fallbacks to speed reviews up unless the user accepts self-review by DeepSeek.
 
 ## Known problems and their state
 
@@ -142,11 +148,13 @@ The Local Patch title screen was verified in headless Chrome; the screenshot is
    the-silent-summit ch 3/4, the-silent-signal ch 7/8, echoes ch 7/8 and circuit-breaker-2
    ch 7/8. Mitigations already in place: the prompt rule above, hand edits of the-silent-signal
    ch 7 and echoes ch 7, and `scripts/dup-check.mjs`.
-   **Open:** the published **the-silent-summit still has ch 4/5 overlap (26.6%)**; it scored
-   7.15 so the reviewers passed it. Fix by `reopen_book {book:"the-silent-summit",
-   mode:"rewrite", chapters:[5]}` with a no-duplication note, then let it republish (needs 2-3
-   review rounds). Only do this after echoes and the-salt-line are through, or it competes for
-   slots.
+   **In progress:** the published the-silent-summit had ch 4/5 duplicated (chapter 4 absorbed
+   the cave discovery). Chapter 5 was hand-trimmed and then reopened for a full rewrite
+   (`reopen_book {book:"the-silent-summit", mode:"rewrite", chapters:[5]}` round 4) with a
+   note listing what chapter 4 already covers. It is reviewing now; it should republish. If it
+   rejects, `reopen_book` again with the same note.
+   **Do not hand-edit published chapters before a rewrite** — use `reopen_book`; hand edits
+   are only for text the reviewer flags and must be followed by a review round.
 2. **Scriptorium scheduler stalls** — it stops dispatching while jobs are queued/books are
    unfinished; a restart requeues everything (this happened twice, also losing a publish job).
    The nudge task restarts it when idle. If `prod-status` shows no running jobs with work
@@ -159,23 +167,27 @@ The Local Patch title screen was verified in headless Chrome; the screenshot is
 4. Do not run `lms load` for a model the engine also loads (`load_models: true`); that created
    a duplicate 24 GB instance and swapped the machine to a crawl.
 
-## What to do next (tomorrow)
+## What to do next (new thread)
 
-1. `node scripts/prod-status.mjs` (after `fnm exec --using=24 …`) — see what is still running.
-2. Check `~/Scriptorium/books/the-silent-signal-2` style adaptations and the `watch.log` for
-   the two new adaptations (`echoes-in-the-deep-2`, `the-salt-line-2` once their sources
-   publish); the watchdog imports and starts their pipelines automatically.
-3. Poll the two remaining VN pipelines (`vno_list_projects` via `scripts/mcp-call.mjs`, or
-   `node scripts/prod-status.mjs vn`). Flow images are the long pole (~230 assets per book,
-   ~50 s an image, serialized).
-4. When each project has `build: done` and `lint: done`, verify: `build.json` (`ok: true`,
+1. `fnm exec --using=24 node scripts/prod-status.mjs` — see what is still running. If the
+   machine slept, start the stack first: LM Studio headless (`…\LM Studio.exe --headless` with
+   `ELECTRON_RUN_AS_NODE` removed), then
+   `pwsh -File C:\projects\Personal\creative-hub\scripts\hub.ps1 start comfyui chiptune-studio flow-music-mcp vn-studio scriptorium -Force`.
+2. Watch `the-silent-summit` republish after its ch 5 rewrite (round 4). If rejected, reopen
+   again with the same note; if published, confirm ch 4/5 no longer overlap
+   (`node scripts/dup-check.mjs the-silent-summit`).
+3. Wait for `echoes-in-the-deep` and `the-salt-line` to publish; the watchdog then creates
+   their adaptations (`echoes-in-the-deep-2`, `the-salt-line-2`), and imports + starts each VN
+   pipeline when the adaptation publishes — verify in `watch.log` and `vno_list_projects`.
+4. Poll the two remaining VN pipelines (`node scripts/prod-status.mjs vn`). Flow images are the
+   long pole (~230 assets per book, ~50 s an image, serialized through one Flow lane).
+5. When each project has `build: done` and `lint: done`, verify `build.json` (`ok: true`,
    `placeholders: []`), `lint.json` (`ok: true`), and take a title-screen screenshot with
-   headless Chrome against a local static server (the pattern is in the run log).
-5. Review a sample of character sheets, backgrounds, CGs and the cover per project; regenerate
+   headless Chrome against a local static server (pattern in the run log).
+6. Review a sample of character sheets, backgrounds, CGs and the cover per project; regenerate
    bad ones with `vno_asset_regen`.
-6. Fix the-silent-summit ch 4/5 (problem 1) if time allows.
 7. Update `run-log.md` (spend, publish scores, game stats, what was checked), ask the user to
-   play the four finished games, then close the goal.
+   play the games, then close the goal.
 
 ## Verification commands used in this session
 

@@ -178,3 +178,28 @@ with a note that quotes the duplicated beats and names the split, and a targeted
   `VNO-PROD01-nudge` (restart a stalled Scriptorium scheduler, 10 min),
   `VNO-PROD01-guard` (keep the services up, 10 min).
 - Session goal disarmed for the night; the engines and tasks continue without an agent.
+
+## 2026-10-27 09:20-09:40 — resume after the night
+
+- The machine slept overnight: every service was down at 09:20 and the scheduled tasks had
+  last run at 23:46 (the repetitions fire only while the machine is awake). Restarted LM
+  Studio headless and all five services with hub.ps1; the three tasks are Ready again.
+- Scriptorium resumed from disk: echoes-in-the-deep reviewing and the-salt-line rewriting
+  (ch 5 running, 14 jobs queued), all on DeepSeek. Spend resets today (0 USD at 09:25).
+- **Fixed the published the-silent-summit duplication for real:** chapter 4 (rewritten in
+  round 3) had absorbed the plug cutting, cave entry, bell and case, while chapter 5 retold
+  them (24.7% shingle overlap). Chapter 5 was reopened for a rewrite (eopen_book rewrite
+  ch 5, round 4) with a note that lists what chapter 4 already covers and what chapter 5 must
+  now contain (logbook proving the deaf cook, Priya's burning attempt, confession, radio,
+  weather window). It will go through review and republish.
+
+## 2026-10-27 09:55 — session paused, new thread continues
+
+- Status when paused: 28 published (the-silent-summit reopened for the ch 5 fix and is in
+  review round 4), echoes-in-the-deep reviewing, the-salt-line rewriting (29 jobs queued,
+  2 reviewers on gemma at a time because reviews avoid the writer's DeepSeek family).
+  Spend today 0.03 USD, month 12.14/40.
+- Four games finished and lint-clean: the-local-patch-2, circuit-breaker-2,
+  the-silent-signal-2, the-silent-summit-2.
+- Services and all three scheduled tasks were restarted this morning after the machine slept
+  overnight; handoff updated with the current state and the new-thread instructions.
