@@ -298,3 +298,45 @@ with a note that quotes the duplicated beats and names the split, and a targeted
 - Remaining in Scriptorium: `the-salt-line` (18 review jobs, ~1.5 h at two gemma slots) and
   `echoes-in-the-deep-2` (6 review jobs). Published books now 30 of the 31 in the library; the
   five production books are all published except the-salt-line.
+
+## 2026-10-27 13:00-13:20 — review lane unblocked with paid/OpenRouter models, all five books out
+
+- The user allowed DeepSeek and OpenRouter ("use deepseek to speed things up, or paid models,
+  or open router"), so the two books still in review left the gemma lane:
+  - first `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` for every review role, set per
+    book with `set_book_model` (the book's own model goes first in the router, so the
+    `avoid_family: deepseek` preference does not demote it). Concurrency went from 2 to 4-5
+    and the queue drained from 19 to 1 in about 20 minutes — but one **copy-editor act1 review
+    failed for good** ("the model did not return valid JSON twice": nemotron rambled for
+    12,000 tokens), which fails the whole book.
+  - switched every review role on the-salt-line and echoes-in-the-deep-2 to
+    `deepseek/deepseek-v4-pro`, retried the book; a second copy-editor act2 review then failed
+    the same way (falling through to gemma, malformed JSON at column 968), so the copy-editor
+    and line-editor roles for the-salt-line were set to `deepseek/deepseek-flash` and the book
+    was retried once more, which completed.
+- **the-salt-line published** (11 chapters, 34,477 words; enjoyment 8, genre fit 8.67,
+  continuity 9, mechanics 6, structure 8, prose 8, originality 8.33, threads 10; EPUB in
+  `books/the-salt-line/out/`). Residual adjacent-chapter overlap is 2.3% (one repeated gesture
+  sentence in ch 3/4) — a phrase, not a duplicated scene.
+- **All five production books are now published**: circuit-breaker 7.33, the-silent-signal
+  7.85, echoes-in-the-deep 8.38, the-silent-summit 8.31, the-salt-line ~8.1.
+- The watchdog created **the-salt-line-2** within five minutes of the publish; it is drafting
+  (DeepSeek). echoes-in-the-deep-2 is still in review (26,130 words, 1 job left).
+- Lesson for the next band of reviews: free OpenRouter reasoning models are fast but not
+  reliable enough for the JSON contract; DeepSeek v4-pro/flash are. Failed review jobs show
+  `failure:` in `jobs/failed/<job>.md` and hold the whole book at `failed` until `retry_book`.
+
+## 2026-10-27 13:20 — circuit-breaker-2 Sol art regenerated (user asked)
+
+- The user said to regenerate, so the mismatched character art was redone with Google Flow:
+  the sheet prompt had ended in "simple worn clothes" (hence the beige shirt), so it was
+  rewritten to the bible's look (short-cropped dark brown hair, faded navy work coverall with
+  rolled sleeves, canvas tool belt, steel-toed boots, pencil behind the ear, burn scar on the
+  left wrist). The six Sol CGs and the cover got the same hair/outfit clause.
+- Regenerated with `vno_asset_regen`: sheet (+ its sprite, `sprites: true`), 6 CGs and the
+  cover — 9 Flow images, all `v2`, 0 failed jobs, game rebuilt automatically. Verified by eye:
+  the sheet, sprite, the ladder CG and the title screen now all show the same short-haired
+  Sol in the navy coverall. `vno_lint` clean (982 blocks, 15,531 words, 54 images); the title
+  screenshot was retaken (`circuit-breaker-2-title.png`).
+- The prompts are saved in `.claude/temp/prod01/sol-prompts.json` and applied with
+  `.claude/temp/prod01/regen-sol.mjs` (temp helper, not committed).

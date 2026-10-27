@@ -1,6 +1,6 @@
 # PROD-01 handoff — finish the unfinished books and their VN games
 
-Last updated: 2026-10-27 12:25 (Europe/Warsaw). Read this with `plan.md` and `run-log.md` in
+Last updated: 2026-10-27 13:25 (Europe/Warsaw). Read this with `plan.md` and `run-log.md` in
 the same folder. The production is still running: the Scriptorium and VN Studio engines and
 three Windows scheduled tasks keep working while no session is open.
 
@@ -87,21 +87,17 @@ continue tomorrow."
 
 ## State at handoff
 
-Scriptorium: **29 published**; in progress:
-- `the-silent-summit` — reviewing round 4; **all 12 round-4 reviews are written and the book is
-  at the publisher** (decision any minute). Chapter 4 was trimmed by hand first (see "Known
-  problems" 1), so the reviews and the decision are on the fixed text.
-- `the-salt-line` — reviewing after a full rewrite (11/11 chapters); 18 review jobs queued and
-  running two at a time (one repeated line was hand-edited out of chapter 4; see 1).
-- `echoes-in-the-deep-2` — the adaptation of the published echoes-in-the-deep, reviewing
-  (10/10 chapters, 26,709 words; 6 review jobs queued).
+Scriptorium: **all five production books are published**; what is left is the two adaptations:
+- `echoes-in-the-deep-2` — reviewing (10/10 chapters, 26,130 words, one review job left).
+- `the-salt-line-2` — drafting (DeepSeek), created by the watchdog after the-salt-line
+  published at 13:15 today.
 
-Published books: circuit-breaker 7.33, the-silent-signal 7.85, the-silent-summit 7.15 (will be
-rescored when round 4 publishes), **echoes-in-the-deep 8.38** (2026-10-27 10:59), plus 25 older.
+Published books: circuit-breaker 7.33, the-silent-signal 7.85, **echoes-in-the-deep 8.38**,
+**the-silent-summit 8.31** (republished today after the ch 4/5 fix), **the-salt-line ~8.1**
+(11 chapters, 34,477 words; published 13:15 today), plus 25 older.
 
 Adaptations: **circuit-breaker-2** 8.57, **the-silent-signal-2** 8.93, **the-silent-summit-2**
-8.79 published; **echoes-in-the-deep-2** writing; the-salt-line-2 does not exist yet (the
-watchdog creates it when the source publishes).
+8.79 published; **echoes-in-the-deep-2** and **the-salt-line-2** in progress (above).
 
 VN Studio — **four production games finished**, build `ok`, 0 placeholders, lint clean:
 
@@ -126,10 +122,15 @@ Games: `C:\Users\Infplane\VisualNovels\projects\<slug>\game\index.html`. All fou
 - Daily DeepSeek cap 20 USD, monthly 40. Do not raise the monthly cap without asking.
 - VN projects: noir theme, illustrated style, 3 music tracks, `sfxEngine: chiptune`,
   `ambienceEngine: ace-step-v1-instrumental`.
-- **Reviews deliberately avoid the writer's model family** (`avoid_family: deepseek`), so they
-  run on **gemma at 2 concurrent requests** — ~7 minutes per review job, and it is the slow
-  lane. Do not remove gemma from the fallbacks to speed reviews up unless the user accepts
-  self-review by DeepSeek.
+- **Reviews no longer have to run on gemma.** The user allowed paid and OpenRouter models on
+  2026-10-27, so the two adaptations' reviews are set per book with `set_book_model`:
+  `deepseek/deepseek-v4-pro` for the review roles, `deepseek/deepseek-flash` for copy-editor
+  and line-editor. That lifts concurrency from 2 (gemma) to 4-5 and drains the queue in
+  minutes. **Use DeepSeek for review JSON, not the free OpenRouter reasoning models**: nemotron
+  3 ultra returned no parseable JSON twice on a copy-editor review and failed a whole book,
+  which then needs `retry_book`. A book model set with `set_book_model` goes first in the
+  router, so `avoid_family: deepseek` (a preference, not a filter) does not demote it. New
+  review jobs still default to gemma unless a book model says otherwise.
 
 ## Known problems and their state
 
@@ -154,11 +155,15 @@ Games: `C:\Users\Infplane\VisualNovels\projects\<slug>\game\index.html`. All fou
 4. **flow-music-mcp crash-loops** (prints "MCP listening" then exits). The guard restarts it; if
    a pipeline fails its art stage because Flow was down, restart Flow and continue that project
    from `art` with `vno_run_pipeline {slug, from: "art"}`.
-5. **Open art issue, not fixed:** circuit-breaker-2's Sol character sheet and sprite show the
-   bible's short-cropped hair but a beige work shirt and grey trousers, while the cover/title
-   art and all six Sol CGs show long dark hair and the navy coverall. Flow time is being kept
-   for the remaining pipelines; regenerate the sheet + sprite (then the CGs and cover) only if
-   the user wants it.
+5. **Character art consistency: fixed for circuit-breaker-2 on 2026-10-27** (user asked). Its
+   Sol sheet had been generated with "simple worn clothes", so the sprite wore a beige shirt
+   while the CGs and cover showed the navy coverall. The sheet, sprite, six Sol CGs and cover
+   were regenerated with Flow from prompts that carry the bible's look (short-cropped dark
+   brown hair, faded navy work coverall, tool belt, boots, pencil behind the ear); the game was
+   rebuilt and linted clean and the title screen retaken. Prompts:
+   `.claude/temp/prod01/sol-prompts.json`; script `.claude/temp/prod01/regen-sol.mjs`.
+   Watch for the same class of defect in the two new games (a sheet prompt that says "simple
+   worn clothes" or a CG prompt with no hair/outfit clause).
 6. **Windows sandbox note:** processes started from a session run at Low integrity, and only the
    workspace root carried a Low integrity label, so writes inside workspace subfolders failed
    with EPERM. `.claude/temp/prod01` is now labelled Low and the `.claude` chain got a
@@ -170,21 +175,22 @@ Games: `C:\Users\Infplane\VisualNovels\projects\<slug>\game\index.html`. All fou
 
 1. `fnm exec --using=24 node scripts/prod-status.mjs` — see what is running. Start the stack
    first if a service is down (`hub.ps1 start comfyui chiptune-studio flow-music-mcp vn-studio
-   scriptorium -Force`; LM Studio headless only if reviews stall on a provider error).
-2. Wait for `the-silent-summit` (round 4, fixed chapter 4) and `the-salt-line` to publish —
-   `node scripts/prod-wait.mjs --minutes 90` as a background job. Check `watch.log` for
-   `ADAPTED`; if a book is rejected, reopen it with a note that names the chapters (see plan).
-   After each publishes, `node scripts/dup-check.mjs <slug>` and confirm ch 4/5 for the summit.
-3. Watch for `echoes-in-the-deep-2` and then `the-salt-line-2`: the watchdog imports each
-   published adaptation, applies the settings and starts its pipeline. Verify with
-   `node scripts/prod-status.mjs vn` and `watch.log`.
-4. Poll the two new pipelines; Flow images are the long pole (~230 assets per book, ~50-90 s
-   each, one lane — several hours each). Fix failures with `vno_asset_regen` / restarting from
-   a stage (`vno_run_pipeline {slug, from: "art"}`).
+   scriptorium -Force`; LM Studio headless only if a job is still pinned to gemma).
+2. **The books are done.** Wait for `echoes-in-the-deep-2` and `the-salt-line-2` to publish:
+   `node scripts/prod-wait.mjs --books echoes-in-the-deep-2,the-salt-line-2 --minutes 120
+   --exit-on-change` as a background job. If a book lands in `failed`, read
+   `~/Scriptorium/jobs/failed/<job>.md` (`failure:` line), point that role at DeepSeek with
+   `set_book_model` and `retry_book`.
+3. Each published adaptation is imported by the watchdog (5-minute task), gets the production
+   settings and starts its pipeline — verify with `node scripts/prod-status.mjs vn`,
+   `vno_list_projects` and `watch.log` (`IMPORTED` / `PIPELINE STARTED`).
+4. Poll the two pipelines; Flow images are the long pole (~230 assets per book, ~50-90 s each,
+   one lane — several hours each). Fix failures with `vno_asset_regen` / restarting a stage
+   (`vno_run_pipeline {slug, from: "art"}`). Spot-check a sheet, a background, a CG and the
+   cover for the same consistency defects as item 5 below.
 5. When a project has `build: done` and `lint: done`, verify `build.json` (`ok: true`,
    `placeholders: []`), `lint.json` (`ok: true`), and take a title screen with
-   `node scripts/shot-game.mjs <slug>`; spot-check a character sheet, a background, a CG and
-   the cover.
+   `node scripts/shot-game.mjs <slug>`.
 6. Update `run-log.md` (spend, scores, game stats, what was checked), refresh this file, commit
    and push, then ask the user to play the games and close the goal.
 

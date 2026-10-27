@@ -16,6 +16,12 @@ const INTERVAL = arg('interval', 60)
 // --exit-on-change: stop at the first stage change instead of waiting for all five.
 const EXIT_ON_CHANGE = process.argv.includes('--exit-on-change')
 const FIVE = ['circuit-breaker', 'echoes-in-the-deep', 'the-salt-line', 'the-silent-signal', 'the-silent-summit']
+// --books a,b,c watches those instead of the five production books (e.g. the adaptations).
+const BOOKS = String(process.argv[process.argv.indexOf('--books') + 1] ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter((s) => s && !s.startsWith('--'))
+const WATCH = process.argv.includes('--books') && BOOKS.length ? BOOKS : FIVE
 const DIR = '.claude/temp/prod01'
 mkdirSync(DIR, { recursive: true })
 const log = (m) => {
@@ -70,7 +76,7 @@ const SR = 'http://127.0.0.1:7341/mcp'
 const last = new Map()
 const deadline = Date.now() + MINUTES * 60_000
 let beat = 0
-log(`wait start: five books, ${MINUTES} min, every ${INTERVAL} s`)
+log(`wait start: ${WATCH.length} books, ${MINUTES} min, every ${INTERVAL} s`)
 
 for (;;) {
   let books
@@ -81,7 +87,7 @@ for (;;) {
     books = null
   }
   if (books) {
-    const five = books.filter((b) => FIVE.includes(b.slug))
+    const five = books.filter((b) => WATCH.includes(b.slug))
     const done = []
     const first = last.size === 0
     let changed = false
@@ -102,12 +108,12 @@ for (;;) {
       log('stage changed; exiting (--exit-on-change)')
       process.exit(0)
     }
-    if (done.length === FIVE.length) {
-      log('all five published')
+    if (done.length === WATCH.length) {
+      log(`all ${WATCH.length} watched books published`)
       process.exit(0)
     }
     if (Date.now() > deadline) {
-      log(`timed out; published ${done.length}/5`)
+      log(`timed out; published ${done.length}/${WATCH.length}`)
       process.exit(2)
     }
     if (++beat % 15 === 0) log(`heartbeat: ${five.map((b) => `${b.slug}=${b.stage}`).join(' ')}`)
