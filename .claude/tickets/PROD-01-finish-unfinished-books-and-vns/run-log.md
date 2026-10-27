@@ -377,3 +377,18 @@ with a note that quotes the duplicated beats and names the split, and a targeted
   14:30), `the-salt-line-2` at `art` (the art-director writing prompts). Flow images are the
   long lane — expect several hours, and the two pipelines share the one Flow lane.
 - Spend today $1.8 of $20; month $13.9 of $40.
+
+## 2026-10-27 15:40 — echoes-in-the-deep-2 game is finished and verified
+
+- Pipeline: generate done 133/133, stage done, build done, lint done, 0 failed jobs.
+  `build.json` `ok: true` with **0 placeholders**; `lint.json` `ok: true`, no messages —
+  1,360 dialogue blocks, 18,128 words, 10 chapters.
+- Title screen rendered (`echoes-in-the-deep-2-title.png`): the Cormorant's viewport over a
+  bioluminescent current — the noir menu and cast art are right.
+- Art spot-check: the "Cormorant viewport" CG (two crew at the window, bioluminescence over the
+  ridge) and Kofi Mensah's character sheet (orange coveralls, red bandana, tool belt) are
+  on-model and consistent.
+- Caveat: the two pipelines share VN Studio's single `lane: flow` for images, so the-salt-line-2
+  was starved while echoes finished its remaining images. Nothing is stuck: once the lane freed,
+  the salt-line's queue started moving again (83/166 at 14:43, 88/166 at 14:46). Expect the
+  salt-line to take one image at a time for the rest of its ~78 assets.
