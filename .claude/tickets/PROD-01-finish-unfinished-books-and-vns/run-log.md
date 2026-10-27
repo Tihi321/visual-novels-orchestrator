@@ -356,3 +356,11 @@ with a note that quotes the duplicated beats and names the split, and a targeted
 - `the-salt-line-2` (9 chapters) is in its second review round on DeepSeek (copy-editor and
   line-editor on flash, the rest on v4-pro); it publishes next, then its pipeline starts.
 - Spend today $1.77 of $20 (the DeepSeek review rounds); month $13.9 of $40.
+- The published adaptation was **not** duplication-free: `dup-check` found 6.5% adjacent overlap
+  between ch 7 and ch 8 (Kofi's "steel doesn't give you one note … annoy it in a key it has
+  never heard" speech, repeated verbatim a chapter later, plus Neve re-explaining Lian's job).
+  Rather than reopen and re-run a whole pipeline, the three beats were rewritten **in the VN
+  project** with `vno_beat_update` (`ch08.s02.b010`-`b012`) before the stage/build steps run:
+  Kofi now says the hull answers whether asked or not and "learns a chord it has never held,
+  and it remembers the chord"; Neve says "That is what Lian is for. She hears what leaves and
+  what comes back." The build at the end of the pipeline carries the new lines.
