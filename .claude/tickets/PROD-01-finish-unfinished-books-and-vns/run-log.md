@@ -392,3 +392,50 @@ with a note that quotes the duplicated beats and names the split, and a targeted
   was starved while echoes finished its remaining images. Nothing is stuck: once the lane freed,
   the salt-line's queue started moving again (83/166 at 14:43, 88/166 at 14:46). Expect the
   salt-line to take one image at a time for the rest of its ~78 assets.
+
+## 2026-10-27 17:55 — the-salt-line-2 finished; its Juno CGs had to be regenerated
+
+- Pipeline finished: generate 166/166, stage, build and lint all done, 0 failed jobs.
+  `build.json` `ok: true`, **0 placeholders**; `lint.json` `ok: true` — 1,012 dialogue blocks,
+  16,124 words, 9 chapters. Title screen (`the-salt-line-2-title.png`): the tug hauling the
+  canted freighter past the reef at dawn.
+- **Same class of art defect as circuit-breaker-2, caught by the spot-check:** Juno Halloway's
+  sheet (from the bible: a woman in her forties, short salt-and-pepper hair, navy oilskin
+  jacket, brass ship's watch) is right, but seven CG prompts written by the art-director said
+  "a young woman in a rain jacket" / "dark hair", so those CGs showed a young black-haired
+  woman in a yellow slicker. The prompts were rewritten with Juno's bible look (and the two
+  prompts that said only "two figures" / "a lone figure" now name her), and the seven CGs were
+  regenerated with Flow (`.claude/temp/prod01/regen-juno.mjs`, prompts saved in
+  `juno-new-prompts.json`). This is the defect to look for in any future project: **the
+  art-director writes CG prompts from the chapter text, not from the character bible**, so a
+  CG prompt that describes a recurring character without the bible's look drifts.
+- With that, all six production games are built, lint-clean, 0 placeholders, and their title
+  screens are rendered into `.claude/temp/prod01/` (contact sheet `games-contact-sheet.png`).
+
+## 2026-10-27 18:10 — PROD-01 complete
+
+- **All six games finished and verified** (build `ok`, 0 placeholders, lint `ok`, title screen
+  rendered and looked at):
+
+  | game | blocks | words | chapters |
+  |---|---|---|---|
+  | the-local-patch-2 | 725 | 8,887 | 5 |
+  | circuit-breaker-2 | 982 | 15,531 | 10 |
+  | the-silent-signal-2 | 976 | 15,219 | 10 |
+  | the-silent-summit-2 | 731 | 14,553 | 8 |
+  | echoes-in-the-deep-2 | 1,360 | 18,128 | 10 |
+  | the-salt-line-2 | 1,012 | 16,124 | 9 |
+
+  Total 5,786 dialogue blocks and 88,442 words of playable visual novel.
+- Books: five finished to published (7.33, 7.85, 8.38, 8.31, ~8.1) with five published
+  adaptations (8.57, 8.93, 8.79, 9.14, 7.79). The duplication defect that started the ticket is
+  fixed in the-silent-summit (1.8% adjacent overlap) and patched in the echoes game text.
+- Spend: **$2.03 of the $20 daily cap, $14.15 of $40 monthly**. Images came from Google Flow
+  (free), audio from ComfyUI ACE-Step and Chiptune Studio local, voices off by decision.
+- Art fixes made on request: circuit-breaker-2's Sol (sheet + sprite + 6 CGs + cover) and
+  the-salt-line-2's seven Juno CGs.
+- Delivered: six games at `C:\Users\Infplane\VisualNovels\projects\<slug>\game\index.html`
+  (double-clicking works — verified from `file://`), contact sheet and before/after sheet in
+  `.claude/temp/prod01/`.
+- Left running as before: the services and the three scheduled tasks (watch/nudge/guard) keep
+  the stack alive; nothing is queued in either factory.

@@ -1,6 +1,7 @@
 # PROD-01 handoff — finish the unfinished books and their VN games
 
-Last updated: 2026-10-27 16:15 (Europe/Warsaw). Read this with `plan.md` and `run-log.md` in
+Last updated: 2026-10-27 18:15 (Europe/Warsaw) — **PROD-01 is complete.** Read this with
+`plan.md` and `run-log.md` in
 the same folder. The production is still running: the Scriptorium and VN Studio engines and
 three Windows scheduled tasks keep working while no session is open.
 
@@ -104,17 +105,16 @@ Published books: circuit-breaker 7.33, the-silent-signal 7.85, **echoes-in-the-d
 Adaptations: **circuit-breaker-2** 8.57, **the-silent-signal-2** 8.93, **the-silent-summit-2**
 8.79 published; **echoes-in-the-deep-2** and **the-salt-line-2** in progress (above).
 
-VN Studio — **five production games finished**, build `ok`, 0 placeholders, lint clean; the
-sixth (`the-salt-line-2`) is generating its assets:
+VN Studio — **six production games finished**, build `ok`, 0 placeholders, lint clean:
 
-| Project | Blocks | Words | Images | Chapters | State |
-|---|---|---|---|---|---|
-| the-local-patch-2 | 725 | 8,887 | 50 | 5 | finished |
-| circuit-breaker-2 | 982 | 15,531 | 54 | 10 | finished, Sol art regenerated |
-| the-silent-signal-2 | 976 | 15,219 | 46 | 10 | finished |
-| the-silent-summit-2 | 731 | 14,553 | 35 | 8 | finished |
-| echoes-in-the-deep-2 | 1,360 | 18,128 | 133 assets | 10 | finished 15:40 today |
-| the-salt-line-2 | — | — | 166 assets | 9 | generating (~100/166 at 16:05) |
+| Project | Blocks | Words | Images | Chapters |
+|---|---|---|---|---|
+| the-local-patch-2 | 725 | 8,887 | 50 | 5 |
+| circuit-breaker-2 | 982 | 15,531 | 54 | 10 |
+| the-silent-signal-2 | 976 | 15,219 | 46 | 10 |
+| the-silent-summit-2 | 731 | 14,553 | 35 | 8 |
+| echoes-in-the-deep-2 | 1,360 | 18,128 | 133 assets | 10 |
+| the-salt-line-2 | 1,012 | 16,124 | 166 assets | 9 |
 
 Games: `C:\Users\Infplane\VisualNovels\projects\<slug>\game\index.html`. All four verified with
 `build.json`/`lint.json`; title screenshots in `.claude/temp/prod01/` (`patch2-title.png`,
