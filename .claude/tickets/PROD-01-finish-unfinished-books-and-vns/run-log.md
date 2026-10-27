@@ -364,3 +364,16 @@ with a note that quotes the duplicated beats and names the split, and a targeted
   Kofi now says the hull answers whether asked or not and "learns a chord it has never held,
   and it remembers the chord"; Neve says "That is what Lian is for. She hears what leaves and
   what comes back." The build at the end of the pipeline carries the new lines.
+
+## 2026-10-27 14:35 — the-salt-line-2 published 7.79, both remaining pipelines running
+
+- **the-salt-line-2 published with score 7.79** (9 chapters, 23,057 words) after two review
+  rounds on DeepSeek. The watchdog imported it at 14:31 and started its pipeline; settings are
+  the same production defaults (noir, Flow illustrated, ACE-Step ×3, Chiptune SFX, voices off).
+- **Every book and every adaptation is now published**: five source books (7.33, 7.85, 8.38,
+  8.31, ~8.1) and five adaptations (circuit-breaker-2 8.57, the-silent-signal-2 8.93,
+  the-silent-summit-2 8.79, echoes-in-the-deep-2 9.14, the-salt-line-2 7.79).
+- What remains is pipeline work on two games: `echoes-in-the-deep-2` generating (47/133 at
+  14:30), `the-salt-line-2` at `art` (the art-director writing prompts). Flow images are the
+  long lane — expect several hours, and the two pipelines share the one Flow lane.
+- Spend today $1.8 of $20; month $13.9 of $40.
