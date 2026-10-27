@@ -340,3 +340,19 @@ with a note that quotes the duplicated beats and names the split, and a targeted
   screenshot was retaken (`circuit-breaker-2-title.png`).
 - The prompts are saved in `.claude/temp/prod01/sol-prompts.json` and applied with
   `.claude/temp/prod01/regen-sol.mjs` (temp helper, not committed).
+
+## 2026-10-27 14:20 — echoes-in-the-deep-2 published 9.14, its pipeline is generating
+
+- **echoes-in-the-deep-2 published with score 9.14** (10 chapters, 25,068 words) after a
+  review round, a rewrite and a second review round on DeepSeek. The watchdog imported it into
+  VN Studio (`IMPORTED ... -> project echoes-in-the-deep-2`, settings applied, pipeline
+  started) within a minute of the publish.
+- Settings on the new project are the production defaults, verified: theme noir, art Flow
+  illustrated with BiRefNet cut-outs, music ACE-Step instrumental ×3, ambience ACE-Step,
+  SFX Chiptune, voices off, every text role on deepseek/deepseek-flash.
+- Pipeline at 14:20: analyse done (nothing to settle), art done (49 prompts), music done
+  (3 tracks), **generate running 44/133** (images and audio; Flow is the long lane), then
+  stage/build/lint.
+- `the-salt-line-2` (9 chapters) is in its second review round on DeepSeek (copy-editor and
+  line-editor on flash, the rest on v4-pro); it publishes next, then its pipeline starts.
+- Spend today $1.77 of $20 (the DeepSeek review rounds); month $13.9 of $40.

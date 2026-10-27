@@ -92,9 +92,11 @@ for (;;) {
     const first = last.size === 0
     let changed = false
     for (const b of five) {
-      const mark = `${b.stage} ${b.chaptersWritten}/${b.chaptersPlanned} ${b.words}w${b.paused ? ' PAUSED' : ''}`
+      // the change signal is the stage (and the pause flag), not the word count: a book drafting
+      // chapter by chapter must not end the wait.
+      const mark = `${b.stage}${b.paused ? ' PAUSED' : ''}`
       if (last.get(b.slug) !== mark) {
-        log(`${b.slug}: ${mark}${b.score ? ` score=${b.score}` : ''}`)
+        log(`${b.slug}: ${b.stage} ${b.chaptersWritten}/${b.chaptersPlanned} ${b.words}w${b.paused ? ' PAUSED' : ''}${b.score ? ` score=${b.score}` : ''}`)
         last.set(b.slug, mark)
         changed = true
       }
