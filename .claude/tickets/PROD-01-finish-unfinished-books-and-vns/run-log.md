@@ -283,3 +283,18 @@ with a note that quotes the duplicated beats and names the split, and a targeted
 - The games open from `file://` as well as over HTTP: a headless Chrome screenshot of
   `game/index.html` opened by path is byte-identical to the served one, so the user can
   double-click the entry point.
+
+## 2026-10-27 12:28 — the-silent-summit republished 8.31, only the-salt-line left
+
+- **the-silent-summit published round 4 with score 8.31** (was 7.15), 10 chapters, 32,082
+  words; per-role scores: enjoyment 8.33, genre fit 8, continuity 9, mechanics 7, structure 9,
+  prose 6.67, originality 8.67, threads 10. EPUB at
+  `books/the-silent-summit/out/the-silent-summit.epub`. `dup-check` on the published book:
+  **clean, max adjacent overlap 1.8%** — the ch 4/5 duplication is gone, which is what round 4
+  was for.
+- The watchdog does not re-adapt a book it already adapted, so no the-silent-summit-3 is
+  created; its existing adaptation `the-silent-summit-2` was already clean (0.0% overlap) and
+  its game stands as built.
+- Remaining in Scriptorium: `the-salt-line` (18 review jobs, ~1.5 h at two gemma slots) and
+  `echoes-in-the-deep-2` (6 review jobs). Published books now 30 of the 31 in the library; the
+  five production books are all published except the-salt-line.
