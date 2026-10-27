@@ -33,6 +33,11 @@ yarn install
 | `yarn test` | Vitest |
 | `yarn typecheck` | `tsc` for the node and web projects |
 | `yarn lint` | ESLint |
+| `yarn dist` | Windows package: build, `release/` NSIS installer and portable exe, then `verify:package` |
+| `yarn dist:installer`, `yarn dist:portable` | Only `VN-Studio-Setup-<version>-x64.exe` or `VN-Studio-Portable-<version>-x64.exe`, then `verify:package` |
+| `yarn dist:dir` | Unpacked build only (`release/win-unpacked`) |
+| `yarn verify:package` | Checks `release/win-unpacked`: app files, seed, themes, icon, and that sharp and the keyring load from `app.asar.unpacked` |
+| `yarn icons` | Regenerates `build/icon.png` and `build/icon.ico` from the pixel sprite in `scripts/make-icons.mjs` |
 | `npx tsx scripts/puzzle-poc.ts --lint --play` | Builds the puzzle proof of concept (`templates/puzzles/`, a 3x3 Murdle grid) into `.claude/temp/puzzle-poc/`, lints it and opens it; `--selftest` clicks through it with Ren'Py's test runner |
 
 API keys come from environment variables or the Windows credential store (service `vn-studio`), never from files. A key that is not found there is also looked for under the services `scriptorium` and `book-translator`, so the keys of those tools work here; `VNO_SHARED_KEYS=0` turns that off. The Models page says when a key comes from another store. Studio tokens (`PIXEL_STUDIO_MCP_TOKEN`, `CHIPTUNE_STUDIO_MCP_TOKEN`) are looked up the same way.
@@ -40,6 +45,10 @@ API keys come from environment variables or the Windows credential store (servic
 A job that needs Pixel Studio, Chiptune Studio or ComfyUI starts it when it is down (from the creative hub's `services.json`; `config/autostart.md`, `VNO_AUTOSTART=0` turns it off). Scriptorium and Strata are never started.
 
 Google Flow (through the hub's `flow-music-mcp`) can make a project's images (`art.provider: flow`, free), music and — as the cloud voice fallback — voices: see `docs/mcp-guide.md`, "Google Flow".
+
+### Packaging (Windows)
+
+`electron-builder.config.cjs` packs `out/` into `app.asar` (production `node_modules` with it; `sharp` and the keyring are unpacked) and ships `seed/`, `themes/` and the icon as `resources/`. A packaged app passes `--seed resources/seed` to the engine and sets `VNO_THEMES` to `resources/themes`. The headless mode works the same: `"VN Studio.exe" --mcp-only`. Output goes to `release/` (git-ignored). The exe is not code-signed. Ren'Py, ComfyUI and the other tools are not bundled; they are found as before (config in the data folder).
 
 ## Command line and MCP
 

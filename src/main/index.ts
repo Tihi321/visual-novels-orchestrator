@@ -29,6 +29,8 @@ const mcpOnly = process.argv.includes('--mcp-only')
 // VNO_NO_WINDOW=1 runs the engine without the main window (for scripted checks).
 const noWindow = process.env.VNO_NO_WINDOW === '1' || mcpOnly
 const startHidden = process.argv.includes('--hidden')
+// A packaged app ships the game themes in resources/themes: the engine (utilityProcess inherits this) and the font server read them from there.
+if (app.isPackaged && !process.env.VNO_THEMES) process.env.VNO_THEMES = path.join(process.resourcesPath, 'themes')
 
 // Project images (assets, previews) are served by this scheme, from the data folder only (see files.ts).
 protocol.registerSchemesAsPrivileged([{ scheme: FILE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }])
