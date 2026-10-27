@@ -1,6 +1,6 @@
 # PROD-01 handoff — finish the unfinished books and their VN games
 
-Last updated: 2026-10-27 13:25 (Europe/Warsaw). Read this with `plan.md` and `run-log.md` in
+Last updated: 2026-10-27 16:15 (Europe/Warsaw). Read this with `plan.md` and `run-log.md` in
 the same folder. The production is still running: the Scriptorium and VN Studio engines and
 three Windows scheduled tasks keep working while no session is open.
 
@@ -52,6 +52,11 @@ continue tomorrow."
   detector for the duplicated-climax defect. Give a slug for one book.
 - `scripts/shot-game.mjs` — serves `~/VisualNovels/projects/<slug>/game` on a free port and
   screenshots it with headless Chrome into `.claude/temp/prod01/<slug>-title.png`.
+- `scripts/vn-watch.mjs --slugs a,b --minutes 240` — polls VN Studio's pipelines and exits 0
+  when every watched project has build+lint done, 1 on a failed step or job. Run it as a
+  background job while two games generate.
+- `scripts/contact-sheet.py` — builds `games-contact-sheet.png` (title screens of the six
+  production games) with the bundled Python's Pillow; the final deliverable image.
 
 ## Changes outside this repo (not in git)
 
@@ -99,14 +104,17 @@ Published books: circuit-breaker 7.33, the-silent-signal 7.85, **echoes-in-the-d
 Adaptations: **circuit-breaker-2** 8.57, **the-silent-signal-2** 8.93, **the-silent-summit-2**
 8.79 published; **echoes-in-the-deep-2** and **the-salt-line-2** in progress (above).
 
-VN Studio — **four production games finished**, build `ok`, 0 placeholders, lint clean:
+VN Studio — **five production games finished**, build `ok`, 0 placeholders, lint clean; the
+sixth (`the-salt-line-2`) is generating its assets:
 
-| Project | Blocks | Words | Images | Chapters |
-|---|---|---|---|---|
-| the-local-patch-2 | 725 | 8,887 | 50 | 5 |
-| circuit-breaker-2 | 982 | 15,531 | 54 | 10 |
-| the-silent-signal-2 | 976 | 15,219 | 46 | 10 |
-| the-silent-summit-2 | 731 | 14,553 | 35 | 8 |
+| Project | Blocks | Words | Images | Chapters | State |
+|---|---|---|---|---|---|
+| the-local-patch-2 | 725 | 8,887 | 50 | 5 | finished |
+| circuit-breaker-2 | 982 | 15,531 | 54 | 10 | finished, Sol art regenerated |
+| the-silent-signal-2 | 976 | 15,219 | 46 | 10 | finished |
+| the-silent-summit-2 | 731 | 14,553 | 35 | 8 | finished |
+| echoes-in-the-deep-2 | 1,360 | 18,128 | 133 assets | 10 | finished 15:40 today |
+| the-salt-line-2 | — | — | 166 assets | 9 | generating (~100/166 at 16:05) |
 
 Games: `C:\Users\Infplane\VisualNovels\projects\<slug>\game\index.html`. All four verified with
 `build.json`/`lint.json`; title screenshots in `.claude/temp/prod01/` (`patch2-title.png`,
