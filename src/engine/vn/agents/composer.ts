@@ -1,7 +1,7 @@
 import { z } from 'zod'
-import { resolveMusicProvider } from '../../../shared/vn'
+import { CHIPS, resolveMusicProvider } from '../../../shared/vn'
 import type { Chip, ProjectSettings, VnBook } from '../../../shared/vn'
-import { CALM_MOODS, chipTrackPlanSchema, fallbackChipPlan, mergeChipPlan, planSummary } from '../../studios/chip-plan'
+import { MUSIC_MOODS, chipTrackPlanSchema, fallbackChipPlan, mergeChipPlan, planSummary } from '../../studios/chip-plan'
 import type { ChipTrackPlan, ChipTrackPlanDraft } from '../../studios/chip-plan'
 import { asJson, askJson, clip } from './common'
 import type { AgentCall } from './common'
@@ -96,8 +96,8 @@ export async function planMusic(call: AgentCall, book: VnBook, settings: Project
       engine: settings.music.engine,
       provider: resolveMusicProvider(settings),
       chip: settings.music.chip ?? '',
-      chips: asJson(['nes', 'gb', 'genesis', 'snes', 'pce']),
-      moods: asJson(CALM_MOODS),
+      chips: asJson(CHIPS),
+      moods: asJson(MUSIC_MOODS),
       trackIds: asJson(trackIds),
       chapters: asJson(book.chapters.map((c) => ({ n: c.n, title: c.title, summary: clip(c.summary ?? '', 200), ending: c.ending !== null }))),
       scenes: asJson(book.chapters.flatMap((c) => c.scenes.slice(0, 40).map((s) => ({ id: s.id, place: clip(s.placeText, 40), time: s.time, description: clip(s.description, 80), music: s.music }))).slice(0, 120)),

@@ -25,9 +25,9 @@ Rules:
 If the music provider is `comfy` (ACE-Step): each track has a `prompt` that names the mood, the instruments (for example soft piano, strings, harp, music box, light guitar), a slow tempo and the genre tint. Keep it to one line of 15 to 30 words. Start with "calm instrumental". Leave the chiptune fields out.
 
 If the music provider is `chiptune` (Chiptune Studio, a chip-music composer): each track is composed from `mood`, `chip`, `bpm`, `key` and `bars`; no prompt is needed (use an empty string).
-- `mood`: one of {{moods}}.
-- `chip`: one of {{chips}}. If the user chose a chip above, use it; otherwise pick a soft one that fits the book (snes for warm and gentle, gb for small cozy stories, nes for bright simple ones). A book can mix chips, but keep to one when unsure.
-- `bpm`: slow, 55 to 90. `key`: a note name such as C, F, G, D, A, Eb. Give neighbouring tracks different keys.
+- `mood`: one of {{moods}}. The synth moods (dreamwave, synthwave, darkwave, outrun) only for a book whose setting or tone is 80s, neon, retro-futuristic, cyber or noir: `dreamwave` is the calmest and the usual pick, `darkwave` for dark chapters, `synthwave` for driving ones, `outrun` only for a chase or a climax. Every other book keeps to the calm moods.
+- `chip`: one of {{chips}}. If the user chose a chip above, use it; otherwise pick a soft one that fits the book (snes for warm and gentle, gb for small cozy stories, nes for bright simple ones, ps1 for late-90s, moody, noir, gothic or melancholy books with deep reverb, dreamcast for lush, neon, dreamy or retro-futuristic books with chorus). A book can mix chips, but keep to one when unsure.
+- `bpm`: slow, 55 to 90 for the calm moods and 80 to 110 for the synth moods. `key`: a note name such as C, F, G, D, A, Eb. Give neighbouring tracks different keys.
 - `bars`: the length in bars (4/4): about seconds x bpm / 240, in a multiple of 4, between 8 and 48.
 
 Answer with one JSON object and nothing else:

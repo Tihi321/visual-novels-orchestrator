@@ -74,6 +74,14 @@ describe('sound engines', () => {
 })
 
 describe('generating sounds with Chiptune Studio', () => {
+  it('the chosen chip, also ps1 and dreamcast, goes to compose_sfx', async () => {
+    const chip = new FakeChiptune()
+    const s = settings({ music: { engine: 'ace-step-v1-instrumental', tracks: 3, provider: 'chiptune', chip: 'dreamcast' }, sound: { ambienceEngine: 'ace-step-v1-instrumental', sfxEngine: 'chiptune' } } as never)
+    const r = await generateAsset(ctx(chip, new FakeComfy(), { settings: s }), stub('sfx_bell', s))
+    if (!r.ok || r.skipped) throw new Error(JSON.stringify(r))
+    expect(chip.calls[0]!.args).toMatchObject({ kind: 'sfx', chip: 'dreamcast' })
+  })
+
   it('an sfx calls compose_sfx with a file path in the asset folder and stores a one-shot version', async () => {
     const chip = new FakeChiptune()
     const comfy = new FakeComfy()

@@ -239,7 +239,7 @@ export const ART_PROVIDERS = ['comfy', 'pixel-studio-draw', 'hand', 'flow'] as c
 export const PIXEL_PROVIDERS = ['vno', 'pixel-studio'] as const
 export const MUSIC_PROVIDERS = ['comfy', 'chiptune', 'flow'] as const
 /** The chips of Chiptune Studio. */
-export const CHIPS = ['nes', 'gb', 'genesis', 'snes', 'pce'] as const
+export const CHIPS = ['nes', 'gb', 'genesis', 'snes', 'pce', 'ps1', 'dreamcast'] as const
 export const DITHERS = ['none', 'ordered', 'floyd'] as const
 export type Chip = (typeof CHIPS)[number]
 export type Dither = (typeof DITHERS)[number]
