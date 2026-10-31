@@ -48,7 +48,7 @@ Usage: yarn engine -- <command> [options]      (global: --data <dir>, --seed <di
   voice import <slug> --lang hr (--folder <dir> | --beat <beatId> --file <clip>)   use clips you made: <beatId>.<ext> files; generation keeps them
   voice set <slug> <speaker> <lang> <voice>   Flow only: pick one Flow voice (a character key or narrator; an id from flow voices)
   comfy status|free                      ComfyUI lanes and engines / free its VRAM
-  settings <slug> [--style pixel|illustrated] [--palette name|none] [--music-provider chiptune|comfy|auto] [--chip nes|gb|genesis|snes|pce|auto]
+  settings <slug> [--style pixel|illustrated] [--palette name|none] [--music-provider chiptune|comfy|auto] [--chip nes|gb|genesis|snes|pce|ps1|dreamcast|auto]
            [--pixel-provider pixel-studio|vno] [--art-provider comfy|pixel-studio-draw|hand|flow] [--flow-model "Nano Banana Pro"] [--pixel-size 320x180] [--dither none|ordered|floyd] [--outline[=false]] [--tracks n]
                                          show or change the look settings of a project (also voice: provider/engine/style)
   studios status                         are Pixel Studio and Chiptune Studio reachable (how to start them if not)
