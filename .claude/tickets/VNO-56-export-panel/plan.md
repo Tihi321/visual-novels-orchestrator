@@ -14,5 +14,14 @@ The book export (`vno_export_book`) had no UI. The Build tab gets an Export sect
 ## Tests
 One test, `tests/export-panel.test.ts`, at the command level in a temp data folder: dry run counts, an EPUB written, an error answered as `export.result.error`.
 
+## Extras (second commit, "export panel extras")
+1. Section map: `ExportResultView.sectionMap` (seed, order, chapter -> section) is sent and shown in a collapsible list, sorted by section, with chapter titles.
+2. Grayscale: a checkbox; `exportBook.grayscale` goes to `runBookExport`.
+3. Output file: the app has only open dialogs (`pickFolder`, `pickFile`), no save dialog, so a "Save as" path field (absolute path; empty = default `export/`); `exportBook.out`.
+4. Progress: `PdfOptions.onProgress` after each section; the service emits `export.progress` (throttled to 150 ms), the store keeps `exportProgress[slug]`, the pending pill shows `done/total`. PDF only (EPUB is not sectioned that way).
+5. "Renumber and export": shown under a stale-map error of a file export; runs the same format again with `renumber: true`.
+6. Persistence: a written epub/pdf result is saved to `projects/<slug>/export-last.json`; `ProjectDetail.lastExport` shows it after a restart until a new answer arrives. Plan results are not kept.
+Test: two assertions added to `tests/export-panel.test.ts` (section map in the plan, `lastExport` after the EPUB).
+
 ## Not done
-Not run in the real app (no screenshot of the panel).
+Not run in the real app (no screenshot of the panel); the grayscale, Save as and progress paths have no test of their own.

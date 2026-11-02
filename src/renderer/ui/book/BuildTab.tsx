@@ -61,14 +61,19 @@ function ExportSection({ slug, detail }: { slug: string; detail: ProjectDetail }
   const [lang, setLang] = useState<Lang>(primary)
   const [order, setOrder] = useState<'shuffled' | 'in-order'>('shuffled')
   const [renumber, setRenumber] = useState(false)
+  const [grayscale, setGrayscale] = useState(false)
+  const [out, setOut] = useState('')
+  const progress = useVn((s) => s.exportProgress[slug])
   const [pending, setPending] = useState<string | null>(null)
   const choice = detail.summary.kind === 'choice'
   useEffect(() => setPending(null), [exp])
-  const run = (format: 'epub' | 'pdf' | 'plan') => {
+  const run = (format: 'epub' | 'pdf' | 'plan', forceRenumber = false) => {
     setPending(format)
-    sendCommand({ type: 'exportBook', slug, format, lang, ...(choice ? { order, renumber } : {}) })
+    sendCommand({ type: 'exportBook', slug, format, lang, grayscale, ...(format !== 'plan' && out.trim() ? { out: out.trim() } : {}), ...(choice ? { order, renumber: renumber || forceRenumber } : {}) })
   }
-  const r = exp?.result
+  // after a restart there is no live answer: show the last written book kept on the project
+  const r = exp ? exp.result : detail.lastExport ?? undefined
+  const staleError = !!exp?.error && /no longer fit/.test(exp.error) && exp.format !== 'plan'
   const folderRel = r?.path ? (relativeToData(dataDir, dirOf(r.path)) ?? projectRel(slug, 'export')) : null
   return (
     <div className="card" data-testid="export-section">
@@ -101,6 +106,16 @@ function ExportSection({ slug, detail }: { slug: string; detail: ProjectDetail }
         )}
       </div>
       <div className="row" style={{ marginTop: 6 }}>
+        <label className="inline" title="Grey JPEG pictures instead of colour">
+          <input type="checkbox" checked={grayscale} onChange={(e) => setGrayscale(e.target.checked)} data-testid="export-grayscale" />
+          Grayscale pictures
+        </label>
+        <label className="inline" style={{ flex: 1 }} title="Absolute path of the file to write. Empty: export/ in the project folder">
+          Save as
+          <input type="text" value={out} onChange={(e) => setOut(e.target.value)} placeholder="default: the project's export folder" style={{ flex: 1 }} data-testid="export-out" />
+        </label>
+      </div>
+      <div className="row" style={{ marginTop: 6 }}>
         <button className="primary" disabled={!!pending} onClick={() => run('epub')} data-testid="export-epub">
           EPUB (Kindle)
         </button>
@@ -110,7 +125,8 @@ function ExportSection({ slug, detail }: { slug: string; detail: ProjectDetail }
         <button disabled={!!pending} onClick={() => run('plan')} data-testid="export-plan">
           Preview plan
         </button>
-        {pending && <Pill tone="accent">{pending === 'plan' ? 'planning' : `writing ${pending}`}...</Pill>}
+        {pending && <Pill tone="accent">{pending === 'plan' ? 'planning' : `writing ${pending}`}
+            {progress ? ` ${progress.done}/${progress.total}` : ''}...</Pill>}
       </div>
       <div className="dim" style={{ marginTop: 6 }}>
         Prints the story as an illustrated book into <code>export/</code>. A choice story becomes a numbered gamebook; sprites, sound and puzzles are left out.
@@ -118,6 +134,13 @@ function ExportSection({ slug, detail }: { slug: string; detail: ProjectDetail }
       {exp?.error && (
         <div className="bad-text" data-testid="export-error">
           {exp.error}
+          {staleError && (
+            <div style={{ marginTop: 4 }}>
+              <button disabled={!!pending} onClick={() => run(exp.format, true)} data-testid="export-renumber-retry">
+                Renumber and export
+              </button>
+            </div>
+          )}
         </div>
       )}
       {r && (
@@ -140,6 +163,23 @@ function ExportSection({ slug, detail }: { slug: string; detail: ProjectDetail }
                 </button>
               )}
             </div>
+          )}
+          {r.sectionMap && (
+            <details style={{ marginTop: 4 }} data-testid="export-map">
+              <summary>
+                Section map ({r.sectionMap.order}, seed {r.sectionMap.seed})
+              </summary>
+              <ul className="log-list">
+                {Object.entries(r.sectionMap.sections)
+                  .sort((a, b) => a[1] - b[1])
+                  .map(([ch, no]) => (
+                    <li key={ch}>
+                      Section {no}: chapter {ch}
+                      {detail.book.chapters.find((c) => String(c.n) === ch)?.title ? ` (${detail.book.chapters.find((c) => String(c.n) === ch)!.title})` : ''}
+                    </li>
+                  ))}
+              </ul>
+            </details>
           )}
           {r.warnings.length > 0 && (
             <ul className="log-list" data-testid="export-warnings">

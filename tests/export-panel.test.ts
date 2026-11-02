@@ -30,12 +30,14 @@ describe('exportBook command', () => {
 
     await env.engine.handleCommand({ type: 'exportBook', slug, format: 'plan' })
     expect(last()).toMatchObject({ slug, format: 'plan', result: { mode: 'gamebook', sections: 3, stale: false } })
+    expect(Object.keys(last().result!.sectionMap!.sections)).toHaveLength(3)
     expect(last().result?.path).toBeUndefined()
 
     await env.engine.handleCommand({ type: 'exportBook', slug, format: 'epub', order: 'in-order' })
     const written = last().result
     expect(written?.path).toMatch(/\.epub$/)
     expect(existsSync(written!.path!)).toBe(true)
+    expect((await env.engine.vn.detail(slug)).lastExport?.path).toBe(written!.path) // kept on the project
 
     await env.engine.handleCommand({ type: 'exportBook', slug, format: 'plan', lang: 'ar' })
     expect(last().error).toMatch(/no ar edition/)

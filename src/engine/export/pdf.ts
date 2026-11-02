@@ -29,6 +29,8 @@ export interface PdfOptions {
   fontDir?: string
   /** pdfkit compresses streams by default; tests turn it off to read the bytes. */
   compress?: boolean
+  /** Called after each section or page is laid out (done of total), so a UI can show progress. */
+  onProgress?: (done: number, total: number) => void
 }
 
 export interface PdfResult {
@@ -170,6 +172,7 @@ export async function buildPdf(book: ExportBook, opts: PdfOptions = {}): Promise
         jump(restartParts(lang, 1), 1, { width: WIDTH, align: 'center', lineGap: 2 })
       }
     }
+    opts.onProgress?.(i + 1, items.length)
   }
 
   // footers on every page except the cover, without letting pdfkit add a page for text under the bottom margin
@@ -210,7 +213,7 @@ export interface PdfFileResult {
 export async function writePdfFile(store: ProjectStore, slug: string, opts: PdfFileOptions = {}): Promise<PdfFileResult> {
   const r = await loadExportBook(store, slug, { lang: opts.lang, order: opts.order, seed: opts.seed, renumber: opts.renumber, persist: true })
   if (r.stale.length) throw new Error(`the stored section numbers (${path.basename(r.mapFile)}) no longer fit "${slug}": ${r.stale.join('; ')}. Nothing was written; pass renumber: true to number the sections again (a copy already sent to a reader then differs)`)
-  const built = await buildPdf(r.book, { grayscale: opts.grayscale, fontDir: opts.fontDir, compress: opts.compress })
+  const built = await buildPdf(r.book, { grayscale: opts.grayscale, fontDir: opts.fontDir, compress: opts.compress, onProgress: opts.onProgress })
   const file = path.resolve(opts.out ?? store.file(slug, 'export', `${slug}-${r.book.lang}.pdf`))
   await fs.mkdir(path.dirname(file), { recursive: true })
   await fs.writeFile(file, built.bytes)

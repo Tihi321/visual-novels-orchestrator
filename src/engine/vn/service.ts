@@ -6,6 +6,7 @@ import type {
   AssetView,
   BuildResult,
   CustomWorkflowInfo,
+  ExportResultView,
   EngineEvent,
   EngineInfo,
   ImportPreview,
@@ -563,6 +564,7 @@ export class VnService {
       book,
       build: await this.store.readJson<BuildResult>(slug, 'build.json'),
       lint: await this.store.readJson<BuildResult>(slug, 'lint.json'),
+      lastExport: await this.store.readJson<ExportResultView>(slug, 'export-last.json'),
       resolvedTheme: pickTheme(book, settings, themes),
       jobs: await this.jobCounts(slug),
       cues: await this.loadSceneCues(slug),
@@ -2150,7 +2152,16 @@ export class VnService {
           return
         case 'exportBook':
           try {
-            const { map: _map, ...result } = await runBookExport(this.store, cmd.slug, { format: cmd.format, lang: cmd.lang, order: cmd.order, renumber: cmd.renumber })
+            let lastTick = 0
+            const onProgress = (done: number, total: number): void => {
+              const now = Date.now()
+              if (done < total && now - lastTick < 150) return
+              lastTick = now
+              this.emit({ type: 'export.progress', slug: cmd.slug, done, total })
+            }
+            const { map, ...rest } = await runBookExport(this.store, cmd.slug, { format: cmd.format, lang: cmd.lang, order: cmd.order, renumber: cmd.renumber, grayscale: cmd.grayscale, out: cmd.out?.trim() || undefined, onProgress })
+            const result: ExportResultView = { ...rest, ...(map ? { sectionMap: map } : {}) }
+            if (cmd.format !== 'plan') await this.store.writeJson(cmd.slug, 'export-last.json', result)
             this.emit({ type: 'export.result', slug: cmd.slug, format: cmd.format, result })
           } catch (e) {
             this.emit({ type: 'export.result', slug: cmd.slug, format: cmd.format, error: (e as Error).message })

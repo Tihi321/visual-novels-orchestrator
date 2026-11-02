@@ -297,6 +297,8 @@ export interface ProjectDetail {
   /** The last build and lint results, when there are any. */
   build: BuildResult | null
   lint: BuildResult | null
+  /** The last book written by `exportBook` (epub or pdf), kept in `export-last.json`; survives a restart. */
+  lastExport: ExportResultView | null
   /** The theme the build would use (the chosen one, or the automatic pick). */
   resolvedTheme: string
   /** Queued, running, done and failed jobs of this project. */
@@ -344,6 +346,8 @@ export interface ExportResultView {
   /** Absolute path of the written file (epub/pdf). */
   path?: string
   bytes?: number
+  /** Gamebook only: chapter number -> section number, with the seed and order it came from. */
+  sectionMap?: { seed: string; order: 'shuffled' | 'in-order'; sections: Record<string, number> }
 }
 
 /** The result of a build or lint. */
@@ -474,6 +478,8 @@ export type EngineEvent =
   | { type: 'pipeline.progress'; slug: string; step: PipelineStep; status: StepStatus }
   | { type: 'build.result'; result: BuildResult }
   /** The answer to `exportBook`: the result, or the error (a broken story, a right-to-left edition, a stale map). */
+  /** Progress of a PDF export: sections laid out so far. */
+  | { type: 'export.progress'; slug: string; done: number; total: number }
   | { type: 'export.result'; slug: string; format: ExportResultView['format']; result?: ExportResultView; error?: string }
   | { type: 'themes.listed'; themes: ThemeInfo[] }
   | {
@@ -629,7 +635,7 @@ export type Command =
   | { type: 'buildGame'; slug: string }
   | { type: 'lintGame'; slug: string }
   /** Prints the project as a book (EPUB or PDF) or runs the dry run (`plan`). Answers with `export.result`. */
-  | { type: 'exportBook'; slug: string; format: 'epub' | 'pdf' | 'plan'; lang?: Lang; order?: 'shuffled' | 'in-order'; renumber?: boolean }
+  | { type: 'exportBook'; slug: string; format: 'epub' | 'pdf' | 'plan'; lang?: Lang; order?: 'shuffled' | 'in-order'; renumber?: boolean; grayscale?: boolean; out?: string }
   /** Starts the built game. Answers with `game.started`. */
   | { type: 'runGame'; slug: string }
   | { type: 'listThemes' }
