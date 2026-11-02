@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { langSchema } from '../../shared/vn'
 import { writeEpubFile } from '../export/epub'
+import { writePdfFile } from '../export/pdf'
 import { loadExportBook, pictureCount } from '../export/model'
 import type { VnService } from '../vn/service'
 import type { Tool, ToolDef } from './tools'
@@ -13,7 +14,7 @@ export function exportTools(svc: VnService, def: ToolDef): Tool[] {
   return [
     def(
       'vno_export_book',
-      "Export a finished project as an illustrated book. A project with choices becomes a gamebook: one numbered section per chapter, shuffled numbers from a stored seed (projects/<slug>/export.json, so the EPUB and the PDF match and a re-export keeps the numbers), section 1 is the start, choices read \"... turn to section N\" (hr: \"... idi na odlomak N\"). A linear visual novel is printed chapter by chapter, a picture book page by page; the picture is each chapter's first scene background (the cover is the first scene's background). Sprites, CGs, puzzles, voice, music and cues are dropped and listed as warnings. format 'plan' is the dry run: it returns the mode, the section map, the picture count and the warnings and writes nothing; 'epub' writes a reflowable EPUB 3 (Kindle: Send to Kindle) to projects/<slug>/export/<slug>-<lang>.epub; 'pdf' is not built yet. Returns { path?, format, mode, sections, pictures, warnings, sectionMap? }, never file bytes. A stored map that no longer fits the chapters is reported stale, never renumbered silently: pass renumber: true. Right-to-left editions are refused.",
+      "Export a finished project as an illustrated book. A project with choices becomes a gamebook: one numbered section per chapter, shuffled numbers from a stored seed (projects/<slug>/export.json, so the EPUB and the PDF match and a re-export keeps the numbers), section 1 is the start, choices read \"... turn to section N\" (hr: \"... idi na odlomak N\"). A linear visual novel is printed chapter by chapter, a picture book page by page; the picture is each chapter's first scene background (the cover is the first scene's background). Sprites, CGs, puzzles, voice, music and cues are dropped and listed as warnings. format 'plan' is the dry run: it returns the mode, the section map, the picture count and the warnings and writes nothing; 'epub' writes a reflowable EPUB 3 (Kindle: Send to Kindle) to projects/<slug>/export/<slug>-<lang>.epub; 'pdf' writes an A5 PDF (Lora font, a link on each \"section N\", the section number in the footer) to projects/<slug>/export/<slug>-<lang>.pdf. Returns { path?, format, mode, sections, pictures, warnings, sectionMap? }, never file bytes. A stored map that no longer fits the chapters is reported stale, never renumbered silently: pass renumber: true. Right-to-left editions are refused.",
       z.object({
         slug: z.string().describe('The project slug (see vno_list_projects)'),
         lang: langSchema.optional().describe('The edition to print. Default: the primary language'),
@@ -25,10 +26,9 @@ export function exportTools(svc: VnService, def: ToolDef): Tool[] {
         grayscale: z.boolean().optional().describe('epub/pdf: a grey JPEG variant of the pictures (default: colour)')
       }),
       async (a) => {
-        if (a.format === 'pdf') throw new Error('format pdf is not built yet')
-        if (a.format === 'epub') {
+        if (a.format === 'epub' || a.format === 'pdf') {
           const opts = { lang: a.lang, order: a.order, seed: a.seed, renumber: a.renumber, out: a.out, grayscale: a.grayscale }
-          const w = await writeEpubFile(svc.store, a.slug, opts)
+          const w = a.format === 'pdf' ? await writePdfFile(svc.store, a.slug, opts) : await writeEpubFile(svc.store, a.slug, opts)
           const b = w.book
           return {
             path: w.path,
