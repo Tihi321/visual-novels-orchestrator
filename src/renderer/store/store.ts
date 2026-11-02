@@ -2,8 +2,11 @@ import { createStore } from 'zustand/vanilla'
 import { applySettingsPatch } from '../lib/settings'
 import { initialMcp, reduceMcp, type McpData } from './mcp'
 import { initialVn, reduceVn, type VnData } from './vn'
+import { DEFAULT_QUERY, type LibraryQuery } from '../lib/libraryFilter'
 import type { ProjectSettingsPatch } from '../../shared/protocol'
 import type { AgentProblem, AgentState, AgentSummary, CatalogModel, EngineEvent, ModelSummary, ProviderSummary, ServerStatus, SettingsSummary } from '../../shared/protocol'
+
+export type LibraryTab = 'projects' | 'books'
 
 export type Page = 'library' | 'book' | 'models' | 'agents' | 'comfy' | 'settings'
 
@@ -57,11 +60,14 @@ export interface VnState extends VnData, McpData {
   /** The last answer to `saveCustomProvider` / `removeCustomProvider`: `at` changes with every answer. */
   providerSaved: { ok: boolean; id?: string; removed?: boolean; error?: string; at: number } | null
   page: Page
+  /** The Library's tab and filters: UI-only, kept while you switch pages, reset on restart. */
+  library: { tab: LibraryTab; query: LibraryQuery }
 }
 
 export interface VnActions {
   applyEvents(events: EngineEvent[]): void
   setPage(page: Page): void
+  setLibrary(patch: { tab?: LibraryTab; query?: Partial<LibraryQuery> }): void
   /** The Models page asked a provider for its models: show it as loading until `models.catalog` comes. */
   markCatalogLoading(provider: string): void
   /** The Add provider form pressed Test: show it as pending until `provider.tested` comes. `null` clears the result. */
@@ -96,6 +102,7 @@ function initial(): VnState {
     providerTest: null,
     providerSaved: null,
     page: 'library',
+    library: { tab: 'projects', query: DEFAULT_QUERY },
     ...initialVn(),
     ...initialMcp()
   }
@@ -181,7 +188,7 @@ export function reduceEvent(s: VnState, e: EngineEvent): Partial<VnState> {
   }
 }
 
-const ACTION_KEYS = ['applyEvents', 'setPage', 'markCatalogLoading', 'markProviderTesting', 'openProject', 'clearImport', 'patchSettingsLocal'] as const
+const ACTION_KEYS = ['applyEvents', 'setPage', 'setLibrary', 'markCatalogLoading', 'markProviderTesting', 'openProject', 'clearImport', 'patchSettingsLocal'] as const
 
 export const vnStore = createStore<VnStore>()((set, get) => ({
   ...initial(),
@@ -195,6 +202,10 @@ export const vnStore = createStore<VnStore>()((set, get) => ({
   },
   setPage(page) {
     set({ page })
+  },
+  setLibrary(patch) {
+    const cur = get().library
+    set({ library: { tab: patch.tab ?? cur.tab, query: { ...cur.query, ...patch.query } } })
   },
   openProject(slug) {
     set({ currentSlug: slug, page: 'book' })

@@ -1,0 +1,335 @@
+/* Library page: toolbar, project grid, source rows. */
+
+.lib-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.lib-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.lib-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.lib-title {
+  margin: 0 auto 0 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-7);
+  font-weight: 650;
+  line-height: 1.1;
+}
+.lib-search {
+  width: 280px;
+  max-width: 40vw;
+  background: var(--night-2);
+  border-radius: var(--r-sm);
+  padding: 5px var(--sp-2);
+}
+.lib-sort {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--ink-dim);
+  font-size: var(--fs-2);
+}
+.lib-sort select {
+  background: var(--night-2);
+}
+
+.lib-tabs {
+  display: flex;
+  gap: var(--sp-1);
+  border-bottom: 1px solid var(--rule);
+}
+.lib-tabs button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--ink-dim);
+  margin-bottom: -1px;
+}
+.lib-tabs button.on {
+  color: var(--ink);
+  border-bottom-color: var(--lavender);
+}
+
+.lib-filters {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+.lib-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.lib-chip {
+  background: var(--night-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-3);
+}
+.lib-chip.on {
+  background: var(--lavender-wash);
+  border-color: var(--lavender);
+}
+.lib-count {
+  margin-left: var(--sp-1);
+  color: var(--ink-dim);
+  font-size: var(--fs-2);
+}
+.lib-chip.on .lib-count {
+  color: var(--ink);
+}
+.lib-divider {
+  width: 1px;
+  align-self: stretch;
+  background: var(--rule);
+  margin: 0 var(--sp-1);
+}
+.lib-seg {
+  display: inline-flex;
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.lib-seg button {
+  background: var(--night-2);
+  border: 0;
+  border-radius: 0;
+  padding: var(--sp-1) var(--sp-3);
+  font-size: var(--fs-2);
+  color: var(--ink-dim);
+}
+.lib-seg button + button {
+  border-left: 1px solid var(--rule);
+}
+.lib-seg button.on {
+  background: var(--lavender-wash);
+  color: var(--ink);
+}
+
+/* Type badges, hues shared with Scriptorium. */
+.badge {
+  display: inline-block;
+  padding: 1px var(--sp-2);
+  border-radius: var(--r-sm);
+  font-size: var(--fs-1);
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--bh, var(--t-stories));
+  border: 1px solid color-mix(in srgb, var(--bh, var(--t-stories)) 55%, transparent);
+  background: color-mix(in srgb, var(--bh, var(--t-stories)) 14%, var(--night-3));
+}
+.badge.t-vn {
+  --bh: var(--t-vn);
+}
+.badge.t-picture {
+  --bh: var(--t-picture);
+}
+.badge.t-scripts {
+  --bh: var(--t-scripts);
+}
+.badge.t-puzzle {
+  --bh: var(--t-puzzle);
+}
+.badge.t-nonfiction {
+  --bh: var(--t-nonfiction);
+}
+.badge.t-stories,
+.badge.t-other {
+  --bh: var(--t-stories);
+}
+
+/* Project grid and cards. */
+.lib-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--sp-4);
+}
+@media (max-width: 760px) {
+  .lib-grid {
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  }
+}
+.lib-card {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  text-align: left;
+  background: var(--night-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+.lib-card:hover:not(:disabled) {
+  border-color: var(--lavender);
+}
+.lib-cover {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--night-3);
+  overflow: hidden;
+}
+.lib-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.lib-tile {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-family: var(--font-display);
+  font-size: var(--fs-7);
+  font-weight: 650;
+  color: hsl(var(--hue) 70% 85%);
+  background: linear-gradient(135deg, hsl(var(--hue) 45% 26%), hsl(calc(var(--hue) + 40) 40% 14%));
+}
+.lib-badge {
+  position: absolute;
+  top: var(--sp-2);
+  left: var(--sp-2);
+}
+.lib-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgba(12, 10, 18, 0.6);
+}
+.lib-progress i {
+  display: block;
+  height: 100%;
+  background: var(--lavender);
+}
+.lib-progress i.built {
+  background: var(--verdigris);
+}
+.lib-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-3);
+}
+.lib-card-title {
+  font-family: var(--font-display);
+  font-size: var(--fs-4);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lib-langs {
+  display: flex;
+  gap: var(--sp-1);
+  min-height: 18px;
+}
+.lib-lang {
+  font-size: var(--fs-1);
+  line-height: 16px;
+  padding: 0 var(--sp-1);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-sm);
+  color: var(--ink-dim);
+}
+.lib-status {
+  display: flex;
+  align-items: baseline;
+  font-size: var(--fs-2);
+  color: var(--ink-dim);
+}
+.lib-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: var(--sp-2);
+  border-radius: 50%;
+  background: currentColor;
+  align-self: center;
+}
+.lib-status.running {
+  color: var(--lavender);
+}
+.lib-status.failed {
+  color: var(--rose-red);
+}
+.lib-status.built {
+  color: var(--verdigris);
+}
+.lib-warn {
+  color: var(--amber);
+  white-space: pre;
+}
+.lib-detail {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  font-size: var(--fs-2);
+  color: var(--ink-dim);
+  transition:
+    opacity 120ms,
+    max-height 120ms;
+}
+.lib-card:hover .lib-detail,
+.lib-card:focus-visible .lib-detail {
+  max-height: 5em;
+  opacity: 1;
+}
+
+.lib-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  color: var(--ink-dim);
+}
+
+/* Scriptorium book rows. */
+.lib-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.lib-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--night-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--r-md);
+}
+.lib-row-main,
+.lib-row-side {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+.lib-row-title {
+  font-size: var(--fs-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lib-row-slug {
+  font-size: var(--fs-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
