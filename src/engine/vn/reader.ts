@@ -3,7 +3,7 @@ import { basename, join } from 'node:path'
 import { parseMd } from '../../shared/md'
 
 /** Formats Scriptorium writes as scripts. */
-export const VN_FORMATS = ['visual-novel', 'choice-visual-novel', 'kids-visual-story', 'kids-choice-visual-story', 'mystery-puzzle-visual-novel'] as const
+export const VN_FORMATS = ['visual-novel', 'choice-visual-novel', 'kids-visual-story', 'kids-choice-visual-story', 'kids-picture-book', 'mystery-puzzle-visual-novel'] as const
 /** Prose books with choices that can also become visual novels (the prose becomes narration). */
 export const PROSE_CHOICE_FORMATS = ['gamebook', 'kids-choice-book'] as const
 

@@ -3,7 +3,7 @@
  * A Transport carries them. Today that is the Electron utilityProcess port. Later it could be a WebSocket.
  */
 
-import type { AssetEntry, Edition, EngineTask, Lang, ProjectSettings, VnBook } from './vn'
+import type { AssetEntry, Edition, EngineTask, Lang, Presentation, ProjectSettings, VnBook } from './vn'
 
 export type AgentState = 'working' | 'reviewing' | 'waiting-provider' | 'waiting-research' | 'idle' | 'error' | 'paused'
 
@@ -258,6 +258,10 @@ export interface ProjectSummary {
   warnings: number
   pipeline: PipelineStatus | null
   updatedAt: string
+  /** The card picture, relative to the project folder with forward slashes (`assets/cover/v2.webp`): the selected cover version, else the first ready `bg_*` background, else null. */
+  coverRel?: string | null
+  /** `presentationOf(book)`: picture-book or visual-novel. Missing when there is no vn.json yet. */
+  presentation?: Presentation
 }
 
 export type StageSlotView = 'left' | 'center' | 'right'

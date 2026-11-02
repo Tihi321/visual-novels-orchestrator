@@ -26,7 +26,7 @@ import type {
   VnCommand
 } from '../../shared/protocol'
 import { assertKnownLang } from '../../shared/languages'
-import { CHIPTUNE_ENGINE, DEFAULT_VOICE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, hasText, isHandArt, projectSettingsSchema, resolveArtProvider, resolveMusicProvider, resolveSfxEngine, resolveVoiceEngine } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, DEFAULT_VOICE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, hasText, isHandArt, presentationOf, projectSettingsSchema, resolveArtProvider, resolveMusicProvider, resolveSfxEngine, resolveVoiceEngine } from '../../shared/vn'
 import type { AssetEntry, AssetVersion, Edition, Lang, ProjectSettings, VnBook } from '../../shared/vn'
 import { deriveAssets, fallbackPrompt as derivedFallbackPrompt, LANDSCAPE, PORTRAIT, resolveStylePrompt, styleForKind } from '../assets/derive'
 import { runsOnFlow } from '../assets/flow-image'
@@ -518,9 +518,13 @@ export class VnService {
     const manifest = await this.store.loadAssets(slug).catch(() => ({ assets: [] as AssetEntry[] }))
     const orphans = book ? this.orphanIds(book, settings, manifest.assets) : new Set<string>()
     const counts: AssetCounts = { total: 0, ready: 0, missing: 0, locked: 0, custom: 0 }
+    let coverFile: string | null = null
+    let backgroundFile: string | null = null
     for (const a of manifest.assets) {
       if (orphans.has(a.id)) continue
       const file = this.store.resolveAsset(slug, a)
+      if (file && a.id === 'cover') coverFile = file
+      else if (file && !backgroundFile && a.id.startsWith('bg_')) backgroundFile = file
       if (isHandArt(settings.art) && a.kind === 'sheet' && !file) continue // a sheet is only a reference for the person drawing
       counts.total++
       if (file) counts.ready++
@@ -534,6 +538,8 @@ export class VnService {
     } catch {
       /* now */
     }
+    const pictureFile = coverFile ?? backgroundFile
+    const coverRel = pictureFile ? path.relative(this.store.file(slug), pictureFile).split(path.sep).join('/') : null
     return {
       slug,
       title: book?.title ?? slug,
@@ -550,7 +556,9 @@ export class VnService {
       assets: counts,
       warnings: book?.warnings.length ?? 0,
       pipeline: await this.pipelineStatus(slug),
-      updatedAt
+      updatedAt,
+      coverRel,
+      ...(book ? { presentation: presentationOf(book) } : {})
     }
   }
 

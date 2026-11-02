@@ -36,6 +36,8 @@ Rules that hold for every command:
 
 Progress: `{ type: 'pipeline.progress', slug, step, status: { status: 'queued' | 'running' | 'done' | 'failed' | 'skipped', message, at, done?, total? } }`. `done`/`total` count the unit of work inside a step (assets generated). The state of the latest run is also in `ProjectSummary.pipeline` (`{ run, from, startedAt, steps }`). `project.updated { slug, project: ProjectSummary }` is sent (at most every 250 ms) when anything in the summary changed: asset counts, the pipeline, editions, theme.
 
+`ProjectSummary` also carries two optional fields for the Library cards. `coverRel` is the card picture, a path relative to the project folder with forward slashes (`assets/cover/v2.webp`): the selected version of the `cover` asset, else the first ready `bg_*` background, else `null`. `presentation` is `presentationOf(book)` (`visual-novel` or `picture-book`) and is missing while there is no `vn.json`. Both are missing from older engines, so clients treat them as optional.
+
 What each step does, and which agent does it (see the Agents page; each agent has its own model):
 
 | Step | Job task | Agent | Without a model |
