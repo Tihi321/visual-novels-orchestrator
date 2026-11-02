@@ -1,0 +1,112 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.app > .page {
+  flex: 1;
+  min-height: 0;
+}
+
+.masthead {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-5);
+  height: 44px;
+  flex: none;
+  padding: 0 var(--sp-4);
+  background: var(--night-1);
+  border-bottom: 1px solid var(--rule);
+}
+.masthead-brand {
+  align-self: center;
+  font-family: var(--font-display);
+  font-size: var(--fs-5);
+  font-weight: 650;
+  color: var(--ink);
+  white-space: nowrap;
+}
+.masthead-nav {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-1);
+}
+.masthead-nav button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 0 var(--sp-3);
+  color: var(--ink-dim);
+  font-size: var(--fs-3);
+}
+.masthead-nav button:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: transparent;
+  border-bottom-color: var(--rule);
+}
+.masthead-nav button.on {
+  color: var(--ink);
+  border-bottom-color: var(--lavender);
+}
+.masthead-status {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-left: auto;
+  color: var(--ink-dim);
+  font-size: var(--fs-2);
+  white-space: nowrap;
+}
+.masthead-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: var(--sp-2);
+  border-radius: 50%;
+  background: var(--rose-red);
+}
+.masthead-dot.on {
+  background: var(--verdigris);
+}
+
+.warn-strip {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  flex: none;
+  padding: var(--sp-1) var(--sp-4);
+  background: var(--night-3);
+  border-bottom: 1px solid var(--rule);
+  color: var(--amber);
+  font-size: var(--fs-2);
+}
+.warn-strip-text {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  color: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.warn-strip.open .warn-strip-text {
+  white-space: normal;
+  overflow: visible;
+}
+.warn-strip-close {
+  padding: 0 var(--sp-2);
+  border: 0;
+  background: none;
+  color: var(--ink-dim);
+  font-size: var(--fs-4);
+  line-height: 1.2;
+}
+
+.page > * {
+  margin-inline: auto;
+  max-width: 1600px;
+}

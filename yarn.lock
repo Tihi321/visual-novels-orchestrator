@@ -823,6 +823,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@fontsource-variable/bricolage-grotesque@npm:^5.3.0":
+  version: 5.3.0
+  resolution: "@fontsource-variable/bricolage-grotesque@npm:5.3.0"
+  checksum: 10c0/aa6c03b2e797d199159a016f43e972874b13e25a4515bf9257a25532a98be3c0b21e95cea8c84e0a1be2f1a4b217a898c649dda87f7551ebb33ca09bc5ab3713
+  languageName: node
+  linkType: hard
+
 "@hono/node-server@npm:^1.19.9 || ^2.0.5":
   version: 2.1.5
   resolution: "@hono/node-server@npm:2.1.5"
@@ -6103,6 +6110,7 @@ __metadata:
   resolution: "vn-studio@workspace:."
   dependencies:
     "@eslint/js": "npm:^10.0.1"
+    "@fontsource-variable/bricolage-grotesque": "npm:^5.3.0"
     "@modelcontextprotocol/sdk": "npm:^1.32.1"
     "@napi-rs/keyring": "npm:^2.1.0"
     "@types/node": "npm:^24.0.0"
