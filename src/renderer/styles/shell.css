@@ -58,6 +58,11 @@
   font-size: var(--fs-2);
   white-space: nowrap;
 }
+@media (max-width: 900px) {
+  .masthead-engine {
+    display: none;
+  }
+}
 .masthead-dot {
   display: inline-block;
   width: 8px;

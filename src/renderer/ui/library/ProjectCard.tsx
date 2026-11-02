@@ -29,8 +29,10 @@ function badgeOf(p: ProjectSummary): { text: string; group: TypeGroup } | null {
   return projectChoices(p) ? { text: 'Choices', group } : null
 }
 
+const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
+
 function detailText(p: ProjectSummary): string {
-  const parts = [p.genre, p.theme ?? 'auto theme', p.voice ? 'voice' : null, `${p.chapters} chapters, ${p.characters} characters, ${p.places} places`]
+  const parts = [p.genre, p.theme ?? 'auto theme', p.voice ? 'voice' : null, `${count(p.chapters, 'chapter')}, ${count(p.characters, 'character')}, ${count(p.places, 'place')}`]
   return parts.filter(Boolean).join(', ')
 }
 
@@ -98,7 +100,7 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
         <div className={`lib-status ${tone}`}>
           <span className="lib-dot" />
           <span>{status}</span>
-          {project.warnings > 0 && <span className="lib-warn">, {project.warnings} warnings</span>}
+          {project.warnings > 0 && <span className="lib-warn">, {project.warnings} {project.warnings === 1 ? 'warning' : 'warnings'}</span>}
         </div>
         <div className="lib-detail">{detail}</div>
       </div>

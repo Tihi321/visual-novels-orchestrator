@@ -25,9 +25,9 @@ export function App() {
           ))}
         </nav>
         <span className="masthead-status">
-          <span>
+          <span title={connected ? 'engine connected' : 'engine not connected'}>
             <span className={`masthead-dot${connected ? ' on' : ''}`} aria-hidden="true" />
-            {connected ? 'engine connected' : 'engine not connected'}
+            <span className="masthead-engine">{connected ? 'engine connected' : 'engine not connected'}</span>
           </span>
           {connected && <span>Spend today ${spend.today.toFixed(2)}</span>}
         </span>
