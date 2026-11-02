@@ -108,7 +108,7 @@ server.close();
 await fsp.rm(profile, { recursive: true, force: true }).catch(() => {});
 
 const stat = fs.existsSync(outPng) ? await fsp.stat(outPng) : null;
-try { fs.closeSync(errFd); } catch {}
+try { fs.closeSync(errFd); } catch { /* already closed */ }
 if (!stat || stat.size < 4096) {
   console.error(`[shot] no screenshot (chrome exit ${code}); log ${errLog}`);
   const tail = fs.existsSync(errLog) ? (await fsp.readFile(errLog, 'utf8')).trim().split(/\r?\n/).slice(-8).join('\n') : '';

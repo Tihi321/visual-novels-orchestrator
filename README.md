@@ -125,7 +125,7 @@ engine.lock  names the engine that runs on this folder (pid, MCP url); removed w
 logs/        per agent, and spend rows
 ```
 
-`config/settings.md` has `scriptoriumData` (default `~/Scriptorium`): the Library lists the books in its `books/` folder.
+`config/settings.md` has `scriptoriumData` (default `~/Scriptorium`): the Library lists the books in its `books/` folder. The Library shows the projects as a grid of covers, and both its tabs filter by type (the same groups as Scriptorium's Library: visual novels, picture books, puzzle and so on), by a "With choices" toggle and by a title search; the Scriptorium books tab also lists picture books (`kids-picture-book`).
 
 ## Layout
 
