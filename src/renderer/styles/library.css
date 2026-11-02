@@ -151,6 +151,9 @@
 .badge.t-other {
   --bh: var(--t-stories);
 }
+.badge.choices {
+  --bh: var(--t-choices);
+}
 
 /* Project grid and cards. */
 .lib-grid {
@@ -276,19 +279,32 @@
   white-space: pre;
 }
 .lib-detail {
-  max-height: 0;
-  opacity: 0;
-  overflow: hidden;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 3px;
+  padding: var(--sp-5) var(--sp-3) var(--sp-2);
   font-size: var(--fs-2);
-  color: var(--ink-dim);
+  color: var(--ink);
+  background: linear-gradient(to top, rgba(12, 10, 18, 0.94) 55%, rgba(12, 10, 18, 0));
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
   transition:
     opacity 120ms,
-    max-height 120ms;
+    transform 120ms;
 }
 .lib-card:hover .lib-detail,
-.lib-card:focus-visible .lib-detail {
-  max-height: 5em;
+.lib-card:focus-visible .lib-detail,
+.lib-card:focus-within .lib-detail {
   opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lib-detail {
+    transition: none;
+    transform: none;
+  }
 }
 
 .lib-empty {

@@ -228,8 +228,11 @@ describe('reader', () => {
     await writeFile(join(dir, 'books', 'novel', 'book.md'), '---\ntitle: A Novel\nformat: novel\nscript: false\n---\n')
     await mkdir(join(dir, 'books', 'gb'), { recursive: true })
     await writeFile(join(dir, 'books', 'gb', 'book.md'), '---\ntitle: A Gamebook\nformat: gamebook\nstage: draft\n---\n')
+    await mkdir(join(dir, 'books', 'pic'), { recursive: true })
+    await writeFile(join(dir, 'books', 'pic', 'book.md'), '---\ntitle: A Picture Book\nformat: kids-picture-book\nscript: true\nstage: draft\n---\n')
     const list = await listBooks(dir)
-    expect(list.map((b) => b.slug)).toEqual(['gb', 'lighthouse-letters', 'the-soother-that-fell-into-dragon-land'])
+    expect(list.map((b) => b.slug)).toEqual(['gb', 'lighthouse-letters', 'pic', 'the-soother-that-fell-into-dragon-land'])
+    expect(list.find((b) => b.slug === 'pic')).toMatchObject({ format: 'kids-picture-book', hasChoices: false })
     const soother = list.find((b) => b.slug.startsWith('the-soother'))!
     expect(soother).toMatchObject({ title: 'The Soother That Fell Into Dragon Land', format: 'kids-choice-visual-story', script: true, stage: 'published', hasChoices: true })
     expect(list.find((b) => b.slug === 'gb')).toMatchObject({ hasChoices: true, stage: 'draft' })

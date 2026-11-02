@@ -9,7 +9,7 @@ export function SourceRow({ book, imported, onImport }: { book: SourceBook; impo
       <div className="lib-row-main">
         <b className="lib-row-title">{book.title}</b>
         {badge && (
-          <span className={`badge t-${badge.group}`} title={book.format}>
+          <span className={`badge t-${badge.group}${badge.choices ? ' choices' : ''}`} title={book.format}>
             {badge.text}
           </span>
         )}

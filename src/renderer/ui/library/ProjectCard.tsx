@@ -21,12 +21,12 @@ function initials(title: string): string {
   return ((w[0]?.[0] ?? '') + (w.length > 1 ? (w[w.length - 1]![0] ?? '') : '')).toUpperCase()
 }
 
-function badgeOf(p: ProjectSummary): { text: string; group: TypeGroup } | null {
+function badgeOf(p: ProjectSummary): { text: string; group: TypeGroup; choices: boolean } | null {
   const b = typeBadge(p.format)
   const group = projectGroup(p)
-  if (group === 'picture' && b?.group !== 'picture') return { text: 'Picture book', group }
-  if (b) return { text: b.text, group: b.group }
-  return projectChoices(p) ? { text: 'Choices', group } : null
+  if (group === 'picture' && b?.group !== 'picture') return { text: 'Picture book', group, choices: false }
+  if (b) return { text: b.text, group: b.group, choices: b.choices }
+  return projectChoices(p) ? { text: 'Choices', group, choices: true } : null
 }
 
 const count = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
@@ -78,7 +78,8 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
             {initials(project.title)}
           </div>
         )}
-        {badge && <span className={`badge t-${badge.group} lib-badge`}>{badge.text}</span>}
+        {badge && <span className={`badge t-${badge.group}${badge.choices ? ' choices' : ''} lib-badge`}>{badge.text}</span>}
+        <div className="lib-detail">{detail}</div>
         <div className="lib-progress" aria-hidden="true">
           <i className={tone === 'built' ? 'built' : ''} style={{ width: `${Math.round(fraction * 100)}%` }} />
         </div>
@@ -102,7 +103,6 @@ export function ProjectCard({ project }: { project: ProjectSummary }) {
           <span>{status}</span>
           {project.warnings > 0 && <span className="lib-warn">, {project.warnings} {project.warnings === 1 ? 'warning' : 'warnings'}</span>}
         </div>
-        <div className="lib-detail">{detail}</div>
       </div>
     </button>
   )
