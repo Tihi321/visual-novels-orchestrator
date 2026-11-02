@@ -223,6 +223,16 @@ A task nobody asks for waits without a limit, so put a role back on its normal m
 - Fonts. A theme's text font covers some scripts (`fonts.scripts` in `theme.yaml`). For a language in another script the build gives that language a font of its own, in `game/vno_fonts.rpy`: the `font` of the language in `config/languages.md`, else `<data>/fonts/<script>.ttf` (or `.otf`, `.ttc`; `<script>-bold.ttf` is the bold face), else an installed system font, else DejaVuSans for Cyrillic, Greek, Arabic and Hebrew. A system font is copied into the game with a warning to check its license before you share the game. With no font the build warns and says what to do. `vno_fonts_fetch {script}` downloads a free Noto Sans font (SIL Open Font License) for `han` (Chinese), `kana` (Japanese), `hangul` (Korean), `devanagari` or `thai` into `<data>/fonts/`. It never runs by itself.
 - Right-to-left. For Arabic, Hebrew and Persian the build turns on Ren'Py's right-to-left text and mirrors the menu layout (the name box, the dialogue, the navigation buttons, the history) for those languages only, in `game/vno_rtl.rpy`. The other languages of the game keep the normal layout. The layout cannot be checked by the Ren'Py lint: look at it once in the game.
 
+## Export a book
+
+`vno_export_book {slug, lang?, format, order?, seed?, renumber?, out?, grayscale?}` prints a finished project as an illustrated book (EPUB for a Kindle, PDF for any reader). It returns `{ path?, format, mode, sections, pictures, warnings, sectionMap? }`, never file bytes. `format: 'plan'` is the dry run (nothing is written, nothing is stored); `format: 'epub'` and `format: 'pdf'` are not built yet (VNO-53, VNO-54).
+
+- Modes. A project with choices (`kind: choice`) is a **gamebook**: one section per chapter, section 1 is the start (chapter 1), numbers shuffled from a seed (default: the project slug; `order: "in-order"` keeps the chapter order), and each choice reads "{choice text} - turn to section N." (hr: "{choice text}, idi na odlomak N."). An ending says "The End." and "Turn to section 1 to start again." (hr: "Kraj." / "Idi na odlomak 1 za novi početak."). A linear visual novel is printed chapter by chapter, a picture book page by page (one scene per page, narration as the caption). The words are in `src/engine/export/phrases.ts`.
+- Numbers are stored. The first real export writes `projects/<slug>/export.json` (`{ seed, order, sections: { "<chapter>": <section no> } }`, one map for every language, because the chapters are shared); later exports of any format reuse it, so the EPUB and the PDF match. If chapters were added or removed, or another `seed` or `order` is asked for, the stored map is **stale**: the plan says so in `warnings` and shows what `renumber: true` would give, and a file export refuses. Nothing renumbers silently.
+- Pictures. There is no cover asset: the cover is the first scene's background (the writer puts the title over it). Each section or chapter gets its first scene's background, each picture-book page its scene's. A missing picture gives a text page and a warning.
+- Dropped, as warnings: sprites and cast beats, CG/insert cues, puzzle beats (the warning names the chapter), voice, music, sound cues. The warnings also give the longest section's word count.
+- A broken story is refused with one message naming each chapter and choice: a choice to a chapter that does not exist, a chapter no path from chapter 1 reaches, an ending with choices, a chapter without text in the edition. Right-to-left editions (ar, he, fa) are refused.
+
 ## Tools
 
 | Area | Tools |
@@ -237,6 +247,7 @@ A task nobody asks for waits without a limit, so put a role back on its normal m
 | Puzzles | `vno_puzzle_generate`, `vno_puzzle_set`, `vno_puzzle_get`, `vno_puzzle_check_text`, `vno_puzzle_remove` (the beat: `vno_beat_add {puzzle: key}`) |
 | Voice | `vno_voice_status`, `vno_voice_plan`, `vno_voice_set`, `vno_voice_preview`, `vno_voice_generate`, `vno_voice_import` |
 | Generators | `vno_studios_status`, `vno_comfy_status`, `vno_comfy_free`, `vno_themes` (status tools only probe; art and music jobs start Pixel Studio, Chiptune Studio and ComfyUI themselves when they are down, see `config/autostart.md`) |
+| Export | `vno_export_book` (EPUB, PDF, dry run `plan`) |
 | Build | `vno_build`, `vno_lint`, `vno_android_preflight`, `vno_android_build`, `vno_renpy_config_get`, `vno_renpy_config_set` |
 
 Every result is a text item with the data as JSON, plus the same data as `structuredContent`. A failure is a result with `isError: true` and the message.

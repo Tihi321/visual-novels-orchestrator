@@ -7,6 +7,7 @@ import { isStep, STEPS, TASKS } from '../vn/pipeline'
 import type { VnService } from '../vn/service'
 import type { ClientTaskQueue } from '../models/client'
 import { clientTools } from './tools-client'
+import { exportTools } from './tools-export'
 import { importTools } from './tools-import'
 import { langTools } from './tools-lang'
 import { planTools } from './tools-plan'
@@ -361,6 +362,9 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
 
     // ---- model work done by the MCP client (client/... models) ----
     ...clientTools(svc, def, opts),
+
+    // ---- export a finished project as a book (EPUB, PDF) ----
+    ...exportTools(svc, def),
 
     def('vno_pause_all', 'Pause the whole queue: running jobs finish, no new job starts (it stays paused after a restart).', z.object({}), async () => {
       await control().setPaused(true)
