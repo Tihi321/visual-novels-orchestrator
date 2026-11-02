@@ -891,6 +891,7 @@ export class Engine {
       case 'unlockAsset':
       case 'buildGame':
       case 'lintGame':
+      case 'exportBook':
       case 'runGame':
       case 'listThemes':
       case 'comfyStatus':

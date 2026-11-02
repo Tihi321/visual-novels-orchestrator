@@ -1,8 +1,6 @@
 import { z } from 'zod'
 import { langSchema } from '../../shared/vn'
-import { writeEpubFile } from '../export/epub'
-import { writePdfFile } from '../export/pdf'
-import { loadExportBook, pictureCount } from '../export/model'
+import { runBookExport } from '../export/run'
 import type { VnService } from '../vn/service'
 import type { Tool, ToolDef } from './tools'
 
@@ -26,33 +24,8 @@ export function exportTools(svc: VnService, def: ToolDef): Tool[] {
         grayscale: z.boolean().optional().describe('epub/pdf: a grey JPEG variant of the pictures (default: colour)')
       }),
       async (a) => {
-        if (a.format === 'epub' || a.format === 'pdf') {
-          const opts = { lang: a.lang, order: a.order, seed: a.seed, renumber: a.renumber, out: a.out, grayscale: a.grayscale }
-          const w = a.format === 'pdf' ? await writePdfFile(svc.store, a.slug, opts) : await writeEpubFile(svc.store, a.slug, opts)
-          const b = w.book
-          return {
-            path: w.path,
-            format: a.format,
-            mode: b.mode,
-            lang: b.lang,
-            sections: b.mode === 'picture-book' ? b.pages.length : b.sections.length,
-            pictures: w.pictures,
-            bytes: w.bytes,
-            warnings: w.warnings,
-            ...(w.map ? { sectionMap: w.map } : {})
-          }
-        }
-        const r = await loadExportBook(svc.store, a.slug, { lang: a.lang, order: a.order, seed: a.seed, renumber: a.renumber, persist: false })
-        const b = r.book
-        return {
-          format: a.format,
-          mode: b.mode,
-          lang: b.lang,
-          sections: b.mode === 'picture-book' ? b.pages.length : b.sections.length,
-          pictures: pictureCount(b),
-          warnings: b.warnings,
-          ...(r.map ? { sectionMap: r.map } : {})
-        }
+        const { map, stale: _stale, ...r } = await runBookExport(svc.store, a.slug, a)
+        return { ...r, ...(map ? { sectionMap: map } : {}) }
       }
     )
   ]

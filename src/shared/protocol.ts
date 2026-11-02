@@ -331,6 +331,21 @@ export interface AlignReportView {
   source?: string
 }
 
+/** The answer to `exportBook` (VNO-56): the dry run or the written book. No section map: the Build tab shows counts. */
+export interface ExportResultView {
+  format: 'epub' | 'pdf' | 'plan'
+  mode: 'gamebook' | 'linear' | 'picture-book'
+  lang: Lang
+  sections: number
+  pictures: number
+  warnings: string[]
+  /** The stored section numbers no longer fit the chapters (dry run only; a file export fails instead). */
+  stale: boolean
+  /** Absolute path of the written file (epub/pdf). */
+  path?: string
+  bytes?: number
+}
+
 /** The result of a build or lint. */
 export interface BuildResult {
   slug: string
@@ -458,6 +473,8 @@ export type EngineEvent =
   /** A pipeline step changed state or counted a unit of work. */
   | { type: 'pipeline.progress'; slug: string; step: PipelineStep; status: StepStatus }
   | { type: 'build.result'; result: BuildResult }
+  /** The answer to `exportBook`: the result, or the error (a broken story, a right-to-left edition, a stale map). */
+  | { type: 'export.result'; slug: string; format: ExportResultView['format']; result?: ExportResultView; error?: string }
   | { type: 'themes.listed'; themes: ThemeInfo[] }
   | {
       type: 'comfy.status'
@@ -611,6 +628,8 @@ export type Command =
   | { type: 'unlockAsset'; slug: string; id: string }
   | { type: 'buildGame'; slug: string }
   | { type: 'lintGame'; slug: string }
+  /** Prints the project as a book (EPUB or PDF) or runs the dry run (`plan`). Answers with `export.result`. */
+  | { type: 'exportBook'; slug: string; format: 'epub' | 'pdf' | 'plan'; lang?: Lang; order?: 'shuffled' | 'in-order'; renumber?: boolean }
   /** Starts the built game. Answers with `game.started`. */
   | { type: 'runGame'; slug: string }
   | { type: 'listThemes' }
@@ -712,6 +731,7 @@ export type VnCommand = Extract<
       | 'unlockAsset'
       | 'buildGame'
       | 'lintGame'
+      | 'exportBook'
       | 'runGame'
       | 'listThemes'
       | 'comfyStatus'
@@ -769,6 +789,7 @@ const COMMAND_TYPE_SET: Record<CommandType, true> = {
   unlockAsset: true,
   buildGame: true,
   lintGame: true,
+  exportBook: true,
   runGame: true,
   listThemes: true,
   comfyStatus: true,

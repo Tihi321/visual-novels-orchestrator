@@ -80,6 +80,7 @@ import {
 import type { CatalogSource } from './pack'
 import { voiceLangsOf } from '../voice/catalog'
 import { ProjectStore, assertSlug, dataFolders, loadComfyConfigFor, loadRenpyConfig, projectSlug, renpyConfigSchema } from './project'
+import { runBookExport } from '../export/run'
 import { readMd, writeMd } from '../store/atomic'
 import { jobId, ROLE_OF, runOf, STEP_OF_TASK, stepIndex, TASKS } from './pipeline'
 import type { VnTask } from './pipeline'
@@ -2146,6 +2147,14 @@ export class VnService {
           return
         case 'lintGame':
           await this.enqueueLint(cmd.slug)
+          return
+        case 'exportBook':
+          try {
+            const { map: _map, ...result } = await runBookExport(this.store, cmd.slug, { format: cmd.format, lang: cmd.lang, order: cmd.order, renumber: cmd.renumber })
+            this.emit({ type: 'export.result', slug: cmd.slug, format: cmd.format, result })
+          } catch (e) {
+            this.emit({ type: 'export.result', slug: cmd.slug, format: cmd.format, error: (e as Error).message })
+          }
           return
         case 'runGame': {
           const r = await this.runGame(cmd.slug)

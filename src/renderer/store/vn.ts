@@ -6,6 +6,7 @@ import type {
   CustomWorkflowInfo,
   EngineEvent,
   EngineInfo,
+  ExportResultView,
   ImportPreview,
   PipelineStep,
   ProjectDetail,
@@ -72,6 +73,8 @@ export interface VnData {
   /** Live step statuses from `pipeline.progress`, over the saved ones in the project summary. */
   progress: Record<string, Partial<Record<PipelineStep, StepStatus>>>
   builds: Record<string, Partial<Record<BuildResult['action'], BuildResult>>>
+  /** slug -> the last `export.result` (a result or an error), for the Export section of the Build tab. */
+  exports: Record<string, { format: ExportResultView['format']; result?: ExportResultView; error?: string }>
   themes: ThemeInfo[]
   engines: { image: EngineInfo[]; audio: EngineInfo[]; palettes: string[] } | null
   workflows: CustomWorkflowInfo[]
@@ -111,6 +114,7 @@ export function initialVn(): VnData {
     alignReports: {},
     progress: {},
     builds: {},
+    exports: {},
     themes: [],
     engines: null,
     workflows: [],
@@ -211,6 +215,8 @@ export function reduceVn(s: VnData, e: EngineEvent, now = Date.now()): Partial<V
       return { progress: { ...s.progress, [e.slug]: { ...(s.progress[e.slug] ?? {}), [e.step]: e.status } } }
     case 'build.result':
       return { builds: { ...s.builds, [e.result.slug]: { ...(s.builds[e.result.slug] ?? {}), [e.result.action]: e.result } } }
+    case 'export.result':
+      return { exports: { ...s.exports, [e.slug]: { format: e.format, result: e.result, error: e.error } } }
     case 'themes.listed':
       return { themes: e.themes }
     case 'comfy.status':
