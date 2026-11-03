@@ -342,6 +342,10 @@ export interface ExportResultView {
   format: 'epub' | 'pdf' | 'plan'
   mode: 'gamebook' | 'linear' | 'picture-book'
   lang: Lang
+  /** Set only with lang2 (parallel text): the second language, lines with a translation, lines without one. */
+  lang2?: Lang
+  paired?: number
+  unpaired?: number
   sections: number
   pictures: number
   warnings: string[]
@@ -639,7 +643,7 @@ export type Command =
   | { type: 'buildGame'; slug: string }
   | { type: 'lintGame'; slug: string }
   /** Prints the project as a book (EPUB or PDF) or runs the dry run (`plan`). Answers with `export.result`. */
-  | { type: 'exportBook'; slug: string; format: 'epub' | 'pdf' | 'plan'; lang?: Lang; order?: 'shuffled' | 'in-order'; renumber?: boolean; grayscale?: boolean; out?: string }
+  | { type: 'exportBook'; slug: string; format: 'epub' | 'pdf' | 'plan'; lang?: Lang; lang2?: Lang; order?: 'shuffled' | 'in-order'; renumber?: boolean; grayscale?: boolean; out?: string }
   /** Starts the built game. Answers with `game.started`. */
   | { type: 'runGame'; slug: string }
   | { type: 'listThemes' }

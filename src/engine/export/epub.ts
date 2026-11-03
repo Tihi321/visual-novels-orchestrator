@@ -56,6 +56,15 @@ div.cover img { max-width: 100%; max-height: 100%; height: auto; }
 .titlepage .author { font-size: 1.2em; margin-top: 1.5em; }
 `
 
+/** Appended to the CSS only for a parallel-text book (VNO-58). */
+export const EPUB_TR_CSS = `div.pair { margin: 0 0 0.9em; page-break-inside: avoid; break-inside: avoid; }
+div.pair p { margin: 0; }
+div.pair p.tr { margin-top: 0.2em; }
+p.tr { font-size: 0.85em; font-style: italic; color: #555; }
+p.title-tr { text-align: center; }
+div.choices div.pair { margin: 0.5em 0; }
+`
+
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const pad = (n: number): string => String(n).padStart(3, '0')
 const iso = (d: Date): string => d.toISOString().replace(/\.\d{3}Z$/, 'Z')
@@ -65,7 +74,7 @@ export const sectionFileOf = (mode: ExportBook['mode'], no: number): string => `
 
 /** A stable identifier for a book and edition (the same book and language keep their id, so a reader replaces the old copy). */
 const bookId = (b: ExportBook): string => {
-  const h = createHash('sha1').update(`vn-studio:${b.slug}:${b.lang}`).digest('hex')
+  const h = createHash('sha1').update(`vn-studio:${b.slug}:${b.lang}${b.lang2 ? `:${b.lang2}` : ''}`).digest('hex')
   return `urn:uuid:${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`
 }
 
@@ -102,7 +111,11 @@ export async function buildEpub(book: ExportBook, opts: EpubOptions = {}): Promi
 </container>
 `
   )
-  put('OEBPS/style.css', EPUB_CSS)
+  put('OEBPS/style.css', book.lang2 ? EPUB_CSS + EPUB_TR_CSS : EPUB_CSS)
+  const lang2 = book.lang2
+  /** The original followed by its translation in one wrapper; the original alone when there is no translation. */
+  const pair = (originalHtml: string, tr: string | null | undefined, cls: string): string =>
+    lang2 && tr ? `<div class="pair">${originalHtml}<p class="${cls}" lang="${esc(lang2)}" xml:lang="${esc(lang2)}">${esc(tr)}</p></div>` : originalHtml
 
   const manifest: string[] = [
     '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
@@ -140,7 +153,7 @@ export async function buildEpub(book: ExportBook, opts: EpubOptions = {}): Promi
     const image = await readPicture(s.picture, `${book.mode === 'picture-book' ? 'page' : 'section'} ${s.no}`, (f) => toBookJpeg(f, { grayscale: opts.grayscale }))
     const parts: string[] = []
     if (book.mode === 'gamebook') parts.push(`<h2 class="section-no">${s.no}</h2>`)
-    else if (s.title) parts.push(`<h2 class="chapter">${esc(s.title)}</h2>`)
+    else if (s.title) parts.push(pair(`<h2 class="chapter">${esc(s.title)}</h2>`, s.title2, 'tr title-tr'))
     if (image) {
       const img = `images/s${pad(s.no)}.jpg`
       put(`OEBPS/${img}`, image.data)
@@ -149,15 +162,15 @@ export async function buildEpub(book: ExportBook, opts: EpubOptions = {}): Promi
       pictures++
     }
     const cls = book.mode === 'picture-book' ? ' class="caption"' : ''
-    for (const p of s.paragraphs) parts.push(`<p${cls}>${esc(p)}</p>`)
+    s.paragraphs.forEach((p, i) => parts.push(pair(`<p${cls}>${esc(p)}</p>`, s.paragraphs2?.[i], book.mode === 'picture-book' ? 'caption tr' : 'tr')))
     if (s.choices?.length) {
       const lines = s.choices.map((c) => {
         const j = jumpParts(lang, c.text, c.toNo)
-        return `<p>${esc(j.before)}<a href="${sectionFileOf(book.mode, c.toNo)}#s${c.toNo}">${esc(j.label)}</a>${esc(j.after)}</p>`
+        return pair(`<p>${esc(j.before)}<a href="${sectionFileOf(book.mode, c.toNo)}#s${c.toNo}">${esc(j.label)}</a>${esc(j.after)}</p>`, c.text2, 'tr')
       })
       parts.push(`<div class="choices">\n${lines.join('\n')}\n</div>`)
     } else if (s.ending !== undefined) {
-      if (s.ending) parts.push(`<p>${esc(s.ending)}</p>`)
+      if (s.ending) parts.push(pair(`<p>${esc(s.ending)}</p>`, s.ending2, 'tr'))
       if (book.mode === 'gamebook') {
         const r = restartParts(lang, 1)
         parts.push(`<div class="the-end">\n<p class="end">${esc(endText(lang))}</p>\n<p class="again">${esc(r.before)}<a href="${sectionFileOf(book.mode, 1)}#s1">${esc(r.label)}</a>${esc(r.after)}</p>\n</div>`)
@@ -235,10 +248,10 @@ export interface EpubFileResult {
 
 /** Loads a project, stores its numbering, and writes the EPUB. Refuses (nothing written) when the stored numbering no longer fits the chapters. */
 export async function writeEpubFile(store: ProjectStore, slug: string, opts: EpubFileOptions = {}): Promise<EpubFileResult> {
-  const r = await loadExportBook(store, slug, { lang: opts.lang, order: opts.order, seed: opts.seed, renumber: opts.renumber, persist: true })
+  const r = await loadExportBook(store, slug, { lang: opts.lang, lang2: opts.lang2, order: opts.order, seed: opts.seed, renumber: opts.renumber, persist: true })
   if (r.stale.length) throw new Error(`the stored section numbers (${path.basename(r.mapFile)}) no longer fit "${slug}": ${r.stale.join('; ')}. Nothing was written; pass renumber: true to number the sections again (a copy already sent to a reader then differs)`)
   const built = await buildEpub(r.book, { grayscale: opts.grayscale, modified: opts.modified })
-  const file = path.resolve(opts.out ?? store.file(slug, 'export', `${slug}-${r.book.lang}.epub`))
+  const file = path.resolve(opts.out ?? store.file(slug, 'export', `${slug}-${r.book.lang}${r.book.lang2 ? `-${r.book.lang2}` : ''}.epub`))
   await fs.mkdir(path.dirname(file), { recursive: true })
   await fs.writeFile(file, built.bytes)
   const warnings = [...r.book.warnings, ...built.warnings]

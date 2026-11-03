@@ -58,7 +58,10 @@ function ExportSection({ slug, detail }: { slug: string; detail: ProjectDetail }
   const dataDir = useVn((s) => s.dataDir)
   const primary = detail.summary.primaryLang
   const langs = [primary, ...detail.summary.editions.filter((l) => l !== primary)]
-  const [lang, setLang] = useState<Lang>(primary)
+  const last = detail.lastExport
+  const initialLang = last && langs.includes(last.lang) ? last.lang : primary
+  const [lang, setLang] = useState<Lang>(initialLang)
+  const [lang2, setLang2] = useState<Lang | ''>(last?.lang2 && last.lang2 !== initialLang && langs.includes(last.lang2) ? last.lang2 : '')
   const [order, setOrder] = useState<'shuffled' | 'in-order'>('shuffled')
   const [renumber, setRenumber] = useState(false)
   const [grayscale, setGrayscale] = useState(false)
@@ -69,7 +72,7 @@ function ExportSection({ slug, detail }: { slug: string; detail: ProjectDetail }
   useEffect(() => setPending(null), [exp])
   const run = (format: 'epub' | 'pdf' | 'plan', forceRenumber = false) => {
     setPending(format)
-    sendCommand({ type: 'exportBook', slug, format, lang, grayscale, ...(format !== 'plan' && out.trim() ? { out: out.trim() } : {}), ...(choice ? { order, renumber: renumber || forceRenumber } : {}) })
+    sendCommand({ type: 'exportBook', slug, format, lang, ...(lang2 ? { lang2 } : {}), grayscale, ...(format !== 'plan' && out.trim() ? { out: out.trim() } : {}), ...(choice ? { order, renumber: renumber || forceRenumber } : {}) })
   }
   // after a restart there is no live answer: show the last written book kept on the project
   const r = exp ? exp.result : detail.lastExport ?? undefined
@@ -81,12 +84,30 @@ function ExportSection({ slug, detail }: { slug: string; detail: ProjectDetail }
       <div className="row">
         <label className="inline">
           Language
-          <select value={lang} onChange={(e) => setLang(e.target.value as Lang)} data-testid="export-lang">
+          <select value={lang} onChange={(e) => {
+              const l = e.target.value as Lang
+              setLang(l)
+              if (l === lang2) setLang2('')
+            }}
+            data-testid="export-lang">
             {langs.map((l) => (
               <option key={l} value={l}>
                 {langName(l)}
               </option>
             ))}
+          </select>
+        </label>
+        <label className="inline" title="A second edition printed under each paragraph, smaller, grey and italic">
+          Second language (under each paragraph)
+          <select value={lang2} onChange={(e) => setLang2(e.target.value as Lang | '')} data-testid="export-lang2">
+            <option value="">None</option>
+            {langs
+              .filter((l) => l !== lang)
+              .map((l) => (
+                <option key={l} value={l}>
+                  {langName(l)}
+                </option>
+              ))}
           </select>
         </label>
         {choice && (
@@ -148,7 +169,12 @@ function ExportSection({ slug, detail }: { slug: string; detail: ProjectDetail }
           <div className="row">
             <b>{r.format === 'plan' ? 'Plan' : r.format.toUpperCase()}</b>
             <Pill>{r.mode}</Pill>
-            <Pill>{langName(r.lang)}</Pill>
+            <Pill>{r.lang2 ? `${langName(r.lang)} + ${langName(r.lang2)}` : langName(r.lang)}</Pill>
+            {r.lang2 && (
+              <span className="dim" data-testid="export-pairing">
+                paired {r.paired ?? 0}, without translation {r.unpaired ?? 0}
+              </span>
+            )}
             <span className="dim">
               {r.sections} {r.mode === 'picture-book' ? 'pages' : 'sections'}, {r.pictures} pictures
             </span>

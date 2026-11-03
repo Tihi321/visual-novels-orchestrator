@@ -1,9 +1,9 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { buildPdf } from '../src/engine/export/pdf'
+import { buildPdf, pdfFontDir } from '../src/engine/export/pdf'
 import type { ExportBook, ExportPicture, ExportSection } from '../src/engine/export/model'
 
 /** HUB-25 / VNO-54 (plan test 4): the PDF read back as raw bytes (pdfkit has no parser; compress:false keeps objects, annotations and the font map as text). */
@@ -59,5 +59,36 @@ describe('gamebook PDF', () => {
     expect(pdf).toContain('/FontFile2')
     const cmap = pdf.slice(pdf.indexOf('beginbfrange'), pdf.indexOf('endbfrange'))
     for (const ch of 'ČĆĐŠŽčćđšž') expect(cmap, ch).toContain(`<${ch.codePointAt(0)!.toString(16).padStart(4, '0')}>`)
+  })
+
+  it('bilingual: embeds Lora Italic with de and hr glyphs, adds no links, and falls back without the italic file', async () => {
+    const sec = (no: number, o: Partial<ExportSection> = {}): ExportSection => ({ no, chapter: no, paragraphs: ['Die Straße ist weit.'], paragraphs2: ['Cesta je daleka, čaša.'], ...o })
+    const book: ExportBook = {
+      slug: 't',
+      title: 'Test',
+      lang: 'de',
+      lang2: 'hr',
+      mode: 'gamebook',
+      cover: { title: 'Test', source: 'first-scene-background' },
+      sections: [
+        sec(1, { choices: [{ text: 'Wenn du gehst', toNo: 2, text2: 'Ako odeš' }, { text: 'Wenn du bleibst', toNo: 3 }] }),
+        sec(2, { ending: 'Ende.', ending2: 'Kraj.' }),
+        sec(3, { ending: '' })
+      ],
+      pages: [],
+      warnings: []
+    }
+    const built = await buildPdf(book, { compress: false })
+    const pdf = raw(built.bytes)
+    expect(pdf).toMatch(/\/BaseFont \/[A-Z]{6}\+Lora-Italic/)
+    expect(built.warnings).toEqual([])
+    expect((pdf.match(/\/Subtype \/Link/g) ?? []).length).toBe(4) // 2 choices + 2 restarts; the translations add none
+    for (const ch of 'ßč') expect(pdf.slice(pdf.indexOf('beginbfrange')), ch).toContain(`<${ch.codePointAt(0)!.toString(16).padStart(4, '0')}>`)
+
+    const fonts = path.join(dir, 'fonts')
+    await mkdir(fonts)
+    for (const f of ['Lora-Regular.ttf', 'Lora-Bold.ttf']) await copyFile(path.join(pdfFontDir(), f), path.join(fonts, f))
+    const fallback = await buildPdf(book, { compress: false, fontDir: fonts })
+    expect(fallback.warnings.join('\n')).toContain('Lora-Italic.ttf')
   })
 })

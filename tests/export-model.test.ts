@@ -128,3 +128,39 @@ describe('what a printed book cannot show', () => {
     expect(b.warnings.some((w) => w.startsWith('longest section:'))).toBe(true)
   })
 })
+
+describe('parallel text (VNO-58)', () => {
+  const de = (book: VnBook, edition: Edition): Edition => ({
+    lang: 'de',
+    title: 'T-DE',
+    chapterTitles: {},
+    choiceTexts: Object.fromEntries(book.chapters.flatMap((c) => c.choices.map((_, i) => [`${c.n}:${i}`, `Gehe zu ${c.n}.${i}`]))),
+    endings: Object.fromEntries(book.chapters.filter((c) => c.ending).map((c) => [c.n, `Ende ${c.n}.`])),
+    characterNames: { mara: 'Mara-DE' },
+    beats: Object.fromEntries(Object.keys(edition.beats).filter((id) => id !== 'ch2.s1.b1').map((id) => [id, id.endsWith('b1') ? `Erzaehlung ${id}.` : `Zeile ${id.charAt(2)}.`]))
+  })
+
+  it('pairs by id, prints a missing line alone with one warning, uses lang2 speaker names, and adds no keys without lang2', () => {
+    const { book, edition } = makeBook(STORY)
+    const map = chapterSectionMap([1, 2, 3, 4, 5], 's')
+    const b = buildExportBook({ book, edition, lang: 'en', edition2: de(book, edition), lang2: 'de', resolveAsset: files, map })
+    expect(b.lang2).toBe('de')
+    expect(b.sections.find((s) => s.chapter === 2)!.paragraphs2).toEqual([null, 'Mara-DE: Zeile 2.'])
+    expect(b.sections.find((s) => s.chapter === 1)!.choices!.map((c) => c.text2)).toEqual(['Gehe zu 1.0', 'Gehe zu 1.1'])
+    expect(b.sections.find((s) => s.chapter === 4)!.ending2).toBe('Ende 4.')
+    expect(b.pairing!.unpaired).toEqual(['ch2.s1.b1'])
+    expect(b.warnings.filter((w) => w.includes('print without translation'))).toEqual(['1 line(s) have no de text and print without translation: ch2.s1.b1'])
+    const single = buildExportBook({ book, edition, lang: 'en', resolveAsset: files, map })
+    expect(single).not.toHaveProperty('lang2')
+    expect(single).not.toHaveProperty('pairing')
+    expect(single.sections.some((s) => 'paragraphs2' in s || 'title2' in s || 'ending2' in s)).toBe(false)
+  })
+
+  it.each([
+    ['en', /must differ/],
+    ['ar', /right-to-left/]
+  ] as const)('refuses lang2 %s', (lang2, message) => {
+    const { book, edition } = makeBook(STORY)
+    expect(() => buildExportBook({ book, edition, lang: 'en', edition2: edition, lang2, resolveAsset: files, map: chapterSectionMap([1, 2, 3, 4, 5], 's') })).toThrow(message)
+  })
+})

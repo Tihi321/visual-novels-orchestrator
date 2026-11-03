@@ -6,7 +6,7 @@ import type { ProjectStore } from '../vn/project'
 import { hasPhrases } from './phrases'
 import { EXPORT_FILE, resolveSectionMap, sectionOf } from './sections'
 import type { SectionMap, SectionOrder } from './sections'
-import { beatTextOf, choiceCountWarnings, choiceTextOf, endingTextOf, validateSectionMap, validateStory } from './validate'
+import { beatTextOf, choiceCountWarnings, choiceTextOf, endingTextOf, titleTextOf, validateSectionMap, validateStory } from './validate'
 
 /**
  * The book the EPUB and PDF writers print: one ordered `ExportBook` read from a `VnBook` plus one edition, so no writer reads vn.json itself.
@@ -29,6 +29,8 @@ export interface ExportChoice {
   text: string
   /** The section this choice leads to. */
   toNo: number
+  /** lang2 text of this choice; absent = no translation. */
+  text2?: string
 }
 
 /** A section (gamebook, linear VN: one per chapter) or a page (picture book: one per scene). */
@@ -47,6 +49,12 @@ export interface ExportSection {
   choices?: ExportChoice[]
   /** Set (possibly '' when the story gives no ending text) when the section is an ending. Test with `!== undefined`. */
   ending?: string
+  /** Set only when the book has lang2: same length as `paragraphs`, index i is the lang2 text of paragraphs[i] (same "Name: text" form), null = no translation. */
+  paragraphs2?: (string | null)[]
+  /** lang2 chapter title; only where `title` is set and lang2 has one. */
+  title2?: string
+  /** lang2 ending text; only where `ending` is a non-empty string and lang2 has one. */
+  ending2?: string
 }
 
 export interface ExportCover {
@@ -69,6 +77,10 @@ export interface ExportBook {
   pages: ExportSection[]
   /** What was dropped or is odd; the tool returns these as they are. */
   warnings: string[]
+  /** The second language printed under the main one. */
+  lang2?: Lang
+  /** Set with lang2. paired = lines with a translation; unpaired = ids of lines without one: beat ids, "<chapter>:<choiceIdx>", "title <chapter>", "ending <chapter>". */
+  pairing?: { paired: number; unpaired: string[] }
 }
 
 export const modeOf = (book: VnBook): ExportMode => (book.kind === 'choice' ? 'gamebook' : presentationOf(book) === 'picture-book' ? 'picture-book' : 'linear')
@@ -79,6 +91,9 @@ export interface BuildInput {
   book: VnBook
   edition: Edition
   lang: Lang
+  /** The second edition and its language (parallel text); both or neither. */
+  edition2?: Edition
+  lang2?: Lang
   /** The absolute file of the selected version of an asset, or null when it has none. */
   resolveAsset: (id: string) => string | null
   /** Gamebook only: the numbering (`resolveSectionMap`). */
@@ -93,6 +108,11 @@ export interface BuildInput {
 export function buildExportBook(input: BuildInput): ExportBook {
   const { book, edition, lang } = input
   if (isRtlLang(lang)) throw new Error(`cannot export "${book.slug}" in ${lang}: right-to-left languages are not supported by the book export yet (the text would print in the wrong direction)`)
+  const { edition2, lang2 } = input
+  if (lang2) {
+    if (lang2 === lang) throw new Error(`cannot export "${book.slug}": the second language must differ from the main one (${lang})`)
+    if (isRtlLang(lang2)) throw new Error(`cannot export "${book.slug}" with second language ${lang2}: right-to-left languages are not supported by the book export yet (the text would print in the wrong direction)`)
+  }
   const mode = modeOf(book)
   validateStory(book, edition, lang, mode === 'gamebook')
   const warnings = [...(input.warnings ?? [])]
@@ -124,17 +144,35 @@ export function buildExportBook(input: BuildInput): ExportBook {
     return c.title
   }
 
-  const paragraphsOf = (scenes: readonly VnScene[]): string[] =>
+  const linesOf = (scenes: readonly VnScene[], ed: Edition, l: Lang): { id: string; text: string }[] =>
     scenes
       .flatMap((s) => s.beats)
       .filter(hasText)
       .flatMap((b) => {
-        const text = beatTextOf(book, edition, lang, b)
+        const text = beatTextOf(book, ed, l, b)
         if (!text) return []
-        if (b.type === 'narration') return [text]
-        const name = (b.speakerKey ? edition.characterNames[b.speakerKey]?.trim() : '') || b.speakerLabel
-        return [name ? `${name}: ${text}` : text]
+        if (b.type === 'narration') return [{ id: b.id, text }]
+        const name = (b.speakerKey ? ed.characterNames[b.speakerKey]?.trim() : '') || b.speakerLabel
+        return [{ id: b.id, text: name ? `${name}: ${text}` : text }]
       })
+  const paragraphsOf = (scenes: readonly VnScene[]): string[] => linesOf(scenes, edition, lang).map((l) => l.text)
+
+  // parallel text: pairing by id (beat id, "<chapter>:<choiceIdx>", "title <chapter>", "ending <chapter>"), lenient
+  const pairing = { paired: 0, unpaired: [] as string[] }
+  const pair2 = (id: string, tr: string | null | undefined): string | undefined => {
+    if (tr) {
+      pairing.paired++
+      return tr
+    }
+    pairing.unpaired.push(id)
+    return undefined
+  }
+  // a translated title identical to the main one (it fell back to the vn.json title) is no translation: unpaired
+  const sameAs = (tr: string | undefined, main: string | undefined): string | undefined => (tr && tr === main ? undefined : tr)
+  const paragraphs2Of = (scenes: readonly VnScene[]): (string | null)[] => {
+    const tr = new Map(linesOf(scenes, edition2!, lang2!).map((l) => [l.id, l.text]))
+    return linesOf(scenes, edition, lang).map((l) => pair2(l.id, tr.get(l.id)) ?? null)
+  }
 
   const sections: ExportSection[] = []
   const pages: ExportSection[] = []
@@ -144,6 +182,13 @@ export function buildExportBook(input: BuildInput): ExportBook {
         const paragraphs = paragraphsOf([scene])
         const page: ExportSection = { no: pages.length + 1, chapter: c.n, paragraphs, picture: pictureOf(scene, `chapter ${c.n}, scene ${scene.id}`) }
         if (i === 0) page.title = titleOf(c)
+        if (edition2) {
+          page.paragraphs2 = paragraphs2Of([scene])
+          if (page.title) {
+            const t2 = pair2(`title ${c.n}`, sameAs(titleTextOf(book, edition2, lang2!, c), page.title))
+            if (t2) page.title2 = t2
+          }
+        }
         if (!paragraphs.length) warnings.push(`chapter ${c.n}, scene ${scene.id}: no text for the caption`)
         pages.push(page)
       })
@@ -156,10 +201,28 @@ export function buildExportBook(input: BuildInput): ExportBook {
       picture: pictureOf(c.scenes[0], `chapter ${c.n}`)
     }
     if (mode === 'linear') section.title = titleOf(c)
+    if (edition2) {
+      section.paragraphs2 = paragraphs2Of(c.scenes)
+      if (section.title) {
+        const t2 = pair2(`title ${c.n}`, sameAs(titleTextOf(book, edition2, lang2!, c), section.title))
+        if (t2) section.title2 = t2
+      }
+    }
     if (mode === 'gamebook' && c.choices.length) {
-      section.choices = c.choices.map((ch, i) => ({ text: choiceTextOf(book, edition, lang, c, i)!, toNo: sectionOf(input.map!, ch.to) }))
+      section.choices = c.choices.map((ch, i) => {
+        const choice: ExportChoice = { text: choiceTextOf(book, edition, lang, c, i)!, toNo: sectionOf(input.map!, ch.to) }
+        if (edition2) {
+          const t2 = pair2(`${c.n}:${i}`, choiceTextOf(book, edition2, lang2!, c, i))
+          if (t2) choice.text2 = t2
+        }
+        return choice
+      })
     } else if (mode === 'gamebook' || c.ending !== null) {
       section.ending = endingTextOf(book, edition, lang, c)
+      if (edition2 && section.ending) {
+        const e2 = pair2(`ending ${c.n}`, endingTextOf(book, edition2, lang2!, c))
+        if (e2) section.ending2 = e2
+      }
     }
     sections.push(section)
   }
@@ -199,6 +262,11 @@ export function buildExportBook(input: BuildInput): ExportBook {
   const longest = all.reduce<ExportSection | undefined>((m, s) => (!m || wordsOf(s) > wordsOf(m) ? s : m), undefined)
   if (longest) warnings.push(`longest ${mode === 'picture-book' ? 'page' : 'section'}: ${wordsOf(longest)} words (${mode === 'gamebook' ? `section ${longest.no}, ` : ''}chapter ${longest.chapter})`)
 
+  if (edition2 && pairing.unpaired.length) {
+    const ids = pairing.unpaired
+    warnings.push(`${ids.length} line(s) have no ${lang2} text and print without translation: ${ids.slice(0, 10).join(', ')}${ids.length > 10 ? ` (+${ids.length - 10} more)` : ''}`)
+  }
+
   const first = chapters[0]?.scenes[0]
   const coverFile = first ? input.resolveAsset(first.backgroundId) : null
   const cover: ExportCover = {
@@ -209,7 +277,17 @@ export function buildExportBook(input: BuildInput): ExportBook {
   }
   if (!cover.picture) warnings.push('cover: no first-scene background file, so the cover is text only')
 
-  return { slug: book.slug, title: cover.title, lang, mode, cover, sections: mode === 'picture-book' ? [] : sections, pages: mode === 'picture-book' ? pages : [], warnings }
+  return {
+    slug: book.slug,
+    title: cover.title,
+    lang,
+    mode,
+    cover,
+    sections: mode === 'picture-book' ? [] : sections,
+    pages: mode === 'picture-book' ? pages : [],
+    warnings,
+    ...(edition2 && lang2 ? { lang2, pairing } : {})
+  }
 }
 
 /** The pictures an export holds: the section/page pictures plus the cover. */
@@ -220,6 +298,8 @@ export function pictureCount(b: ExportBook): number {
 export interface ExportOptions {
   /** The edition to print. Default: the project's primary language. */
   lang?: Lang
+  /** A second edition printed under the main one (parallel text); must differ from `lang`. */
+  lang2?: Lang
   order?: SectionOrder
   /** Default: the stored seed, else the slug. */
   seed?: string
@@ -245,11 +325,21 @@ export async function loadExportBook(store: ProjectStore, slug: string, opts: Ex
   const { settings } = await store.loadSettings(slug)
   const book = await store.loadBook(slug)
   const lang = opts.lang ?? book.primaryLang
-  const edition: Edition =
-    (await store.loadEdition(slug, lang).catch((e: unknown) => {
-      if (lang === book.primaryLang) return null // the primary text is in vn.json
+  const lang2 = opts.lang2
+  if (lang2 && lang2 === lang) throw new Error(`cannot export "${slug}": the second language must differ from the main one (${lang})`)
+  /** `project "<slug>" has no <l> edition (editions: <primary>, <others>)`. */
+  const noEdition = async (l: Lang): Promise<Error> => {
+    const others = (await store.editionLangs(slug).catch(() => [] as Lang[])).filter((x) => x !== book.primaryLang)
+    return new Error(`project "${slug}" has no ${l} edition (editions: ${[book.primaryLang, ...others].join(', ')})`)
+  }
+  const load = async (l: Lang): Promise<Edition> =>
+    (await store.loadEdition(slug, l).catch(async (e: unknown) => {
+      if (l === book.primaryLang) return null // the primary text is in vn.json
+      if (e instanceof Error && /has no .+ edition$/.test(e.message)) throw await noEdition(l)
       throw e
-    })) ?? { lang, title: book.title, chapterTitles: {}, choiceTexts: {}, endings: {}, characterNames: {}, beats: {} }
+    })) ?? { lang: l, title: book.title, chapterTitles: {}, choiceTexts: {}, endings: {}, characterNames: {}, beats: {} }
+  const edition = await load(lang)
+  const edition2 = lang2 ? await load(lang2) : undefined
   const assets = new Map((await store.loadAssets(slug).catch(() => ({ assets: [] }))).assets.map((a) => [a.id, a]))
   const mapFile = store.file(slug, EXPORT_FILE)
   const warnings: string[] = []
@@ -264,6 +354,7 @@ export async function loadExportBook(store: ProjectStore, slug: string, opts: Ex
     book,
     edition,
     lang,
+    ...(edition2 && lang2 ? { edition2, lang2 } : {}),
     resolveAsset: (id) => {
       const entry = assets.get(id)
       return entry ? store.resolveAsset(slug, entry) : null

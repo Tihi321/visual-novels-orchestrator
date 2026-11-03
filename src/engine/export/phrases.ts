@@ -41,13 +41,21 @@ const TABLES: Record<string, PhraseTable> = {
     restart: (no) => ({ before: 'Idi na ', label: `odlomak ${no}`, after: ' za novi početak.' }),
     section: 'odlomak',
     start: 'Početak'
+  },
+  // written by a model (VNO-58 D8): native review welcome
+  de: {
+    jump: (text, no) => ({ before: `${text} – lies weiter bei `, label: `Abschnitt ${no}`, after: '.' }),
+    end: 'Ende.',
+    restart: (no) => ({ before: 'Lies weiter bei ', label: `Abschnitt ${no}`, after: ', um von vorn zu beginnen.' }),
+    section: 'Abschnitt',
+    start: 'Anfang'
   }
 }
 
 /** The language whose table is used for `lang` (a regional code such as pt-br uses its base language; unknown: en). */
-export function phraseLang(lang: Lang): 'en' | 'hr' {
+export function phraseLang(lang: Lang): 'en' | 'hr' | 'de' {
   const base = lang.toLowerCase().split('-')[0]!
-  return base in TABLES ? (base as 'en' | 'hr') : 'en'
+  return base in TABLES ? (base as 'en' | 'hr' | 'de') : 'en'
 }
 
 /** True when `lang` has its own table (else the English one is used and a writer should warn). */
@@ -77,4 +85,7 @@ export const joinParts = (p: JumpParts): string => p.before + p.label + p.after
 export const startText = (lang: Lang, no = 1): string => `${startLabel(lang)}: ${sectionWord(lang)} ${no}`
 
 /** The navigation words of an EPUB (the contents list and the cover entry). */
-export const navWords = (lang: Lang): { contents: string; cover: string } => (phraseLang(lang) === 'hr' ? { contents: 'Sadržaj', cover: 'Naslovnica' } : { contents: 'Contents', cover: 'Cover' })
+export const navWords = (lang: Lang): { contents: string; cover: string } => {
+  const l = phraseLang(lang)
+  return l === 'hr' ? { contents: 'Sadržaj', cover: 'Naslovnica' } : l === 'de' ? { contents: 'Inhalt', cover: 'Titelbild' } : { contents: 'Contents', cover: 'Cover' }
+}

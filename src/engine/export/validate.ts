@@ -15,6 +15,12 @@ export function beatTextOf(book: VnBook, edition: Edition, lang: Lang, beat: Tex
   return t || undefined
 }
 
+/** The chapter title in this edition, else (the primary language only) the title in vn.json; undefined when neither has one. */
+export function titleTextOf(book: VnBook, edition: Edition, lang: Lang, chapter: VnChapter): string | undefined {
+  const t = edition.chapterTitles[chapter.n]?.trim() || (lang === book.primaryLang ? chapter.title.trim() : '')
+  return t || undefined
+}
+
 /** The text of choice `i` of chapter `n`. */
 export function choiceTextOf(book: VnBook, edition: Edition, lang: Lang, chapter: VnChapter, i: number): string | undefined {
   const t = edition.choiceTexts[`${chapter.n}:${i}`]?.trim() || (lang === book.primaryLang ? chapter.choices[i]?.text.trim() : '')

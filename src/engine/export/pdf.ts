@@ -25,7 +25,7 @@ import { endText, jumpParts, restartParts, sectionWord, startText } from './phra
 export interface PdfOptions {
   /** Grey JPEGs instead of colour. */
   grayscale?: boolean
-  /** Folder with Lora-Regular.ttf and Lora-Bold.ttf. Default: `pdfFontDir()`. */
+  /** Folder with Lora-Regular.ttf and Lora-Bold.ttf (and Lora-Italic.ttf for lang2). Default: `pdfFontDir()`. */
   fontDir?: string
   /** pdfkit compresses streams by default; tests turn it off to read the bytes. */
   compress?: boolean
@@ -105,6 +105,39 @@ export async function buildPdf(book: ExportBook, opts: PdfOptions = {}): Promise
     }
   }
 
+  // parallel text: the translation is set in Lora Italic, grey; a missing or unreadable italic falls back to regular Lora (still grey)
+  const lang2 = book.lang2
+  let trFont = regular
+  if (lang2) {
+    const italic = path.join(dir, 'Lora-Italic.ttf')
+    try {
+      if (!existsSync(italic)) throw new Error('missing')
+      doc.font(italic).font(regular)
+      trFont = italic
+    } catch {
+      doc.font(regular)
+      warnings.push('Lora-Italic.ttf not found/unreadable: the translation is set upright')
+    }
+  }
+  const TR_GREY = '#555'
+  /** Writes a translation line under its original (smaller, grey, italic) and restores the body font at `backSize`. */
+  const tr = (text: string, size: number, align: 'left' | 'center', gapAfter: number, backSize: number): void => {
+    doc.font(trFont).fontSize(size).fillColor(TR_GREY)
+    doc.text(text, { width: WIDTH, align, lineGap: 1.5, paragraphGap: gapAfter })
+    doc.font(regular).fontSize(backSize).fillColor('#000')
+  }
+  /** Keep-together: when the original and its translation do not fit the rest of the page but fit an empty one (and the cursor is not already at the top), start a new page. */
+  const keep = (hMain: number, hTr: number): void => {
+    const need = hMain + hTr
+    const room = doc.page.height - doc.page.margins.bottom - doc.y
+    const empty = doc.page.height - doc.page.margins.top - doc.page.margins.bottom
+    if (need > room && need <= empty && doc.y > doc.page.margins.top + 0.5) doc.addPage()
+  }
+  const hOf = (text: string, font: string, size: number, lineGap: number): number => {
+    doc.font(font).fontSize(size)
+    return doc.heightOfString(text, { width: WIDTH, lineGap })
+  }
+
   /** A choice or restart line: `before`, then the linked label, then `after`. The link must not leak onto the next fragment (`goTo: null`). */
   const jump = (parts: { before: string; label: string; after: string }, no: number, opts2: PDFKit.Mixins.TextOptions): void => {
     doc.font(regular).fontSize(11.5).fillColor('#000')
@@ -146,7 +179,15 @@ export async function buildPdf(book: ExportBook, opts: PdfOptions = {}): Promise
       doc.font(bold).fontSize(46).fillColor('#000').text(String(s.no), { width: WIDTH, align: 'center' })
       doc.moveDown(0.4)
     } else if (s.title) {
-      doc.font(bold).fontSize(book.mode === 'linear' ? 20 : 14).fillColor('#000').text(s.title, { width: WIDTH, align: 'center', paragraphGap: 8 })
+      const titleSize = book.mode === 'linear' ? 20 : 14
+      if (s.title2) {
+        const trSize = book.mode === 'linear' ? 12 : 10.5
+        keep(hOf(s.title, bold, titleSize, 0), hOf(s.title2, trFont, trSize, 1.5))
+        doc.font(bold).fontSize(titleSize).fillColor('#000').text(s.title, { width: WIDTH, align: 'center', paragraphGap: 1 })
+        tr(s.title2, trSize, 'center', 8, titleSize)
+      } else {
+        doc.font(bold).fontSize(titleSize).fillColor('#000').text(s.title, { width: WIDTH, align: 'center', paragraphGap: 8 })
+      }
     }
 
     const image = await readPicture(s.picture, `${book.mode === 'picture-book' ? 'page' : 'section'} ${s.no}`, (f) => toBookJpeg(f, { grayscale: opts.grayscale }))
@@ -156,16 +197,40 @@ export async function buildPdf(book: ExportBook, opts: PdfOptions = {}): Promise
       pictures++
     }
 
-    doc.font(regular).fontSize(book.mode === 'picture-book' ? 12 : 11.5).fillColor('#000')
-    for (const p of s.paragraphs) {
-      doc.text(p, { width: WIDTH, align: book.mode === 'picture-book' ? 'center' : 'left', lineGap: 2, paragraphGap: 7 })
+    const bodySize = book.mode === 'picture-book' ? 12 : 11.5
+    const bodyAlign = book.mode === 'picture-book' ? 'center' : 'left'
+    doc.font(regular).fontSize(bodySize).fillColor('#000')
+    for (const [pi, p] of s.paragraphs.entries()) {
+      const t2 = s.paragraphs2?.[pi]
+      if (t2) {
+        const trSize = book.mode === 'picture-book' ? 10 : 9.5
+        keep(hOf(p, regular, bodySize, 2), hOf(t2, trFont, trSize, 1.5))
+        doc.font(regular).fontSize(bodySize).fillColor('#000')
+        doc.text(p, { width: WIDTH, align: bodyAlign, lineGap: 2, paragraphGap: 1 })
+        tr(t2, trSize, bodyAlign, 7, bodySize)
+      } else {
+        doc.text(p, { width: WIDTH, align: bodyAlign, lineGap: 2, paragraphGap: 7 })
+      }
     }
 
     if (s.choices?.length) {
       doc.moveDown(0.6)
-      for (const c of s.choices) jump(jumpParts(lang, c.text, c.toNo), c.toNo, { width: WIDTH, lineGap: 2, paragraphGap: 8 })
+      for (const c of s.choices) {
+        const parts = jumpParts(lang, c.text, c.toNo)
+        if (c.text2) {
+          keep(hOf(parts.before + parts.label + parts.after, regular, 11.5, 2), hOf(c.text2, trFont, 9.5, 1.5))
+          jump(parts, c.toNo, { width: WIDTH, lineGap: 2, paragraphGap: 1 })
+          tr(c.text2, 9.5, 'left', 8, 11.5)
+        } else {
+          jump(parts, c.toNo, { width: WIDTH, lineGap: 2, paragraphGap: 8 })
+        }
+      }
     } else if (s.ending !== undefined) {
-      if (s.ending) doc.font(regular).fontSize(11.5).text(s.ending, { width: WIDTH, lineGap: 2, paragraphGap: 7 })
+      if (s.ending && s.ending2) {
+        keep(hOf(s.ending, regular, 11.5, 2), hOf(s.ending2, trFont, 9.5, 1.5))
+        doc.font(regular).fontSize(11.5).fillColor('#000').text(s.ending, { width: WIDTH, lineGap: 2, paragraphGap: 1 })
+        tr(s.ending2, 9.5, 'left', 7, 11.5)
+      } else if (s.ending) doc.font(regular).fontSize(11.5).text(s.ending, { width: WIDTH, lineGap: 2, paragraphGap: 7 })
       if (book.mode === 'gamebook') {
         doc.moveDown(0.6)
         doc.font(bold).fontSize(14).text(endText(lang), { width: WIDTH, align: 'center', paragraphGap: 8 })
@@ -211,10 +276,10 @@ export interface PdfFileResult {
 
 /** Loads a project, stores its numbering, and writes the PDF. Refuses (nothing written) when the stored numbering no longer fits the chapters. */
 export async function writePdfFile(store: ProjectStore, slug: string, opts: PdfFileOptions = {}): Promise<PdfFileResult> {
-  const r = await loadExportBook(store, slug, { lang: opts.lang, order: opts.order, seed: opts.seed, renumber: opts.renumber, persist: true })
+  const r = await loadExportBook(store, slug, { lang: opts.lang, order: opts.order, seed: opts.seed, renumber: opts.renumber, lang2: opts.lang2, persist: true })
   if (r.stale.length) throw new Error(`the stored section numbers (${path.basename(r.mapFile)}) no longer fit "${slug}": ${r.stale.join('; ')}. Nothing was written; pass renumber: true to number the sections again (a copy already sent to a reader then differs)`)
   const built = await buildPdf(r.book, { grayscale: opts.grayscale, fontDir: opts.fontDir, compress: opts.compress, onProgress: opts.onProgress })
-  const file = path.resolve(opts.out ?? store.file(slug, 'export', `${slug}-${r.book.lang}.pdf`))
+  const file = path.resolve(opts.out ?? store.file(slug, 'export', r.book.lang2 ? `${slug}-${r.book.lang}-${r.book.lang2}.pdf` : `${slug}-${r.book.lang}.pdf`))
   await fs.mkdir(path.dirname(file), { recursive: true })
   await fs.writeFile(file, built.bytes)
   const warnings = [...r.book.warnings, ...built.warnings]

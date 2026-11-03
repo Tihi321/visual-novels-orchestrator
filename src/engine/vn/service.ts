@@ -2167,7 +2167,7 @@ export class VnService {
               lastTick = now
               this.emit({ type: 'export.progress', slug: cmd.slug, done, total })
             }
-            const { map, ...rest } = await runBookExport(this.store, cmd.slug, { format: cmd.format, lang: cmd.lang, order: cmd.order, renumber: cmd.renumber, grayscale: cmd.grayscale, out: cmd.out?.trim() || undefined, onProgress })
+            const { map, ...rest } = await runBookExport(this.store, cmd.slug, { format: cmd.format, lang: cmd.lang, lang2: cmd.lang2, order: cmd.order, renumber: cmd.renumber, grayscale: cmd.grayscale, out: cmd.out?.trim() || undefined, onProgress })
             const result: ExportResultView = { ...rest, ...(map ? { sectionMap: map } : {}) }
             if (cmd.format !== 'plan') await this.store.writeJson(cmd.slug, 'export-last.json', result)
             this.emit({ type: 'export.result', slug: cmd.slug, format: cmd.format, result })

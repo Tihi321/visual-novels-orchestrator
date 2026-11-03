@@ -96,4 +96,38 @@ describe('EPUB structure', () => {
     expect(opf).not.toContain('cover-image')
     expect(files.get('nav.xhtml')).toContain('One')
   })
+
+  it('writes a parallel-text gamebook: translations inside div.pair, no extra links, own identifier', async () => {
+    const plain = baseBook({
+      lang: 'de',
+      sections: [
+        sec(1, { paragraphs: ['Eins.', 'Zwei.'], choices: [{ text: 'Wenn du gehst', toNo: 2 }, { text: 'Wenn du bleibst', toNo: 3 }] }),
+        sec(2, { ending: 'Ende gut.' }),
+        sec(3, { ending: '' })
+      ]
+    })
+    const bi = baseBook({
+      ...plain,
+      lang2: 'hr',
+      sections: [
+        { ...plain.sections[0]!, paragraphs2: ['Jedan.', null], choices: [{ text: 'Wenn du gehst', toNo: 2, text2: 'Ako odeš' }, { text: 'Wenn du bleibst', toNo: 3, text2: 'Ako ostaneš' }] },
+        { ...plain.sections[1]!, ending2: 'Kraj dobro.' },
+        plain.sections[2]!
+      ]
+    })
+    const a = await open((await buildEpub(bi)).bytes)
+    const b = await open((await buildEpub(plain)).bytes)
+    const s1 = a.pages.get('section-001.xhtml')!
+    expect(s1).toContain('<div class="pair"><p>Eins.</p><p class="tr" lang="hr" xml:lang="hr">Jedan.</p></div>')
+    expect(s1).toContain('<p>Zwei.</p>')
+    expect(s1).not.toContain('<div class="pair"><p>Zwei.</p>')
+    expect(a.pages.get('section-002.xhtml')).toContain('<p class="tr" lang="hr" xml:lang="hr">Kraj dobro.</p>')
+    const links = (m: Map<string, string>): number => [...m.values()].join('').match(/>Abschnitt \d+<\/a>/g)!.length
+    expect(links(a.pages)).toBe(links(b.pages))
+    expect(await a.zip.file('OEBPS/style.css')!.async('string')).toContain('p.tr')
+    expect(await b.zip.file('OEBPS/style.css')!.async('string')).not.toContain('p.tr')
+    const id = (opf: string): string => opf.match(/<dc:identifier[^>]*>([^<]+)</)![1]!
+    expect(id(a.opf)).not.toBe(id(b.opf))
+    expect(a.opf).toContain('<dc:language>de</dc:language>')
+  })
 })
