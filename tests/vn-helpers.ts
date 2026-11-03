@@ -88,7 +88,7 @@ export function jsonAfter(req: ChatRequest, label: RegExp): unknown {
 
 export async function waitIdle(env: VnEnv, slug: string, ms = 60_000): Promise<{ failed: string[] }> {
   const r = await waitFor(async () => {
-    const x = await env.engine.vn.waitIdle(slug, { timeoutMs: 1 })
+    const x = await env.engine.vn.waitIdle(slug, { timeoutMs: 1, pollMs: 25 })
     return x.timedOut || x.clientTasks > 0 ? null : x
   }, ms, `project ${slug} to be idle`)
   return { failed: r.failed }

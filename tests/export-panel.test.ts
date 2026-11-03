@@ -44,7 +44,7 @@ describe('exportBook command', () => {
     const ids = book.chapters.flatMap((c) => c.scenes.flatMap((sc) => sc.beats.filter((b) => b.type === 'line' || b.type === 'narration').map((b) => b.id)))
     await env.engine.vn.store.saveEdition(slug, { lang: 'de', title: 'Gabel', chapterTitles: { 1: 'Start', 2: 'Links', 3: 'Rechts' }, choiceTexts: { '1:0': 'Links', '1:1': 'Rechts' }, endings: { 2: 'Ende.', 3: 'Ende.' }, characterNames: {}, beats: Object.fromEntries(ids.slice(1).map((id) => [id, `Text ${id}`])) })
     await env.engine.handleCommand({ type: 'exportBook', slug, format: 'plan', lang2: 'de' })
-    expect(last().result).toMatchObject({ lang2: 'de', unpaired: 1 })
+    expect(last().result).toMatchObject({ lang2: 'de', unpaired: 1, unpairedIds: [ids[0]] })
     expect(last().result!.paired).toBeGreaterThan(0)
     await env.engine.handleCommand({ type: 'exportBook', slug, format: 'epub', order: 'in-order', lang2: 'de' })
     expect(last().result?.path).toMatch(/-en-de\.epub$/)

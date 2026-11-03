@@ -173,6 +173,7 @@ function ExportSection({ slug, detail }: { slug: string; detail: ProjectDetail }
             {r.lang2 && (
               <span className="dim" data-testid="export-pairing">
                 paired {r.paired ?? 0}, without translation {r.unpaired ?? 0}
+                {!!r.unpaired && r.unpairedIds?.length ? `: ${r.unpairedIds.slice(0, 5).join(', ')}${r.unpaired > 5 ? ', ...' : ''}` : ''}
               </span>
             )}
             <span className="dim">

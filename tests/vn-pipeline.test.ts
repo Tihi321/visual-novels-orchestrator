@@ -65,7 +65,8 @@ describe('generate jobs', () => {
     expect(env.comfy.requests.length).toBe(requests) // resumable: everything already has a file
     const st = await svc.pipelineStatus(slug)
     expect(st?.steps.generate?.status).toBe('done')
-  })
+    // real sharp image work for every asset of the book (about 4 s alone): under full-suite CPU load it passed the 15 s default once, so this test gets 30 s
+  }, 30_000)
 
   it('a failed asset is retried and then fails the job, and the chain waits for it', async () => {
     env = await makeVnEnv({ sdk: false })

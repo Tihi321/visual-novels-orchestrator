@@ -30,6 +30,8 @@ export interface ExportRunResult {
   lang2?: Lang
   paired?: number
   unpaired?: number
+  /** The ids of the lines without a translation (the first 50): `book.pairing.unpaired`. */
+  unpairedIds?: string[]
   sections: number
   pictures: number
   warnings: string[]
@@ -40,8 +42,10 @@ export interface ExportRunResult {
   map?: SectionMap
 }
 
-function pairingOf(b: ExportBook): Pick<ExportRunResult, 'lang2' | 'paired' | 'unpaired'> {
-  return b.lang2 && b.pairing ? { lang2: b.lang2, paired: b.pairing.paired, unpaired: b.pairing.unpaired.length } : {}
+const UNPAIRED_IDS_MAX = 50
+
+function pairingOf(b: ExportBook): Pick<ExportRunResult, 'lang2' | 'paired' | 'unpaired' | 'unpairedIds'> {
+  return b.lang2 && b.pairing ? { lang2: b.lang2, paired: b.pairing.paired, unpaired: b.pairing.unpaired.length, unpairedIds: b.pairing.unpaired.slice(0, UNPAIRED_IDS_MAX) } : {}
 }
 
 /** The one export entry point: the MCP tool `vno_export_book` and the UI command `exportBook` both call it. `plan` is the dry run and writes nothing. */

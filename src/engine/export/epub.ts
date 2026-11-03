@@ -61,6 +61,7 @@ export const EPUB_TR_CSS = `div.pair { margin: 0 0 0.9em; page-break-inside: avo
 div.pair p { margin: 0; }
 div.pair p.tr { margin-top: 0.2em; }
 p.tr { font-size: 0.85em; font-style: italic; color: #555; }
+p.caption.tr { font-style: normal; }
 p.title-tr { text-align: center; }
 div.choices div.pair { margin: 0.5em 0; }
 `

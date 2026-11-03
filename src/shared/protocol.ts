@@ -346,6 +346,8 @@ export interface ExportResultView {
   lang2?: Lang
   paired?: number
   unpaired?: number
+  /** The ids of the lines without a translation (the first 50). */
+  unpairedIds?: string[]
   sections: number
   pictures: number
   warnings: string[]
