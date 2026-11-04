@@ -14,7 +14,7 @@ roles:
   stage-director:
     models: [strata, lmstudio, paid]
   edition-aligner:
-    models: [strata/qwen3.8-flash-next-low, lmstudio, paid]
+    models: [strata/default-low, lmstudio, paid]
   voice-director:
     models: [strata, lmstudio, paid]
 ---

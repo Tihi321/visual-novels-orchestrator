@@ -120,7 +120,7 @@ describe('custom providers in the engine', () => {
     const snap = await engine.snapshot()
     expect(snap.models.find((m) => m.ref === `${id}/claude-opus-5-5`)).toMatchObject({ group: id, vision: true, local: true })
     expect(snap.models.find((m) => m.ref === 'deepseek/deepseek-flash')?.group).toBe('paid')
-    expect(snap.models.find((m) => m.ref === 'strata/qwen3.8-flash-next')?.group).toBe('strata')
+    expect(snap.models.find((m) => m.ref === 'strata/default')?.group).toBe('strata')
     expect(snap.models.find((m) => m.ref === 'client/claude-code')?.group).toBeUndefined()
 
     // the alias: without a row it names no model; once added to fallbacks it resolves to that row
@@ -272,7 +272,7 @@ describe('fallbacks and the settings migration', () => {
   it('a settings.md with neither shape gets the built-in defaults; fallbacks wins over the old fields', async () => {
     await writeFile(file('settings.md'), '---\nkind: settings\n---\n')
     const a = await started()
-    expect((await a.engine.snapshot()).settings.fallbacks).toEqual(['deepseek/deepseek-flash', 'strata/qwen3.8-flash-next', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
+    expect((await a.engine.snapshot()).settings.fallbacks).toEqual(['deepseek/deepseek-flash', 'strata/default', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
     await writeFile(file('settings.md'), '---\nkind: settings\ndefault_paid_model: deepseek/old\nfallbacks:\n  - deepseek/new\n---\n')
     const b = await started()
     expect(b.engine.registry.resolve('paid')).toBe('deepseek/new')
@@ -280,7 +280,7 @@ describe('fallbacks and the settings migration', () => {
 
   it('the seed settings.md uses fallbacks, and a fresh data folder has the acp provider (off) and both client models', async () => {
     const settings = (await readConfig('settings.md')).data
-    expect(settings.fallbacks).toEqual(['deepseek/deepseek-flash', 'strata/qwen3.8-flash-next', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
+    expect(settings.fallbacks).toEqual(['deepseek/deepseek-flash', 'strata/default', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
     expect(settings.fallback_shared).toBe(false)
     expect(settings).not.toHaveProperty('group_defaults')
     expect(settings).not.toHaveProperty('default_paid_model')
