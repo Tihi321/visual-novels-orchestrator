@@ -2677,10 +2677,10 @@ export function generatePlayerJs(): string {
     return best;
   }
 
-  /** OK on a control: one click. Ignored for a held key and for the first 700 ms after the player focused that control itself. */
+  /** OK on a control: one click. Ignored for a held key, and for the first 700 ms after the player focused a choice or the ending card itself (they appear right after an OK that advanced). */
   function activate(el, e) {
     if (e && e.repeat) return true;
-    if (el === autoFocusEl && Date.now() - autoFocusAt < 700) return true;
+    if (el === autoFocusEl && Date.now() - autoFocusAt < 700 && typeof el.closest === 'function' && el.closest('#vno-choice-overlay, #vno-ending-card')) return true;
     if (el.tagName === 'INPUT') return true;
     if (typeof el.click === 'function') el.click();
     return true;
