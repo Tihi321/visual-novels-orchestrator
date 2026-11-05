@@ -111,7 +111,16 @@ export const UI_STRINGS: Readonly<Record<string, Readonly<Record<string, string>
     'Story Text Size': 'Veličina teksta priče',
     // VNO-48: the save screen's titles (the English literals are the runtime's fallbacks).
     'Save Game': 'Spremi igru',
-    'Load Game': 'Učitaj igru'
+    'Load Game': 'Učitaj igru',
+    // VNO-62: voice stop and mute, the pause menu and the rotate hint (TV and touch controls); other languages fall back to the English literal.
+    'Stop voice': 'Zaustavi glas',
+    'Mute voice': 'Utišaj glas',
+    'Unmute voice': 'Uključi glas',
+    'Voices': 'Glasovi',
+    'On': 'Uključeno',
+    'Off': 'Isključeno',
+    'Resume': 'Nastavi',
+    'Rotate your device to landscape': 'Okrenite uređaj u vodoravni položaj'
   },
   de: {
     'Language': 'Sprache',
@@ -1945,5 +1954,13 @@ export const PLAYER_UI_KEYS: readonly string[] = [
   'Close',
   'Interface Language',
   'Story Language',
-  'Story Text Size'
+  'Story Text Size',
+  'Stop voice',
+  'Mute voice',
+  'Unmute voice',
+  'Voices',
+  'On',
+  'Off',
+  'Resume',
+  'Rotate your device to landscape'
 ]

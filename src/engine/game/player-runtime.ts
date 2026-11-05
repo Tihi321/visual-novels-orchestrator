@@ -200,13 +200,13 @@ ${extraCss}
               <div id="vno-pref-row-ui-language" class="vno-pref-group">
                 <label id="vno-pref-label-ui-language" for="vno-pref-ui-language">Interface Language</label>
                 <div class="vno-pref-control">
-                  <select id="vno-pref-ui-language" class="vno-select" aria-label="Interface Language"></select>
+                  <button type="button" id="vno-pref-ui-language" class="vno-select" aria-haspopup="listbox" aria-label="Interface Language"></button>
                 </div>
               </div>
               <div class="vno-pref-group">
                 <label id="vno-pref-label-language" for="vno-pref-language">Story Language</label>
                 <div class="vno-pref-control">
-                  <select id="vno-pref-language" class="vno-select" aria-label="Story Language"></select>
+                  <button type="button" id="vno-pref-language" class="vno-select" aria-haspopup="listbox" aria-label="Story Language"></button>
                 </div>
               </div>
             </section>
@@ -257,6 +257,12 @@ ${extraCss}
                   <output id="vno-pref-vol-voice-value" class="vno-pref-value" for="vno-pref-vol-voice">90</output>
                 </div>
               </div>
+              <div id="vno-pref-row-voices" class="vno-pref-group vno-hidden">
+                <label id="vno-pref-label-voices" for="vno-pref-voices">Voices</label>
+                <div class="vno-pref-control">
+                  <button type="button" id="vno-pref-voices" class="vno-button">On</button>
+                </div>
+              </div>
             </section>
           </div>
         </div>
@@ -276,10 +282,39 @@ ${extraCss}
         </div>
       </div>
 
-      <!-- Persistent Stage Language Switcher (accessible on every screen) -->
-      <div id="vno-lang-bar" class="vno-lang-bar" title="Language">
-        <label for="vno-stage-language" id="vno-lang-bar-label" class="vno-lang-bar-label">&#127760;</label>
-        <select id="vno-stage-language" class="vno-lang-select" aria-label="Language"></select>
+      <!-- Pause menu: Back / Esc during play opens it (VNO-62) -->
+      <div id="vno-pause-menu" class="vno-pause-menu vno-hidden" role="dialog" aria-modal="true">
+        <div class="vno-pause-panel">
+          <button type="button" id="vno-pause-resume" class="vno-menu-btn">Resume</button>
+          <button type="button" id="vno-pause-save" class="vno-menu-btn">Save</button>
+          <button type="button" id="vno-pause-load" class="vno-menu-btn">Load</button>
+          <button type="button" id="vno-pause-history" class="vno-menu-btn">History</button>
+          <button type="button" id="vno-pause-prefs" class="vno-menu-btn">Preferences</button>
+          <button type="button" id="vno-pause-mainmenu" class="vno-menu-btn">Main Menu</button>
+        </div>
+      </div>
+
+      <!-- Top-right HUD: voice stop and mute (only when the game has voice files) and the persistent stage language chip (accessible on every screen) -->
+      <div id="vno-hud-top" class="vno-hud-top">
+        <div id="vno-voice-cluster" class="vno-voice-cluster vno-hidden">
+          <button type="button" id="vno-voice-stop" class="vno-hud-btn" title="Stop voice" aria-label="Stop voice" disabled>&#9632;</button>
+          <button type="button" id="vno-voice-mute" class="vno-hud-btn" title="Mute voice" aria-label="Mute voice" aria-pressed="false">&#128266;</button>
+        </div>
+        <div id="vno-lang-bar" class="vno-lang-bar" title="Language">
+          <span id="vno-lang-bar-label" class="vno-lang-bar-label" aria-hidden="true">&#127760;</span>
+          <button type="button" id="vno-stage-language" class="vno-lang-select" aria-haspopup="listbox" aria-label="Language"></button>
+        </div>
+      </div>
+
+      <!-- Language picker: one list for the chip and both Preferences rows (a native select does not open on a TV browser) -->
+      <div id="vno-picker" class="vno-picker vno-hidden" role="dialog" aria-modal="true">
+        <div class="vno-picker-panel">
+          <div class="vno-picker-head">
+            <h2 id="vno-picker-title">Language</h2>
+            <button type="button" id="vno-picker-close" class="vno-picker-close"><span aria-hidden="true">&times;</span></button>
+          </div>
+          <div id="vno-picker-list" class="vno-picker-list" role="listbox"></div>
+        </div>
       </div>
 
       <!-- Audio Elements -->
@@ -288,6 +323,9 @@ ${extraCss}
       <audio id="vno-audio-sfx" preload="auto"></audio>
       <audio id="vno-audio-voice" preload="auto"></audio>
     </div>
+
+    <!-- Phone held upright: the 16:9 stage is a thin strip, so ask for landscape (shown by CSS on a coarse pointer in portrait; a tap dismisses it) -->
+    <div id="vno-rotate-hint" class="vno-rotate-hint"><span id="vno-rotate-hint-text">Rotate your device to landscape</span></div>
   </div>
 
   <script src="player.js"></script>
@@ -310,6 +348,22 @@ export function generatePlayerCss(gameData: GameData): string {
   -webkit-user-select: none;
   margin: 0;
   padding: 0;
+}
+
+/* VNO-62: handleResize sets this on a coarse pointer so a HUD target is at least 48 CSS px after the stage scale (1 everywhere else) */
+:root {
+  --vno-hud-k: 1;
+}
+
+/* Keyboard and remote focus (Chrome 61 has no :focus-visible): the ring shows only after a key was used; a pointer removes vno-kb again */
+button:focus, input:focus, .vno-slot-card:focus {
+  outline: none;
+}
+
+.vno-kb :focus {
+  outline: 4px solid var(--vno-ui-focus, #8ab4ff);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 10px rgba(138,180,255,0.35);
 }
 
 body.vno-body {
@@ -351,6 +405,8 @@ body.vno-body {
   background-color: var(--vno-color-bg, #101018);
   transform-origin: center center;
   transform: translate(-50%, -50%) scale(1);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 /* Layers */
@@ -578,9 +634,11 @@ body.vno-body {
   transition: color 0.15s, background 0.15s;
 }
 
-.vno-qm-btn:hover {
-  color: var(--vno-color-hover, #fff);
-  background: rgba(255,255,255,0.1);
+@media (hover: hover) {
+  .vno-qm-btn:hover {
+    color: var(--vno-color-hover, #fff);
+    background: rgba(255,255,255,0.1);
+  }
 }
 
 /* Choice Menu */
@@ -607,10 +665,12 @@ body.vno-body {
   transition: background 0.2s, color 0.2s, transform 0.1s;
 }
 
-.vno-choice-btn:hover {
-  background: var(--vno-choice-hover-bg, rgba(40,40,60,0.95));
-  color: var(--vno-choice-hover-text-color, #fff);
-  transform: scale(1.02);
+@media (hover: hover) {
+  .vno-choice-btn:hover {
+    background: var(--vno-choice-hover-bg, rgba(40,40,60,0.95));
+    color: var(--vno-choice-hover-text-color, #fff);
+    transform: scale(1.02);
+  }
 }
 
 /* Fullscreen Cards */
@@ -707,13 +767,10 @@ body.vno-body {
   cursor: pointer;
 }
 
-.vno-screen-close:hover {
-  background: var(--vno-ui-surface-2, rgba(255,255,255,0.14));
-}
-
-.vno-screen-close:focus-visible {
-  outline: 3px solid var(--vno-ui-focus, #8ab4ff);
-  outline-offset: 2px;
+@media (hover: hover) {
+  .vno-screen-close:hover {
+    background: var(--vno-ui-surface-2, rgba(255,255,255,0.14));
+  }
 }
 
 .vno-screen-close span {
@@ -787,10 +844,12 @@ body.vno-body {
   text-align: right;
 }
 
-.vno-menu-btn:hover, .vno-button:hover {
-  background: var(--vno-color-hover, #444);
-  color: var(--vno-color-selected, #fff);
-  border-color: var(--vno-color-accent, #888);
+@media (hover: hover) {
+  .vno-menu-btn:hover, .vno-button:hover {
+    background: var(--vno-color-hover, #444);
+    color: var(--vno-color-selected, #fff);
+    border-color: var(--vno-color-accent, #888);
+  }
 }
 
 /* Save Slots */
@@ -837,9 +896,11 @@ body.vno-body {
   justify-content: space-between;
 }
 
-.vno-slot-card:hover {
-  border-color: var(--vno-color-accent, #aaa);
-  background: rgba(255,255,255,0.05);
+@media (hover: hover) {
+  .vno-slot-card:hover {
+    border-color: var(--vno-color-accent, #aaa);
+    background: rgba(255,255,255,0.05);
+  }
 }
 
 /* Preferences */
@@ -903,11 +964,6 @@ body.vno-body {
   cursor: pointer;
 }
 
-.vno-pref-control input[type="range"]:focus-visible {
-  outline: 3px solid var(--vno-ui-focus, #8ab4ff);
-  outline-offset: 2px;
-}
-
 .vno-pref-value {
   min-width: 76px;
   text-align: right;
@@ -931,6 +987,7 @@ body.vno-body {
   font-family: var(--vno-font-interface, sans-serif);
   font-size: var(--vno-size-interface, 26px);
   cursor: pointer;
+  text-align: left;
   text-overflow: ellipsis;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23707080' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
@@ -938,19 +995,10 @@ body.vno-body {
   background-size: 16px;
 }
 
-.vno-select:focus-visible {
-  outline: 3px solid var(--vno-ui-focus, #8ab4ff);
-  outline-offset: 2px;
-}
-
-.vno-select option {
-  background: var(--vno-ui-control-bg, #222);
-  color: var(--vno-ui-control-text, #fff);
-}
-
 [dir="rtl"] .vno-select {
   padding: 10px 14px 10px 40px;
   background-position: left 14px center;
+  text-align: right;
 }
 
 @media (max-width: 900px) {
@@ -1068,16 +1116,71 @@ body.vno-body {
   z-index: 60;
 }
 
-/* Persistent Stage Language Bar */
-.vno-lang-bar {
+/* Top-right HUD (VNO-62): the voice cluster and the persistent stage language chip. Spacing uses margins (flex gap needs Chrome 84). */
+.vno-hud-top {
   position: absolute;
   top: 20px;
   right: 28px;
   z-index: 200;
+  display: flex;
+  align-items: center;
+}
+
+[dir="rtl"] .vno-hud-top {
+  right: auto;
+  left: 28px;
+}
+
+.vno-voice-cluster {
+  display: flex;
+  align-items: center;
+  margin-right: 12px;
+}
+
+[dir="rtl"] .vno-voice-cluster {
+  margin-right: 0;
+  margin-left: 12px;
+}
+
+.vno-hud-btn {
+  min-width: calc(40px * var(--vno-hud-k));
+  min-height: calc(40px * var(--vno-hud-k));
+  padding: 4px 12px;
+  background: var(--vno-ui-surface, rgba(0,0,0,0.7));
+  border: 1px solid var(--vno-ui-border, #555);
+  border-radius: 6px;
+  color: var(--vno-ui-text, #e8e8f2);
+  font-family: var(--vno-font-interface, sans-serif);
+  font-size: calc(22px * (1 + (var(--vno-hud-k) - 1) * 0.5));
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+
+.vno-hud-btn + .vno-hud-btn {
+  margin-left: 8px;
+}
+
+[dir="rtl"] .vno-hud-btn + .vno-hud-btn {
+  margin-left: 0;
+  margin-right: 8px;
+}
+
+.vno-hud-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.vno-hud-btn[aria-pressed="true"] {
+  border-color: var(--vno-color-accent, #8ab4ff);
+  color: var(--vno-color-accent, #8ab4ff);
+}
+
+/* Persistent Stage Language Bar (a chip that opens the language picker) */
+.vno-lang-bar {
   pointer-events: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
   background: var(--vno-ui-surface, rgba(0,0,0,0.7));
   border: 1px solid var(--vno-ui-border, #555);
   border-radius: 6px;
@@ -1086,15 +1189,19 @@ body.vno-body {
 }
 
 [dir="rtl"] .vno-lang-bar {
-  right: auto;
-  left: 28px;
+  direction: rtl;
 }
 
 .vno-lang-bar-label {
   font-size: 20px;
   line-height: 1;
+  margin-right: 8px;
   color: var(--vno-ui-text, #e8e8f2);
-  cursor: pointer;
+}
+
+[dir="rtl"] .vno-lang-bar-label {
+  margin-right: 0;
+  margin-left: 8px;
 }
 
 .vno-lang-select {
@@ -1102,22 +1209,172 @@ body.vno-body {
   color: var(--vno-ui-text, #e8e8f2);
   border: none;
   font-family: var(--vno-font-interface, sans-serif);
-  font-size: 20px;
+  font-size: calc(20px * (1 + (var(--vno-hud-k) - 1) * 0.5));
+  min-height: calc(40px * var(--vno-hud-k));
+  min-width: calc(40px * var(--vno-hud-k));
   cursor: pointer;
-  outline: none;
-  padding-right: 4px;
+  padding: 0 4px;
   max-width: 380px;
+  overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.vno-lang-select:focus-visible {
-  outline: 3px solid var(--vno-ui-focus, #8ab4ff);
-  outline-offset: 2px;
+/* Language picker (VNO-62): one list on top of everything, 1-3 columns, scrolls with focus */
+.vno-picker {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--vno-ui-scrim, rgba(0,0,0,0.85));
 }
 
-.vno-lang-select option {
-  background: var(--vno-ui-control-bg, #181824);
+.vno-picker-panel {
+  display: flex;
+  flex-direction: column;
+  max-width: 96%;
+  max-height: 92%;
+  background: var(--vno-ui-surface, #181824);
+  color: var(--vno-ui-text, #fff);
+  border: 2px solid var(--vno-ui-border, #333);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.9);
+  padding-bottom: 24px;
+}
+
+.vno-picker-head {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 30px;
+  border-bottom: 1px solid var(--vno-ui-border, rgba(255,255,255,0.1));
+}
+
+.vno-picker-head h2 {
+  font-family: var(--vno-font-interface, sans-serif);
+  font-size: 40px;
+  margin-right: 24px;
+  color: var(--vno-ui-text, #e8e8f2);
+}
+
+.vno-picker-close {
+  flex: 0 0 auto;
+  min-width: calc(12px + 40px * var(--vno-hud-k));
+  min-height: calc(12px + 40px * var(--vno-hud-k));
+  border-radius: 999px;
+  border: 1px solid var(--vno-ui-border, #555);
+  background: transparent;
+  color: var(--vno-ui-text, #e8e8f2);
+  font-family: var(--vno-font-interface, sans-serif);
+  font-size: 30px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.vno-picker-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-gap: 14px;
+  padding: 24px 30px 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
+.vno-picker-item {
+  min-height: calc(64px * var(--vno-hud-k));
+  padding: 10px 20px;
+  background: var(--vno-ui-control-bg, #222);
   color: var(--vno-ui-control-text, #fff);
+  border: 1px solid var(--vno-ui-border, #555);
+  border-radius: 8px;
+  font-family: var(--vno-font-interface, sans-serif);
+  font-size: calc(30px * (1 + (var(--vno-hud-k) - 1) * 0.5));
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+[dir="rtl"] .vno-picker-item {
+  text-align: right;
+}
+
+.vno-picker-item[aria-selected="true"] {
+  border-color: var(--vno-color-accent, #8ab4ff);
+  background: var(--vno-ui-surface-2, rgba(255,255,255,0.14));
+  font-weight: bold;
+}
+
+.vno-picker-item[aria-selected="true"]::after {
+  content: " \\2713";
+}
+
+@media (hover: hover) {
+  .vno-picker-item:hover {
+    background: var(--vno-ui-surface-2, rgba(255,255,255,0.14));
+  }
+}
+
+/* Pause menu (VNO-62): Back / Esc during play */
+.vno-pause-menu {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.7);
+}
+
+.vno-pause-panel {
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  padding: 32px;
+  background: var(--vno-ui-surface, #181824);
+  border: 2px solid var(--vno-ui-border, #333);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.9);
+}
+
+.vno-pause-panel .vno-menu-btn + .vno-menu-btn {
+  margin-top: 14px;
+}
+
+/* The rotate hint (VNO-62): only on a coarse pointer held upright, over the letterbox below the strip-sized stage */
+.vno-rotate-hint {
+  display: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 60%;
+  z-index: 400;
+  align-items: center;
+  justify-content: center;
+  padding: 0 24px;
+  color: #fff;
+  font-family: var(--vno-font-interface, sans-serif);
+  font-size: 18px;
+  text-align: center;
+}
+
+@media (pointer: coarse) and (orientation: portrait) {
+  .vno-rotate-hint {
+    display: flex;
+  }
 }
 
 /* Picture book (one full illustration on top, the page's caption below, page turns). Nothing of the visual-novel stage is visible. */
@@ -1259,8 +1516,10 @@ body.vno-picturebook .vno-page-layer {
   transition: color 0.15s ease;
 }
 
-.vno-page-nav:hover {
-  color: var(--vno-color-hover, #fff);
+@media (hover: hover) {
+  .vno-page-nav:hover {
+    color: var(--vno-color-hover, #fff);
+  }
 }
 
 .vno-page-nav:disabled {
@@ -1295,6 +1554,65 @@ body.vno-picturebook .vno-page-layer {
 @media (prefers-reduced-motion: reduce) {
   .vno-page-image {
     transition: none;
+  }
+}
+
+/* Touch (VNO-62): every target is at least 48 CSS px after the stage scale (--vno-hud-k, set by the player on a coarse pointer). The quick menu moves above the text box and the scene title to the top left, so the big buttons do not cover the dialogue. */
+@media (pointer: coarse) {
+  .vno-quick-menu {
+    bottom: 100%;
+    right: 0;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  [dir="rtl"] .vno-quick-menu {
+    right: auto;
+    left: 0;
+  }
+
+  .vno-qm-btn {
+    min-width: calc(40px * var(--vno-hud-k));
+    min-height: calc(40px * var(--vno-hud-k));
+    padding: 4px 14px;
+    font-size: calc(18px * (1 + (var(--vno-hud-k) - 1) * 0.5));
+  }
+
+  .vno-scene-title {
+    top: 20px;
+    left: 28px;
+    right: auto;
+    bottom: auto;
+    max-width: 40%;
+    text-align: left;
+  }
+
+  [dir="rtl"] .vno-scene-title {
+    left: auto;
+    right: 28px;
+    text-align: right;
+  }
+
+  .vno-menu-btn, .vno-button, .vno-select, .vno-page-btn, .vno-choice-btn, .vno-page-menu, .vno-page-nav {
+    min-height: calc(40px * var(--vno-hud-k));
+  }
+
+  .vno-page-nav {
+    min-width: calc(40px * var(--vno-hud-k));
+  }
+
+  .vno-menu-btn, .vno-button, .vno-select {
+    font-size: calc(26px * (1 + (var(--vno-hud-k) - 1) * 0.5));
+  }
+
+  .vno-screen-close {
+    min-width: calc(12px + 40px * var(--vno-hud-k));
+    min-height: calc(12px + 40px * var(--vno-hud-k));
+  }
+
+  .vno-pref-control input[type="range"] {
+    height: calc(24px * var(--vno-hud-k));
   }
 }
 
@@ -1345,6 +1663,7 @@ export function generatePlayerJs(): string {
     volVoice: 90,
     storyTextSize: 100,
     uiLang: 'en',
+    voiceMuted: false,
     schema: 2
   };
 
@@ -1359,6 +1678,27 @@ export function generatePlayerJs(): string {
 
   // DOM Elements cache
   let dom = {};
+
+  // TV remote, keyboard and touch navigation (VNO-62)
+  const FOCUSABLE = 'button, input, .vno-slot-card';
+  // a tap on one of these (or inside it) never advances the story
+  const TAP_BLOCK = 'button, input, a, .vno-slot-card, .vno-screen, .vno-overlay, .vno-fullscreen-card, .vno-picker, .vno-pause-menu, .vno-hud-top, .vno-rotate-hint';
+  let pickerKind = '';
+  let pickerTrigger = null;
+  let pushedStates = 0; // history entries the player pushed itself (one per open picker, screen or pause menu)
+  let ignorePops = 0; // popstates the player caused with history.go and must not treat as a Back press
+  let autoFocusEl = null;
+  let autoFocusAt = 0;
+  const returnFocus = { screen: null, pause: null };
+
+  // The site bridge stands down when it sees this: the player handles the remote keys itself. Set before any key can arrive.
+  document.documentElement.setAttribute('data-vno-nav', '1');
+  window.VNO_NAV = {
+    version: 1,
+    focusFirst: function () {
+      return focusLayerFirst(topLayer(), false);
+    }
+  };
 
   function init() {
     cacheDom();
@@ -1437,6 +1777,17 @@ export function generatePlayerJs(): string {
     dom.prefUiLanguage = document.getElementById('vno-pref-ui-language');
     dom.prefUiLanguageRow = document.getElementById('vno-pref-row-ui-language');
     dom.prefStoryTextSize = document.getElementById('vno-pref-story-text-size');
+    dom.prefVoices = document.getElementById('vno-pref-voices');
+    dom.prefVoicesRow = document.getElementById('vno-pref-row-voices');
+    dom.voiceCluster = document.getElementById('vno-voice-cluster');
+    dom.voiceStop = document.getElementById('vno-voice-stop');
+    dom.voiceMute = document.getElementById('vno-voice-mute');
+    dom.picker = document.getElementById('vno-picker');
+    dom.pickerList = document.getElementById('vno-picker-list');
+    dom.pickerClose = document.getElementById('vno-picker-close');
+    dom.pauseMenu = document.getElementById('vno-pause-menu');
+    dom.quickMenu = document.getElementById('vno-quick-menu');
+    dom.rotateHint = document.getElementById('vno-rotate-hint');
     dom.audioMusic = document.getElementById('vno-audio-music');
     dom.audioAmbience = document.getElementById('vno-audio-ambience');
     dom.audioSfx = document.getElementById('vno-audio-sfx');
@@ -1457,29 +1808,65 @@ export function generatePlayerJs(): string {
     dom.stage.style.transform = 'translate(-50%, -50%) scale(' + scale + ')';
     dom.stage.style.left = '50%';
     dom.stage.style.top = '50%';
+    // a touch target must be at least 48 CSS px after the scale: --vno-hud-k = max(1, 48 / (baseHeight * stageScale)), base 40 stage px
+    const k = isCoarsePointer() && scale > 0 ? Math.max(1, 48 / (40 * scale)) : 1;
+    setRootVar('--vno-hud-k', String(Math.round(k * 100) / 100));
+  }
+
+  function isCoarsePointer() {
+    try {
+      return typeof window.matchMedia === 'function' && Boolean(window.matchMedia('(pointer: coarse)').matches);
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function setRootVar(name, value) {
+    const root = document.documentElement;
+    if (!root || !root.style) return;
+    if (typeof root.style.setProperty === 'function') root.style.setProperty(name, value);
+    else root.style[name] = value;
+  }
+
+  /** The music waits for the first user gesture (the browser's autoplay rule). The key handler calls this too: it stops the keys the window would see. */
+  function unlockAutoplay() {
+    if (dom.audioMusic && dom.audioMusic.paused && dom.audioMusic.src) {
+      dom.audioMusic.play().catch(() => {});
+    }
   }
 
   function setupAutoplayUnlock() {
-    const unlock = () => {
-      if (dom.audioMusic && dom.audioMusic.paused && dom.audioMusic.src) {
-        dom.audioMusic.play().catch(() => {});
-      }
-    };
     ['click', 'pointerdown', 'keydown'].forEach(evt => {
-      window.addEventListener(evt, unlock);
+      window.addEventListener(evt, unlockAutoplay);
     });
   }
 
-  function populateLanguageSelect(selectEl) {
-    if (!selectEl || !gameData || !gameData.languages) return;
-    selectEl.innerHTML = '';
-    gameData.languages.forEach(l => {
-      const opt = document.createElement('option');
-      opt.value = l.code;
-      opt.textContent = l.nativeName && l.nativeName !== l.name ? (l.nativeName + ' (' + l.name + ')') : (l.nativeName || l.name || l.code);
-      if (l.code === currentLang) opt.selected = true;
-      selectEl.appendChild(opt);
+  function languageLabel(l) {
+    return (l && (l.nativeName || l.name || l.code)) || '';
+  }
+
+  /** The three language buttons (the chip and both Preferences rows) show the current language by its native name; a click opens the picker. */
+  function updateLanguageButtons() {
+    if (!gameData) return;
+    const story = gameData.languages ? gameData.languages.find(l => l.code === currentLang) : null;
+    [dom.stageLanguage, dom.prefLanguage].forEach(btn => {
+      if (!btn) return;
+      btn.value = currentLang;
+      btn.textContent = story ? languageLabel(story) : currentLang;
     });
+    // Hidden (and not offered) when the payload has no interface languages (an old game-data.json).
+    const row = dom.prefUiLanguageRow || document.getElementById('vno-pref-row-ui-language');
+    const list = getUiLanguages();
+    if (!list.length) {
+      if (row && row.classList) row.classList.add('vno-hidden');
+      return;
+    }
+    if (row && row.classList) row.classList.remove('vno-hidden');
+    const entry = list.find(l => l.code === settings.uiLang);
+    if (dom.prefUiLanguage) {
+      dom.prefUiLanguage.value = settings.uiLang;
+      dom.prefUiLanguage.textContent = entry ? languageLabel(entry) : settings.uiLang;
+    }
   }
 
   /** The interface (menu) languages a game-data.json ships: English first, then every language with menu strings. Empty in an old payload. */
@@ -1488,29 +1875,6 @@ export function generatePlayerJs(): string {
     const list = gameData.uiLanguages;
     if (!Array.isArray(list)) return [];
     return list.filter(l => Boolean(l && l.code));
-  }
-
-  /** The Preferences screen's Interface language select. Hidden (and not bound) when the payload has no interface languages (an old game-data.json). */
-  function populateUiLanguageSelect(selectEl) {
-    const row = dom.prefUiLanguageRow || document.getElementById('vno-pref-row-ui-language');
-    const list = getUiLanguages();
-    if (!list.length) {
-      if (row && row.classList) row.classList.add('vno-hidden');
-      return;
-    }
-    if (row && row.classList) row.classList.remove('vno-hidden');
-    if (!selectEl) return;
-    selectEl.innerHTML = '';
-    list.forEach(l => {
-      const opt = document.createElement('option');
-      opt.value = l.code;
-      opt.textContent = l.nativeName && l.nativeName !== l.name ? (l.nativeName + ' (' + l.name + ')') : (l.nativeName || l.name || l.code);
-      if (l.code === settings.uiLang) opt.selected = true;
-      selectEl.appendChild(opt);
-    });
-    const label = ui('Interface Language', 'Interface Language');
-    selectEl.title = label;
-    selectEl.setAttribute('aria-label', label);
   }
 
   /** An unknown or vanished interface language falls back to English (the built-in literals). */
@@ -1547,9 +1911,6 @@ export function generatePlayerJs(): string {
     if (pictureBook && dom.pageLayer) dom.pageLayer.classList.add('vno-hidden');
 
     normalizeUiLang();
-    populateLanguageSelect(dom.stageLanguage);
-    populateLanguageSelect(dom.prefLanguage);
-    populateUiLanguageSelect(dom.prefUiLanguage);
     updateLangBarVisibility();
 
     applyLanguageTypography();
@@ -1561,6 +1922,9 @@ export function generatePlayerJs(): string {
     if (gameData.audio && gameData.audio.music && gameData.audio.music.music_01) {
       playMusic('music_01');
     }
+
+    // something has focus from the start, so a remote can move at once
+    focusLayerFirst(topLayer(), true);
   }
 
   /** Story language only: the edition, the typography, the title and the ending. The menus keep the interface language. */
@@ -1568,13 +1932,6 @@ export function generatePlayerJs(): string {
     if (!gameData || !gameData.editions || !gameData.editions[langCode]) return;
     currentLang = langCode;
     currentEdition = gameData.editions[langCode];
-
-    if (dom.stageLanguage && dom.stageLanguage.value !== langCode) {
-      dom.stageLanguage.value = langCode;
-    }
-    if (dom.prefLanguage && dom.prefLanguage.value !== langCode) {
-      dom.prefLanguage.value = langCode;
-    }
 
     applyLanguageTypography();
     updateUiStrings();
@@ -1591,9 +1948,6 @@ export function generatePlayerJs(): string {
     }
     settings.uiLang = code;
     saveSettings();
-    if (dom.prefUiLanguage && dom.prefUiLanguage.value !== code) {
-      dom.prefUiLanguage.value = code;
-    }
     updateUiStrings();
     refreshActiveScreens();
   }
@@ -1710,17 +2064,82 @@ export function generatePlayerJs(): string {
       if (btn && btn.setAttribute) btn.setAttribute('aria-label', closeLabel);
     });
 
-    // Interface language select tooltip (the story select and the stage bar keep the story language label)
+    // Interface language button tooltip (the story button and the stage chip keep the story language label)
     const uiLanguageLabel = ui('Interface Language', 'Interface Language');
     if (dom.prefUiLanguage) {
       dom.prefUiLanguage.title = uiLanguageLabel;
       dom.prefUiLanguage.setAttribute('aria-label', uiLanguageLabel);
     }
 
-    // Stage Language Bar tooltip & aria-label (it switches the story language)
+    // Stage Language chip tooltip & aria-label (it switches the story language)
     const langLabel = ui('Language', 'Language');
     if (dom.langBar) dom.langBar.title = langLabel;
     if (dom.stageLanguage) dom.stageLanguage.setAttribute('aria-label', langLabel);
+
+    // Pause menu, picker, rotate hint and the Voices row (VNO-62)
+    setElemText('vno-pause-resume', ui('Resume', 'Resume'));
+    setElemText('vno-pause-save', ui('Save', 'Save'));
+    setElemText('vno-pause-load', ui('Load', 'Load'));
+    setElemText('vno-pause-history', ui('History', 'History'));
+    setElemText('vno-pause-prefs', ui('Preferences', 'Preferences'));
+    setElemText('vno-pause-mainmenu', ui('Main Menu', 'Main Menu'));
+    setElemText('vno-pref-label-voices', ui('Voices', 'Voices'));
+    setElemText('vno-rotate-hint-text', ui('Rotate your device to landscape', 'Rotate your device to landscape'));
+    if (dom.pickerClose) {
+      dom.pickerClose.title = closeLabel;
+      dom.pickerClose.setAttribute('aria-label', closeLabel);
+    }
+
+    updateLanguageButtons();
+    updateVoiceUi();
+  }
+
+  // ---- voice stop and mute (VNO-62) ----
+
+  /** True when the current edition has voice clips: the stop and mute controls only show then. */
+  function hasVoiceFiles() {
+    const v = currentEdition && currentEdition.voice;
+    return Boolean(v && Object.keys(v).length > 0);
+  }
+
+  function updateVoiceUi() {
+    if (!dom.voiceCluster) return;
+    const has = hasVoiceFiles();
+    const muted = Boolean(settings.voiceMuted);
+    if (has) dom.voiceCluster.classList.remove('vno-hidden');
+    else dom.voiceCluster.classList.add('vno-hidden');
+    if (dom.prefVoicesRow) {
+      if (has) dom.prefVoicesRow.classList.remove('vno-hidden');
+      else dom.prefVoicesRow.classList.add('vno-hidden');
+    }
+    if (dom.voiceStop) {
+      const stopLabel = ui('Stop voice', 'Stop voice');
+      // the stop button is only enabled while a clip plays; focus must not fall off a button that just went grey
+      if (!voiceActive && dom.voiceMute && document.activeElement === dom.voiceStop) focusEl(dom.voiceMute, false);
+      dom.voiceStop.disabled = !voiceActive;
+      dom.voiceStop.title = stopLabel;
+      dom.voiceStop.setAttribute('aria-label', stopLabel);
+    }
+    if (dom.voiceMute) {
+      const muteLabel = muted ? ui('Unmute voice', 'Unmute voice') : ui('Mute voice', 'Mute voice');
+      dom.voiceMute.setAttribute('aria-pressed', muted ? 'true' : 'false');
+      dom.voiceMute.title = muteLabel;
+      dom.voiceMute.setAttribute('aria-label', muteLabel);
+      dom.voiceMute.innerHTML = muted ? '&#128263;' : '&#128266;';
+    }
+    if (dom.prefVoices) dom.prefVoices.textContent = muted ? ui('Off', 'Off') : ui('On', 'On');
+  }
+
+  /** Mute: no clip plays until it is switched off; the current line stops now. The choice is saved with the other settings. */
+  function setVoiceMuted(flag) {
+    settings.voiceMuted = Boolean(flag);
+    saveSettings();
+    if (settings.voiceMuted) stopVoice();
+    if (pictureBook && gameData && pageLayerVisible()) {
+      const entry = pictureBookPages()[pageIdx];
+      if (entry) updatePageReplay(entry.scene);
+    }
+    updateVoiceUi();
   }
 
   // ---- story text size and the caption/dialogue auto-fit (VNO-48) ----
@@ -1911,6 +2330,7 @@ export function generatePlayerJs(): string {
     if (voiceActive === next) return;
     voiceActive = next;
     applyAudioVolumes();
+    updateVoiceUi();
   }
 
   function applyAudioVolumes() {
@@ -1922,21 +2342,30 @@ export function generatePlayerJs(): string {
   }
 
   function bindUiEvents() {
-    // Stop propagation on persistent stage language bar so dropdown interaction never advances stage or dismisses cards
+    // The persistent language chip never advances the stage or dismisses cards (keys are not stopped here: the document key handler needs them)
     if (dom.langBar) {
-      ['click', 'mousedown', 'mouseup', 'touchstart', 'keydown'].forEach(evt => {
+      ['click', 'mousedown', 'mouseup', 'touchstart'].forEach(evt => {
         dom.langBar.addEventListener(evt, (e) => e.stopPropagation());
       });
     }
-    if (dom.stageLanguage) {
-      dom.stageLanguage.addEventListener('change', (e) => switchLanguage(e.target.value));
-    }
-    if (dom.prefLanguage) {
-      dom.prefLanguage.addEventListener('change', (e) => switchLanguage(e.target.value));
-    }
 
-    // Stage Advance on Click
-    dom.textboxContainer.addEventListener('click', onAdvanceClick);
+    // The language buttons open the shared picker; a click on its backdrop closes it
+    [dom.stageLanguage, dom.prefLanguage].forEach(btn => {
+      if (btn) btn.addEventListener('click', () => openPicker('story', btn));
+    });
+    if (dom.prefUiLanguage) {
+      dom.prefUiLanguage.addEventListener('click', () => openPicker('ui', dom.prefUiLanguage));
+    }
+    if (dom.picker) {
+      dom.picker.addEventListener('click', (e) => {
+        if (e && e.target === dom.picker) closePicker(true);
+      });
+    }
+    if (dom.pickerClose) dom.pickerClose.addEventListener('click', () => closePicker(true));
+
+    // Stage advance: a click on the text box, or a tap anywhere on the stage that is not a control or an overlay
+    dom.textboxContainer.addEventListener('click', onStageClick);
+    if (dom.stage) dom.stage.addEventListener('click', onStageClick);
 
     // Main Menu Buttons
     document.getElementById('vno-mm-start').addEventListener('click', startGame);
@@ -1964,15 +2393,39 @@ export function generatePlayerJs(): string {
     document.getElementById('vno-qm-prefs').addEventListener('click', () => openScreen(dom.screenPrefs));
     document.getElementById('vno-qm-menu').addEventListener('click', returnToMainMenu);
 
+    // Pause menu (Back / Esc during play); a click on its backdrop resumes
+    document.getElementById('vno-pause-resume').addEventListener('click', () => closePauseMenu(true));
+    document.getElementById('vno-pause-save').addEventListener('click', () => openSaveScreen(true));
+    document.getElementById('vno-pause-load').addEventListener('click', () => openSaveScreen(false));
+    document.getElementById('vno-pause-history').addEventListener('click', openHistoryScreen);
+    document.getElementById('vno-pause-prefs').addEventListener('click', () => openScreen(dom.screenPrefs));
+    document.getElementById('vno-pause-mainmenu').addEventListener('click', returnToMainMenu);
+    if (dom.pauseMenu) {
+      dom.pauseMenu.addEventListener('click', (e) => {
+        if (e && e.target === dom.pauseMenu) closePauseMenu(true);
+      });
+    }
+
+    // Voice: stop the current line, mute all voices (the Preferences row does the same as the HUD button)
+    if (dom.voiceStop) {
+      dom.voiceStop.addEventListener('click', () => {
+        stopVoice();
+        setVoiceActive(false);
+        updateVoiceUi();
+      });
+    }
+    if (dom.voiceMute) dom.voiceMute.addEventListener('click', () => setVoiceMuted(!settings.voiceMuted));
+    if (dom.prefVoices) dom.prefVoices.addEventListener('click', () => setVoiceMuted(!settings.voiceMuted));
+
+    // A tap dismisses the rotate hint for the session
+    if (dom.rotateHint) {
+      dom.rotateHint.addEventListener('click', () => dom.rotateHint.classList.add('vno-hidden'));
+    }
+
     // Close buttons for modals
     document.querySelectorAll('.vno-screen-close').forEach(btn => {
       btn.addEventListener('click', closeAllScreens);
     });
-
-    // Preferences: the interface language re-labels every open screen; the story language stays on the two story selects
-    if (dom.prefUiLanguage) {
-      dom.prefUiLanguage.addEventListener('change', (e) => switchUiLanguage(e.target.value));
-    }
 
     // Preferences Sliders (with a value readout on the row)
     document.getElementById('vno-pref-fullscreen').addEventListener('click', toggleFullscreen);
@@ -2041,62 +2494,492 @@ export function generatePlayerJs(): string {
     return null;
   }
 
-  /** Esc on an open screen closes it and hands focus back to a close button (the keyboard user stays in the modal's world). */
-  function closeScreenOnEscape(openScreen) {
-    closeAllScreens();
-    let target = openScreen && openScreen.querySelector ? openScreen.querySelector('.vno-screen-close') : null;
-    if (!target && document.querySelectorAll) {
-      const closers = document.querySelectorAll('.vno-screen-close');
-      if (closers && closers.length) target = closers[0];
+  // ---- TV remote, keyboard and touch navigation (VNO-62) ----
+  // One key handler on the document moves focus inside the topmost layer (picker, screen, pause menu, puzzle, choices, ending card, main menu, then the in-game HUD).
+
+  function isShown(el) {
+    return Boolean(el && el.classList && !el.classList.contains('vno-hidden'));
+  }
+
+  /** A control that can take focus now: enabled and not inside a hidden block. */
+  function usable(el) {
+    if (!el || el.disabled) return false;
+    if (typeof el.closest === 'function' && el.closest('.vno-hidden')) return false;
+    return true;
+  }
+
+  function controlsIn(root) {
+    if (!root || typeof root.querySelectorAll !== 'function') return [];
+    return Array.prototype.slice.call(root.querySelectorAll(FOCUSABLE)).filter(usable);
+  }
+
+  function activeControl() {
+    const a = document.activeElement;
+    return a && a !== document.body && a !== document.documentElement ? a : null;
+  }
+
+  function focusedIn(list) {
+    const a = document.activeElement;
+    return a && list.indexOf(a) >= 0 ? a : null;
+  }
+
+  function blurActive() {
+    const a = activeControl();
+    if (a && typeof a.blur === 'function') a.blur();
+  }
+
+  /** Keyboard use shows the focus ring (html.vno-kb); a pointer or a touch hides it again. */
+  function setKbMode(on) {
+    const root = document.documentElement;
+    if (!root || !root.classList) return;
+    if (on) root.classList.add('vno-kb');
+    else root.classList.remove('vno-kb');
+  }
+
+  function kbMode() {
+    const root = document.documentElement;
+    return Boolean(root && root.classList && root.classList.contains('vno-kb'));
+  }
+
+  /** The centre and size of a control on screen, or null where the DOM has no layout (a test DOM). */
+  function rectOf(el) {
+    if (!el || typeof el.getBoundingClientRect !== 'function') return null;
+    const r = el.getBoundingClientRect();
+    if (!r) return null;
+    return { cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: r.width, h: r.height };
+  }
+
+  /** Focus a control. auto marks a focus the player moved by itself: an OK on that control within 700 ms is ignored (a held OK must not pick a choice). */
+  function focusEl(el, auto) {
+    if (!el || typeof el.focus !== 'function') return false;
+    try {
+      el.focus();
+    } catch (err) {
+      return false;
     }
-    if (target && typeof target.focus === 'function') target.focus();
+    // only inside a scrolling list: a scrollIntoView on the HUD could shift the clipped stage
+    if (typeof el.scrollIntoView === 'function' && typeof el.closest === 'function' && el.closest('.vno-picker-list, .vno-screen-body, .vno-save-slots-grid')) {
+      try {
+        el.scrollIntoView({ block: 'nearest' });
+      } catch (err) {
+        // an old engine: the scroll that focus() does is enough
+      }
+    }
+    if (auto) {
+      autoFocusEl = el;
+      autoFocusAt = Date.now();
+    }
+    return true;
+  }
+
+  /** The topmost layer: focus moves only inside it. */
+  function topLayer() {
+    if (isShown(dom.picker)) return { name: 'picker', el: dom.picker };
+    const screen = firstOpenScreen();
+    if (screen) return { name: 'screen', el: screen };
+    if (isShown(dom.pauseMenu)) return { name: 'pause', el: dom.pauseMenu };
+    if (isShown(dom.puzzleOverlay)) return { name: 'puzzle', el: dom.puzzleOverlay };
+    if (isShown(dom.choiceOverlay)) return { name: 'choices', el: dom.choiceOverlay };
+    if (isShown(dom.endingCard)) return { name: 'ending', el: dom.endingCard };
+    if (isShown(dom.mainMenu)) return { name: 'menu', el: dom.mainMenu };
+    return { name: 'game', el: dom.stage };
+  }
+
+  function pickerItems() {
+    const list = controlsIn(dom.pickerList);
+    return usable(dom.pickerClose) ? list.concat([dom.pickerClose]) : list;
+  }
+
+  /** The top-right HUD: voice stop and mute, then the language chip (each only while it is shown). */
+  function hudTopControls() {
+    return [dom.voiceStop, dom.voiceMute, dom.stageLanguage].filter(usable);
+  }
+
+  /** The in-game HUD: the top-right cluster plus the quick menu (a visual novel) or the page buttons (a picture book). */
+  function hudControls() {
+    const top = hudTopControls();
+    if (pictureBook) return top.concat([dom.pageMenu, dom.pagePrev, dom.pageNext, dom.pageReplay].filter(usable));
+    return top.concat(controlsIn(dom.quickMenu));
+  }
+
+  function layerControls(top) {
+    if (top.name === 'picker') return pickerItems();
+    if (top.name === 'game') return hudControls();
+    if (top.name === 'menu') return controlsIn(dom.mainMenu).concat(hudTopControls());
+    return controlsIn(top.el);
+  }
+
+  /** The control at the top (dir up) or the bottom (dir down) of the HUD; on a tie the right-most. */
+  function hudEdgeTarget(dir, list) {
+    let best = null;
+    let bestRect = null;
+    list.forEach(el => {
+      const r = rectOf(el);
+      if (!r) return;
+      if (!best) {
+        best = el;
+        bestRect = r;
+        return;
+      }
+      const tie = Math.abs(r.cy - bestRect.cy) <= 4;
+      const better = dir === 'up'
+        ? (r.cy < bestRect.cy - 4 || (tie && r.cx > bestRect.cx))
+        : (r.cy > bestRect.cy + 4 || (tie && r.cx > bestRect.cx));
+      if (better) {
+        best = el;
+        bestRect = r;
+      }
+    });
+    return best || list[0] || null;
+  }
+
+  /** What a layer focuses when it opens: the current picker item, the first control that is not the close button, the first choice or button. */
+  function preferredFocus(top, list) {
+    if (!list.length) return null;
+    for (let i = 0; i < list.length; i++) {
+      const el = list[i];
+      if (top.name === 'picker' && el.getAttribute && el.getAttribute('aria-selected') === 'true') return el;
+      if (top.name === 'screen' && el.classList && !el.classList.contains('vno-screen-close')) return el;
+    }
+    if (top.name === 'game') return hudEdgeTarget('up', list);
+    return list[0];
+  }
+
+  function focusLayerFirst(top, auto) {
+    return focusEl(preferredFocus(top, layerControls(top)), auto);
+  }
+
+  /** The nearest control in a direction, by the centres of the on-screen rectangles; document order where there is no layout. */
+  function spatialMove(cur, list, dir) {
+    const here = rectOf(cur);
+    if (!here) {
+      const at = list.indexOf(cur);
+      const step = dir === 'left' || dir === 'up' ? -1 : 1;
+      return list[at + step] || null;
+    }
+    let best = null;
+    let bestScore = Infinity;
+    list.forEach(el => {
+      if (el === cur) return;
+      const r = rectOf(el);
+      if (!r || (r.w <= 0 && r.h <= 0)) return;
+      const dx = r.cx - here.cx;
+      const dy = r.cy - here.cy;
+      const primary = dir === 'right' ? dx : dir === 'left' ? -dx : dir === 'down' ? dy : -dy;
+      const perp = dir === 'left' || dir === 'right' ? Math.abs(dy) : Math.abs(dx);
+      if (primary <= 2) return;
+      const score = primary + perp * 2;
+      if (score < bestScore) {
+        bestScore = score;
+        best = el;
+      }
+    });
+    return best;
+  }
+
+  /** OK on a control: one click. Ignored for a held key and for the first 700 ms after the player focused that control itself. */
+  function activate(el, e) {
+    if (e && e.repeat) return true;
+    if (el === autoFocusEl && Date.now() - autoFocusAt < 700) return true;
+    if (el.tagName === 'INPUT') return true;
+    if (typeof el.click === 'function') el.click();
+    return true;
+  }
+
+  /** After a layer closes: focus goes back to where it was (always for the picker, only after a key for the rest), else into the layer now on top. */
+  function restoreFocus(el, always) {
+    if (el && usable(el) && (always || kbMode())) {
+      focusEl(el, true);
+      return;
+    }
+    const top = topLayer();
+    if (top.name === 'game') blurActive();
+    else focusLayerFirst(top, true);
+  }
+
+  // ---- history: the Android Back button navigates the history instead of sending a key ----
+
+  function layerDepth() {
+    return (isShown(dom.picker) ? 1 : 0) + (firstOpenScreen() ? 1 : 0) + (isShown(dom.pauseMenu) ? 1 : 0);
+  }
+
+  /** One history entry per open layer (picker, screen, pause menu), so Back closes the layer instead of leaving the game. */
+  function syncHistory() {
+    const h = window.history;
+    if (!h || typeof h.pushState !== 'function') return;
+    const depth = layerDepth();
+    try {
+      while (pushedStates < depth) {
+        h.pushState({ vno: 1 }, '');
+        pushedStates++;
+      }
+      if (pushedStates > depth) {
+        const extra = pushedStates - depth;
+        pushedStates = depth;
+        ignorePops++;
+        h.go(-extra);
+      }
+    } catch (err) {
+      // a sandboxed frame may refuse history changes: the layers still work with the keys
+    }
+  }
+
+  function onPopState() {
+    if (ignorePops > 0) {
+      ignorePops--;
+      return;
+    }
+    if (pushedStates > 0) pushedStates--;
+    closeTopLayer();
+  }
+
+  /** Close the topmost picker, screen or pause menu; false when none is open. */
+  function closeTopLayer() {
+    const top = topLayer();
+    if (top.name === 'picker') {
+      closePicker(true);
+      return true;
+    }
+    if (top.name === 'screen') {
+      closeAllScreens();
+      restoreFocus(returnFocus.screen, false);
+      return true;
+    }
+    if (top.name === 'pause') {
+      closePauseMenu(true);
+      return true;
+    }
+    return false;
+  }
+
+  // ---- language picker ----
+
+  function openPicker(kind, trigger) {
+    if (!gameData || !dom.picker || !dom.pickerList) return;
+    const list = kind === 'ui' ? getUiLanguages() : (gameData.languages || []);
+    if (!list.length) return;
+    const current = kind === 'ui' ? settings.uiLang : currentLang;
+    pickerKind = kind;
+    pickerTrigger = trigger || null;
+    setElemText('vno-picker-title', kind === 'ui' ? ui('Interface Language', 'Interface Language') : ui('Story Language', 'Story Language'));
+    dom.pickerList.innerHTML = '';
+    const cols = list.length <= 6 ? 1 : (list.length <= 16 ? 2 : 3);
+    if (dom.pickerList.style) dom.pickerList.style.gridTemplateColumns = 'repeat(' + cols + ', 380px)';
+    list.forEach(l => {
+      const item = document.createElement('button');
+      item.setAttribute('type', 'button');
+      item.className = 'vno-picker-item';
+      item.setAttribute('role', 'option');
+      item.value = l.code;
+      item.textContent = languageLabel(l);
+      if (l.name && l.name !== languageLabel(l)) item.title = l.name;
+      item.setAttribute('aria-selected', l.code === current ? 'true' : 'false');
+      item.addEventListener('click', () => pickLanguage(l.code));
+      dom.pickerList.appendChild(item);
+    });
+    dom.picker.classList.remove('vno-hidden');
+    syncHistory();
+    focusLayerFirst({ name: 'picker', el: dom.picker }, true);
+  }
+
+  function closePicker(restore) {
+    if (!isShown(dom.picker)) return;
+    dom.picker.classList.add('vno-hidden');
+    const back = pickerTrigger;
+    pickerTrigger = null;
+    pickerKind = '';
+    syncHistory();
+    if (restore) restoreFocus(back, true);
+  }
+
+  /** A picked language switches the story or the interface exactly as the select's change did before. */
+  function pickLanguage(code) {
+    const kind = pickerKind;
+    closePicker(true);
+    if (kind === 'ui') switchUiLanguage(code);
+    else switchLanguage(code);
+  }
+
+  // ---- pause menu ----
+
+  function openPauseMenu() {
+    if (!gameData || pictureBook || !dom.pauseMenu) return;
+    if (isShown(dom.mainMenu) || isShown(dom.pauseMenu) || isShown(dom.picker) || firstOpenScreen()) return;
+    returnFocus.pause = activeControl();
+    dom.pauseMenu.classList.remove('vno-hidden');
+    syncHistory();
+    focusLayerFirst({ name: 'pause', el: dom.pauseMenu }, true);
+  }
+
+  function closePauseMenu(restore) {
+    if (!isShown(dom.pauseMenu)) return;
+    dom.pauseMenu.classList.add('vno-hidden');
+    syncHistory();
+    if (restore) restoreFocus(returnFocus.pause, false);
+  }
+
+  // ---- keys ----
+
+  /** The action a key stands for. e.key with a keyCode fallback: a TV remote often sends no e.code. */
+  function keyAction(e) {
+    const k = e.key;
+    const kc = e.keyCode || e.which || 0;
+    if (k === 'Escape' || k === 'Esc' || k === 'Backspace' || k === 'GoBack' || k === 'BrowserBack' || kc === 27 || kc === 8 || kc === 4 || kc === 461 || kc === 10009) return 'back';
+    if (k === 'Enter' || k === 'Select' || kc === 13 || kc === 23 || kc === 29443) return 'ok';
+    if (k === ' ' || k === 'Spacebar' || kc === 32) return 'space';
+    if (k === 'ArrowLeft' || k === 'Left' || kc === 37) return 'left';
+    if (k === 'ArrowUp' || k === 'Up' || kc === 38) return 'up';
+    if (k === 'ArrowRight' || k === 'Right' || kc === 39) return 'right';
+    if (k === 'ArrowDown' || k === 'Down' || kc === 40) return 'down';
+    if (k === 'PageUp' || kc === 33) return 'pageup';
+    if (k === 'f' || k === 'F' || k === 'F11' || kc === 122) return 'fullscreen';
+    return '';
+  }
+
+  function isArrow(act) {
+    return act === 'left' || act === 'right' || act === 'up' || act === 'down';
+  }
+
+  function onKeyDown(e) {
+    if (!e || e.defaultPrevented) return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt' && e.key !== 'Meta') setKbMode(true);
+    const act = keyAction(e);
+    if (!act) return;
+    unlockAutoplay();
+    if (handleKey(act, e)) {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      if (typeof e.stopPropagation === 'function') e.stopPropagation();
+    }
+  }
+
+  /** True when the player handled the key (the caller then stops it, so the site bridge does not see it). */
+  function handleKey(act, e) {
+    const top = topLayer();
+    if (top.name === 'game') return handleGameKey(act, e);
+    if (act === 'fullscreen') return false;
+    const list = layerControls(top);
+    const active = focusedIn(list);
+    if (act === 'back') {
+      if (top.name === 'menu') return false; // Back on the main menu leaves the game: the site bridge takes it
+      if (top.name === 'picker' || top.name === 'screen' || top.name === 'pause') return closeTopLayer();
+      openPauseMenu(); // over the puzzle, the choices or the ending card
+      return true;
+    }
+    if (isArrow(act)) {
+      // a range slider keeps Left and Right for itself
+      if (active && active.tagName === 'INPUT' && (act === 'left' || act === 'right')) return false;
+      if (!list.length) return true;
+      if (!active) {
+        focusEl(preferredFocus(top, list), false);
+        return true;
+      }
+      const next = spatialMove(active, list, act);
+      if (next) {
+        focusEl(next, false);
+        return true;
+      }
+      if (act === 'up' && top.name === 'menu') {
+        blurActive(); // nothing above on the main menu: the site bridge may take the key (its Library link)
+        return false;
+      }
+      return true;
+    }
+    if (act === 'ok' || act === 'space') {
+      if (!active) {
+        focusEl(preferredFocus(top, list), false);
+        return true;
+      }
+      return activate(active, e);
+    }
+    return false;
+  }
+
+  function handleGameKey(act, e) {
+    const list = hudControls();
+    const active = focusedIn(list);
+    if (active) {
+      if (act === 'back') {
+        blurActive(); // back to the stage
+        return true;
+      }
+      if (isArrow(act)) {
+        const next = spatialMove(active, list, act);
+        if (next) {
+          focusEl(next, false);
+          return true;
+        }
+        if (act === 'up') {
+          blurActive(); // nothing above in the HUD: the site bridge may take the key
+          return false;
+        }
+        return true;
+      }
+      if (act === 'ok' || act === 'space') return activate(active, e);
+    }
+    if (act === 'fullscreen') {
+      toggleFullscreen();
+      return true;
+    }
+    // nothing in the HUD has focus: the stage keys
+    if ((act === 'ok' || act === 'space') && isShown(dom.chapterCard)) {
+      dom.chapterCard.click();
+      return true;
+    }
+    if (pictureBook) {
+      if (act === 'right' || act === 'space' || act === 'ok') {
+        nextPage();
+        return true;
+      }
+      if (act === 'left' || act === 'pageup') {
+        prevPage();
+        return true;
+      }
+      if (act === 'back') {
+        returnToMainMenu();
+        return true;
+      }
+    } else {
+      if (act === 'space' || act === 'ok') {
+        onAdvanceClick();
+        return true;
+      }
+      if (act === 'left' || act === 'pageup') {
+        rollback();
+        return true;
+      }
+      if (act === 'back') {
+        openPauseMenu();
+        return true;
+      }
+    }
+    if ((act === 'up' || act === 'down') && list.length) {
+      focusEl(hudEdgeTarget(act, list), false);
+      return true;
+    }
+    return false;
+  }
+
+  /** A tap anywhere on the stage advances a visual novel, except on a control, a screen or an overlay. */
+  function onStageClick(e) {
+    if (pictureBook || !gameData) return;
+    if (e) {
+      if (e.__vnoTap) return; // the text box and the stage both see the same click
+      e.__vnoTap = true;
+    }
+    const t = e ? e.target : null;
+    if (t && typeof t.closest === 'function' && t.closest(TAP_BLOCK)) return;
+    if (isShown(dom.mainMenu) || isShown(dom.picker) || isShown(dom.pauseMenu) || firstOpenScreen()) return;
+    if (isShown(dom.puzzleOverlay) || isShown(dom.choiceOverlay) || isShown(dom.endingCard) || isShown(dom.chapterCard)) return;
+    onAdvanceClick();
   }
 
   function bindKeyboardShortcuts() {
-    window.addEventListener('keydown', (e) => {
-      // Esc closes any open screen first, in both presentations: a modal never traps the reader
-      if (e && e.code === 'Escape') {
-        const open = firstOpenScreen();
-        if (open) {
-          e.preventDefault();
-          closeScreenOnEscape(open);
-          return;
-        }
-      }
-      if (e.target && (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT')) return;
-      if (dom.mainMenu && !dom.mainMenu.classList.contains('vno-hidden')) return;
-      if (pictureBook) {
-        // page navigation: right/Space/Enter go on, left/PageUp go back, Esc opens the main menu
-        if (e.code === 'ArrowRight' || e.code === 'Space' || e.code === 'Enter') {
-          e.preventDefault();
-          nextPage();
-        } else if (e.code === 'ArrowLeft' || e.code === 'PageUp') {
-          e.preventDefault();
-          prevPage();
-        } else if (e.code === 'Escape') {
-          e.preventDefault();
-          returnToMainMenu();
-        } else if (e.key === 'f' || e.key === 'F' || e.code === 'F11') {
-          e.preventDefault();
-          toggleFullscreen();
-        }
-        return;
-      }
-      if (e.code === 'Space' || e.code === 'Enter') {
-        e.preventDefault();
-        onAdvanceClick();
-      } else if (e.code === 'PageUp' || e.code === 'ArrowLeft') {
-        e.preventDefault();
-        rollback();
-      } else if (e.code === 'Escape') {
-        e.preventDefault();
-        if (!dom.screenPrefs.classList.contains('vno-hidden')) closeAllScreens();
-        else openScreen(dom.screenPrefs);
-      } else if (e.key === 'f' || e.key === 'F' || e.code === 'F11') {
-        e.preventDefault();
-        toggleFullscreen();
-      }
+    document.addEventListener('keydown', onKeyDown);
+    ['mousedown', 'touchstart', 'pointerdown'].forEach(evt => {
+      document.addEventListener(evt, () => setKbMode(false), true);
     });
+    window.addEventListener('popstate', onPopState);
   }
 
   function toggleFullscreen() {
@@ -2146,6 +3029,7 @@ export function generatePlayerJs(): string {
     if (gameData && gameData.audio && gameData.audio.music && gameData.audio.music.music_01) {
       playMusic('music_01');
     }
+    focusLayerFirst(topLayer(), true);
   }
 
   function playChapter(chIdx) {
@@ -2464,6 +3348,9 @@ export function generatePlayerJs(): string {
 
   function showChoices(choices) {
     activeChoices = choices;
+    // a re-render (the language changed) keeps the focused choice
+    const before = controlsIn(dom.choiceContainer);
+    const keep = before.indexOf(document.activeElement);
     dom.choiceContainer.innerHTML = '';
     const ch = gameData.chapters[currentChapterIdx];
     const chNum = ch ? ch.number : (currentChapterIdx + 1);
@@ -2482,6 +3369,8 @@ export function generatePlayerJs(): string {
       dom.choiceContainer.appendChild(btn);
     });
     dom.choiceOverlay.classList.remove('vno-hidden');
+    const now = controlsIn(dom.choiceContainer);
+    focusEl(now[keep >= 0 ? keep : 0], keep < 0);
   }
 
   function showEnding(msg) {
@@ -2493,6 +3382,7 @@ export function generatePlayerJs(): string {
       ui('The End', 'The End');
     dom.endingCardText.textContent = localizedEnding;
     dom.endingCard.classList.remove('vno-hidden');
+    focusEl(controlsIn(dom.endingCard)[0], true);
   }
 
   // Puzzles Logic
@@ -2708,6 +3598,7 @@ export function generatePlayerJs(): string {
   }
 
   function playVoiceForBeat(beatId) {
+    if (settings.voiceMuted) return;
     if (!currentEdition || !currentEdition.voice || !currentEdition.voice[beatId]) return;
     const rel = currentEdition.voice[beatId];
     dom.audioVoice.src = rel;
@@ -2930,6 +3821,8 @@ export function generatePlayerJs(): string {
       const raw = localStorage.getItem(key);
       const card = document.createElement('div');
       card.className = 'vno-slot-card';
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('role', 'button');
       if (raw) {
         const item = JSON.parse(raw);
         card.innerHTML = '<h4>Slot ' + slotId + '</h4><p>' + new Date(item.timestamp).toLocaleString() + '</p><p>' + item.text + '...</p>';
@@ -2979,14 +3872,24 @@ export function generatePlayerJs(): string {
   }
 
   function openScreen(screenEl) {
-    closeAllScreens();
+    const from = activeControl();
+    hideScreens();
     screenEl.classList.remove('vno-hidden');
+    returnFocus.screen = from;
+    syncHistory();
+    focusLayerFirst({ name: 'screen', el: screenEl }, true);
+  }
+
+  /** Hide the screens and the pause menu without touching the history (openScreen swaps one layer for another). */
+  function hideScreens() {
+    [dom.screenSave, dom.screenPrefs, dom.screenHistory, dom.screenAbout, dom.pauseMenu].forEach(s => {
+      if (s) s.classList.add('vno-hidden');
+    });
   }
 
   function closeAllScreens() {
-    [dom.screenSave, dom.screenPrefs, dom.screenHistory, dom.screenAbout].forEach(s => {
-      if (s) s.classList.add('vno-hidden');
-    });
+    hideScreens();
+    syncHistory();
   }
 
   // ---- picture book (VNO-47): one page per scene, page turns, read aloud ----
@@ -3154,6 +4057,7 @@ export function generatePlayerJs(): string {
     if (dom.endingCardText) dom.endingCardText.textContent = activeEndingMsg;
     if (dom.pageLayer) dom.pageLayer.classList.add('vno-hidden');
     if (dom.endingCard) dom.endingCard.classList.remove('vno-hidden');
+    focusEl(controlsIn(dom.endingCard)[0], true);
   }
 
   /** The clips the current edition has for the page's text beats, in the order they are read. */
@@ -3172,7 +4076,8 @@ export function generatePlayerJs(): string {
   function updatePageReplay(scene) {
     pageVoices = pageVoiceClips(scene);
     pageVoiceIdx = 0;
-    const has = pageVoices.length > 0;
+    // the replay button is hidden while voices are muted
+    const has = pageVoices.length > 0 && !settings.voiceMuted;
     if (dom.pageReplay) {
       if (has) dom.pageReplay.classList.remove('vno-hidden');
       else dom.pageReplay.classList.add('vno-hidden');
@@ -3186,6 +4091,7 @@ export function generatePlayerJs(): string {
   }
 
   function playNextPageVoiceClip() {
+    if (settings.voiceMuted) return;
     if (!pageVoices || pageVoiceIdx >= pageVoices.length) return;
     const rel = pageVoices[pageVoiceIdx];
     pageVoiceIdx++;
@@ -3236,6 +4142,7 @@ export function generatePlayerJs(): string {
     settings.volVoice = settingsNumber(settings.volVoice, 0, 100, 90);
     settings.storyTextSize = settingsNumber(settings.storyTextSize, 80, 140, 100);
     if (typeof settings.uiLang !== 'string' || !settings.uiLang) settings.uiLang = 'en';
+    settings.voiceMuted = settings.voiceMuted === true;
 
     // Migration: a stored player from before VNO-48 has no schema; its music default (80) drowns the voice, so cap it once and persist.
     if (!stored || stored.schema === undefined || stored.schema === null) {
