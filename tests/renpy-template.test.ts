@@ -41,6 +41,10 @@ const TEST_THEME: Theme = {
 function createPlayerHarness(gameData: GameData, seedStorage: Record<string, string> = {}) {
   const elementsById = new Map<string, FakeElement>()
   const allElements: FakeElement[] = []
+  let activeEl: FakeElement | null = null
+  const setActive = (el: FakeElement | null) => {
+    activeEl = el
+  }
 
   class ClassList {
     private set = new Set<string>()
@@ -81,6 +85,7 @@ function createPlayerHarness(gameData: GameData, seedStorage: Record<string, str
     alt = ''
     loop = false
     selected = false
+    disabled = false
     paused = true
     currentTime = 0
     duration = 10
@@ -158,9 +163,6 @@ function createPlayerHarness(gameData: GameData, seedStorage: Record<string, str
     appendChild(child: FakeElement) {
       child.parent = this
       this.children.push(child)
-      if (this.tagName === 'SELECT' && (child.selected || this.children.length === 1)) {
-        this.value = child.value
-      }
       return child
     }
 
@@ -197,9 +199,25 @@ function createPlayerHarness(gameData: GameData, seedStorage: Record<string, str
       return this.dispatchEvent('click')
     }
 
-    change(newValue: string) {
-      this.value = newValue
-      return this.dispatchEvent('change')
+    focus() {
+      setActive(this)
+    }
+    blur() {
+      if (activeEl === this) setActive(null)
+    }
+
+    private matchesOne(sel: string): boolean {
+      const s = sel.trim()
+      if (s.startsWith('.')) return this.classList.contains(s.slice(1))
+      if (s.startsWith('#')) return this._id === s.slice(1)
+      return this.tagName === s.toUpperCase()
+    }
+    matches(sel: string): boolean {
+      return sel.split(',').some((s) => this.matchesOne(s))
+    }
+    closest(sel: string): FakeElement | null {
+      if (this.matches(sel)) return this
+      return this.parent ? this.parent.closest(sel) : null
     }
 
     play() {
@@ -225,8 +243,7 @@ function createPlayerHarness(gameData: GameData, seedStorage: Record<string, str
       const out: FakeElement[] = []
       const visit = (el: FakeElement) => {
         for (const ch of el.children) {
-          if (sel.startsWith('.') && ch.classList.contains(sel.slice(1))) out.push(ch)
-          else if (sel.toUpperCase() === ch.tagName) out.push(ch)
+          if (ch.matches(sel)) out.push(ch)
           visit(ch)
         }
       }
@@ -255,17 +272,25 @@ function createPlayerHarness(gameData: GameData, seedStorage: Record<string, str
   const stageSelectEl = elementsById.get('vno-stage-language')!
   stageEl.appendChild(langBarEl)
   langBarEl.appendChild(stageSelectEl)
+  const mainMenuEl = elementsById.get('vno-screen-main-menu')!
+  for (const id of ['start', 'load', 'prefs', 'about']) mainMenuEl.appendChild(elementsById.get(`vno-mm-${id}`)!)
+  const quickMenuEl = elementsById.get('vno-quick-menu')!
+  for (const id of ['back', 'history', 'skip', 'auto', 'save', 'qsave', 'qload', 'prefs', 'menu']) quickMenuEl.appendChild(elementsById.get(`vno-qm-${id}`)!)
 
   const docElement = new FakeElement('html')
   const bodyElement = new FakeElement('body', '', 'vno-body')
   const storage = new Map<string, string>(Object.entries(seedStorage))
   let domLoadedHandler: (() => void) | null = null
 
+  const documentListeners = new Map<string, Array<(e: unknown) => void>>()
   const fakeDocument = {
     title: gameData.title,
     fullscreenElement: null,
     documentElement: docElement,
     body: bodyElement,
+    get activeElement() {
+      return activeEl
+    },
     getElementById: (id: string) => elementsById.get(id) ?? null,
     createElement: (tag: string) => new FakeElement(tag),
     querySelectorAll: (sel: string) => {
@@ -274,8 +299,13 @@ function createPlayerHarness(gameData: GameData, seedStorage: Record<string, str
       }
       return []
     },
-    addEventListener: (evt: string, fn: () => void) => {
-      if (evt === 'DOMContentLoaded') domLoadedHandler = fn
+    addEventListener: (evt: string, fn: (e: unknown) => void) => {
+      if (evt === 'DOMContentLoaded') domLoadedHandler = fn as () => void
+      else documentListeners.set(evt, [...(documentListeners.get(evt) ?? []), fn])
+    },
+    dispatchEvent: (type: string, evt: Record<string, unknown> = {}) => {
+      const e = { type, preventDefault: () => {}, stopPropagation: () => {}, ...evt }
+      for (const fn of documentListeners.get(type) ?? []) fn(e)
     },
     exitFullscreen: () => Promise.resolve()
   }
@@ -319,8 +349,21 @@ function createPlayerHarness(gameData: GameData, seedStorage: Record<string, str
   speedInput.value = '100'
   speedInput.dispatchEvent('input')
 
+  /** A language change the way a player does it: click the button, the picker opens, click the language in it. */
+  function pick(trigger: FakeElement, code: string) {
+    trigger.click()
+    const picker = elementsById.get('vno-picker')!
+    expect(picker.classList.contains('vno-hidden'), `the picker opens for ${code}`).toBe(false)
+    const item = elementsById.get('vno-picker-list')!.children.find((c) => c.value === code)
+    expect(item, `picker item ${code}`).toBeTruthy()
+    item!.click()
+    expect(picker.classList.contains('vno-hidden')).toBe(true)
+  }
+
   return {
+    pick,
     window: fakeWindow as FakePlayerWindow & {
+      VNO_NAV: { version: number; focusFirst: () => boolean }
       VNOEngine: {
         getState: () => { chapterIdx: number; sceneIdx: number; beatIdx: number; lang: string; uiLang: string }
         getLanguages: () => Array<{ code: string; name: string; nativeName: string }>
@@ -345,7 +388,9 @@ describe('Web Game Engine player runtime', () => {
     expect(runtime.js).toContain("document.getElementById('vno-btn-restart').addEventListener('click', startGame)")
   })
 
-  it('emits persistent stage language dropdown (#vno-lang-bar / #vno-stage-language) above all screens', () => {
+  it('emits the persistent stage language chip (#vno-lang-bar / #vno-stage-language) above all screens, and no native select anywhere', () => {
+    expect(runtime.html).not.toContain('<select')
+    expect(runtime.html).toContain('id="vno-picker"')
     expect(runtime.html).toContain('id="vno-lang-bar"')
     expect(runtime.html).toContain('id="vno-stage-language"')
     expect(runtime.html).toContain('id="vno-pref-language"')
@@ -549,7 +594,7 @@ describe('Web Game Engine player runtime', () => {
     expect(h.getById('vno-mm-start').textContent).toBe('Start')
 
     // 3. Switching the story language to Croatian ('hr') re-renders the story only: the menus keep the interface language
-    stageLang.change('hr')
+    h.pick(stageLang, 'hr')
     expect(h.window.VNOEngine.getState().lang).toBe('hr')
     expect(h.window.VNOEngine.getState().uiLang).toBe('en')
     expect(prefLang.value).toBe('hr')
@@ -558,7 +603,7 @@ describe('Web Game Engine player runtime', () => {
     expect(h.getById('vno-mm-start').textContent).toBe('Start')
 
     // 3b. Switching the INTERFACE language to Croatian re-labels the menus and leaves the story alone
-    uiLang.change('hr')
+    h.pick(uiLang, 'hr')
     expect(h.window.VNOEngine.getState().uiLang).toBe('hr')
     expect(h.window.VNOEngine.getState().lang).toBe('hr')
     expect(h.getById('vno-mm-title').textContent).toBe('Zagonetka lanterne')
@@ -568,7 +613,7 @@ describe('Web Game Engine player runtime', () => {
     h.window.VNOEngine.switchUiLanguage('en')
     expect(h.getById('vno-mm-start').textContent).toBe('Start')
     // Switch the story back to German ('de') before starting
-    stageLang.change('de')
+    h.pick(stageLang, 'de')
     expect(h.getById('vno-mm-title').textContent).toBe('Das Laternenrätsel')
 
     // 4. Click Start -> Chapter 1 Title Card is shown in German
@@ -583,7 +628,7 @@ describe('Web Game Engine player runtime', () => {
     expect(chapterCard.classList.contains('vno-hidden')).toBe(false)
 
     // Switch language on Chapter Card to English ('en') -> updates chapter card text immediately
-    stageLang.change('en')
+    h.pick(stageLang, 'en')
     expect(chapterCardText.textContent).toBe('Chapter One: The Fog')
 
     // 5. Dismiss Chapter Card -> Beat 1 (Dialogue with alias) starts in English ('en', the language we switched to!)
@@ -596,16 +641,16 @@ describe('Web Game Engine player runtime', () => {
     expect(h.getById('vno-scene-title').classList.contains('vno-hidden')).toBe(false)
 
     // Switch language mid-dialogue to Croatian ('hr') -> immediately updates current line, alias name and scene title
-    stageLang.change('hr')
+    h.pick(stageLang, 'hr')
     expect(h.getById('vno-speaker-name').textContent).toBe('Tuđinka')
     expect(h.getById('vno-dialogue-text').innerHTML).toBe('Dobra večer. <strong>Jako</strong> je hladno.')
     expect(h.getById('vno-scene-title').textContent).toBe('Luka, noć')
 
     // Switch to German ('de') and back to English ('en') on the same beat
-    stageLang.change('de')
+    h.pick(stageLang, 'de')
     expect(h.getById('vno-speaker-name').textContent).toBe('Die Fremde')
     expect(h.getById('vno-dialogue-text').innerHTML).toBe('Guten Abend. Es ist <strong>sehr</strong> kalt.')
-    stageLang.change('en')
+    h.pick(stageLang, 'en')
     expect(h.getById('vno-speaker-name').textContent).toBe('The Stranger')
     expect(h.getById('vno-dialogue-text').innerHTML).toBe('Good evening. It is <strong>very</strong> cold.')
 
@@ -613,7 +658,7 @@ describe('Web Game Engine player runtime', () => {
     h.getById('vno-textbox-container').click()
     expect(h.getById('vno-dialogue-text').innerHTML).toBe('The fog drifted across the quay.')
     // Switch to Croatian ('hr') on narration beat
-    stageLang.change('hr')
+    h.pick(stageLang, 'hr')
     expect(h.getById('vno-dialogue-text').innerHTML).toBe('Magla se spustila nad pristanište.')
 
     // 7. Open History screen and switch language while History is open -> all logged beats re-render in the chosen language
@@ -623,7 +668,7 @@ describe('Web Game Engine player runtime', () => {
     expect(historyScreen.classList.contains('vno-hidden')).toBe(false)
     expect(historyList.innerHTML).toContain('Tuđinka')
     expect(historyList.innerHTML).toContain('Dobra večer.')
-    stageLang.change('en')
+    h.pick(stageLang, 'en')
     expect(historyList.innerHTML).toContain('The Stranger')
     expect(historyList.innerHTML).toContain('Good evening.')
     expect(historyList.innerHTML).toContain('The fog drifted across the quay.')
@@ -639,14 +684,14 @@ describe('Web Game Engine player runtime', () => {
     // Strike the first clue, then switch to German ('de') -> clue text updates and struck state is preserved!
     cluesEn[0]!.click()
     expect(cluesEn[0]!.classList.contains('struck')).toBe(true)
-    stageLang.change('de')
+    h.pick(stageLang, 'de')
     const cluesDe = puzzleBody.querySelectorAll('.vno-clue-item')
     expect(cluesDe[0]!.textContent).toBe('Graf Viktor war im Salon.')
     expect(cluesDe[0]!.classList.contains('struck')).toBe(true)
     const namesDe = puzzleBody.querySelectorAll('.vno-puzzle-name-item')
     expect(namesDe.map((n) => n.textContent)).toContain('Graf Viktor')
     // Switch to Croatian ('hr') on puzzle screen
-    stageLang.change('hr')
+    h.pick(stageLang, 'hr')
     expect(puzzleBody.querySelectorAll('.vno-clue-item')[0]!.textContent).toBe('Grof Viktor bio je u salonu.')
     expect(puzzleBody.querySelectorAll('.vno-puzzle-name-item').map((n) => n.textContent)).toContain('Grof Viktor')
     // the puzzle's INTERFACE labels follow the interface language (English so far), not the story language
@@ -656,22 +701,22 @@ describe('Web Game Engine player runtime', () => {
     expect(h.getById('vno-puzzle-btn-hint').textContent).toBe('Hint')
     expect(h.getById('vno-puzzle-btn-giveup').textContent).toBe('Give Up')
     // changing the interface language re-labels the open puzzle; the clue text is story content
-    uiLang.change('hr')
+    h.pick(uiLang, 'hr')
     expect(cluesTitle()).toBe('Tragovi')
     expect(h.getById('vno-puzzle-btn-submit').textContent).toBe('Optuži')
     expect(h.getById('vno-puzzle-btn-hint').textContent).toBe('Natuknica')
     expect(h.getById('vno-puzzle-btn-giveup').textContent).toBe('Odustani')
     expect(puzzleBody.querySelectorAll('.vno-clue-item')[0]!.textContent).toBe('Grof Viktor bio je u salonu.')
     // ...and changing the story language never touches the labels
-    stageLang.change('en')
+    h.pick(stageLang, 'en')
     expect(puzzleBody.querySelectorAll('.vno-clue-item')[0]!.textContent).toBe('Count Viktor was in the drawing room.')
     expect(cluesTitle()).toBe('Tragovi')
-    stageLang.change('de')
+    h.pick(stageLang, 'de')
     expect(puzzleBody.querySelectorAll('.vno-clue-item')[0]!.textContent).toBe('Graf Viktor war im Salon.')
     expect(cluesTitle()).toBe('Tragovi')
-    uiLang.change('en')
+    h.pick(uiLang, 'en')
     expect(cluesTitle()).toBe('Clues')
-    stageLang.change('hr')
+    h.pick(stageLang, 'hr')
 
     // 9. Solve puzzle -> Chapter 1 ends with Branching Choices in Croatian ('hr')
     h.getById('vno-puzzle-btn-submit').click()
@@ -683,7 +728,7 @@ describe('Web Game Engine player runtime', () => {
       'Pregledaj čamac'
     ])
     // Switch language on Choice screen to English ('en') -> choice labels update immediately
-    stageLang.change('en')
+    h.pick(stageLang, 'en')
     expect(choiceContainer.children.map((b) => b.textContent)).toEqual([
       'Ask the harbourmaster',
       'Inspect the boat'
@@ -702,12 +747,12 @@ describe('Web Game Engine player runtime', () => {
     expect(endingCard.classList.contains('vno-hidden')).toBe(false)
     expect(endingText.textContent).toBe('The case was solved.')
     expect(h.getById('vno-btn-restart').textContent).toBe('Restart')
-    stageLang.change('de')
+    h.pick(stageLang, 'de')
     expect(endingText.textContent).toBe('Der Fall wurde gelöst.')
     expect(h.getById('vno-btn-restart').textContent).toBe('Restart')
-    stageLang.change('hr')
+    h.pick(stageLang, 'hr')
     expect(endingText.textContent).toBe('Slučaj je riješen.')
-    uiLang.change('hr')
+    h.pick(uiLang, 'hr')
     expect(h.getById('vno-btn-restart').textContent).toBe('Počni ispočetka')
   })
 })
@@ -1020,7 +1065,7 @@ describe('VNO-47: the picture-book player', () => {
       'fitCaption',
       'fitDialogue',
       'switchUiLanguage',
-      'populateUiLanguageSelect'
+      'updateLanguageButtons'
     ]) {
       expect(runtime.js).toContain(`function ${fn}`)
     }
@@ -1055,12 +1100,12 @@ describe('VNO-47: the picture-book player', () => {
     expect(h.getById('vno-audio-voice').src).toContain('voice/en/ch01.s01.b002')
 
     // the story language re-renders the caption; the page counter is interface text and keeps the interface language
-    h.getById('vno-stage-language').change('hr')
+    h.pick(h.getById('vno-stage-language'), 'hr')
     expect(h.getById('vno-page-counter').textContent).toBe('Page 1 of 3')
     expect(h.getById('vno-page-caption').innerHTML).toContain('Luna je potrčala uz brijeg')
     // the interface language translates the footer/counter only
     const uiLang = h.getById('vno-pref-ui-language')
-    uiLang.change('hr')
+    h.pick(uiLang, 'hr')
     expect(h.getById('vno-page-counter').textContent).toBe('Stranica 1 od 3')
     expect(h.getById('vno-page-caption').innerHTML).toContain('Luna je potrčala uz brijeg')
     // page 2 by clicking the illustration
@@ -1078,7 +1123,7 @@ describe('VNO-47: the picture-book player', () => {
     expect(h.getById('vno-page-caption').innerHTML).toContain('Pero se popeo')
 
     // an arrow key goes on; the caption click too; the last page shows The End with restart
-    h.window.dispatchEvent('keydown', { code: 'ArrowRight', key: 'ArrowRight', preventDefault: () => {} })
+    h.document.dispatchEvent('keydown', { code: 'ArrowRight', key: 'ArrowRight' })
     expect(h.getById('vno-page-counter').textContent).toBe('Stranica 3 od 3')
     expect(h.getById('vno-page-caption').innerHTML).toContain('Zatim su otišli kući na doručak.')
     h.getById('vno-page-caption').click()
@@ -1203,7 +1248,7 @@ describe('VNO-48: interface language, readable preferences and audio balance', (
     // pre-VNO-48 behaviour: the menus follow the story language
     expect(h.window.VNOEngine.getState().uiLang).toBe('en')
     expect(h.getById('vno-mm-start').textContent).toBe('Započni')
-    h.getById('vno-stage-language').change('en')
+    h.pick(h.getById('vno-stage-language'), 'en')
     expect(h.getById('vno-mm-start').textContent).toBe('Start')
   })
 
@@ -1287,7 +1332,72 @@ describe('VNO-48: interface language, readable preferences and audio balance', (
     // Esc closes Preferences instead of opening it again
     h.getById('vno-mm-prefs').click()
     expect(h.getById('vno-screen-prefs').classList.contains('vno-hidden')).toBe(false)
-    h.window.dispatchEvent('keydown', { code: 'Escape', key: 'Escape', preventDefault: () => {} })
+    h.document.dispatchEvent('keydown', { code: 'Escape', key: 'Escape' })
     expect(h.getById('vno-screen-prefs').classList.contains('vno-hidden')).toBe(true)
+  })
+
+  it('VNO-62: Enter on a focused HUD button clicks it once and does not also advance the story', () => {
+    const book = croatianBook()
+    const gd = buildGameData({ book, theme: TEST_THEME, primaryEdition: hrEdition(book) })
+    const h = createPlayerHarness(gd)
+    expect(h.document.documentElement.getAttribute('data-vno-nav')).toBe('1') // the site bridge stands down on this flag
+    expect(h.window.VNO_NAV.version).toBe(1)
+    h.getById('vno-mm-start').click()
+    h.getById('vno-chapter-card').click()
+    const before = h.window.VNOEngine.getState().beatIdx
+
+    const quickSave = h.getById('vno-qm-qsave')
+    let clicks = 0
+    quickSave.addEventListener('click', () => clicks++)
+    quickSave.focus()
+    let prevented = 0
+    h.document.dispatchEvent('keydown', { key: 'Enter', keyCode: 13, preventDefault: () => prevented++ })
+    expect(clicks).toBe(1)
+    expect(prevented).toBe(1)
+    expect(h.window.VNOEngine.getState().beatIdx).toBe(before)
+
+    // with nothing focused the same key still advances
+    quickSave.blur()
+    h.document.dispatchEvent('keydown', { key: 'Enter', keyCode: 13 })
+    expect(h.window.VNOEngine.getState().beatIdx).toBe(before + 1)
+  })
+
+  it('VNO-62: Stop ends the line and brings the music back; Mute skips later lines, is saved and survives a reload', () => {
+    const book = croatianBook()
+    const lineId = book.chapters[0]!.scenes[0]!.beats[0]!.id
+    const voice = { has: (lang: string, beatId: string) => (lang === 'hr' && beatId === lineId ? 'clip.mp3' : null) }
+    const gd = buildGameData({ book, theme: TEST_THEME, music: { music_01: 'audio/bgm.ogg' }, voice })
+
+    // Stop: the clip plays and ducks the music; Stop pauses it and the music is back at full level
+    const h = createPlayerHarness(gd)
+    const music = h.getById('vno-audio-music')
+    const voiceEl = h.getById('vno-audio-voice')
+    expect(h.getById('vno-voice-stop').disabled).toBe(true)
+    h.getById('vno-mm-start').click()
+    h.getById('vno-chapter-card').click()
+    expect(voiceEl.paused).toBe(false)
+    expect(music.volume).toBeCloseTo(gain(48) * 0.35, 5)
+    expect(h.getById('vno-voice-stop').disabled).toBe(false)
+    h.getById('vno-voice-stop').click()
+    expect(voiceEl.paused).toBe(true)
+    expect(music.volume).toBeCloseTo(gain(48), 5)
+    expect(h.getById('vno-voice-stop').disabled).toBe(true)
+
+    // Mute: off by default; the click is saved, and the next line sets no clip
+    const m = createPlayerHarness(gd)
+    expect(JSON.parse(m.storage.get('vno_settings')!).voiceMuted).toBe(false)
+    m.getById('vno-voice-mute').click()
+    expect(JSON.parse(m.storage.get('vno_settings')!).voiceMuted).toBe(true)
+    expect(m.getById('vno-voice-mute').getAttribute('aria-pressed')).toBe('true')
+    m.getById('vno-mm-start').click()
+    m.getById('vno-chapter-card').click()
+    expect(m.getById('vno-audio-voice').src).toBe('')
+
+    // a reload keeps it
+    const again = createPlayerHarness(gd, { vno_settings: m.storage.get('vno_settings')! })
+    expect(again.getById('vno-voice-mute').getAttribute('aria-pressed')).toBe('true')
+    again.getById('vno-mm-start').click()
+    again.getById('vno-chapter-card').click()
+    expect(again.getById('vno-audio-voice').src).toBe('')
   })
 })
