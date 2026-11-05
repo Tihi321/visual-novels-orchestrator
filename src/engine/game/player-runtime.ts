@@ -452,6 +452,7 @@ body.vno-body {
   position: absolute;
   bottom: 0;
   height: 85%;
+  width: 640px;
   width: min(640px, 35%);
   transform: translateX(-50%);
   display: flex;
@@ -613,8 +614,16 @@ body.vno-body {
   right: 20px;
   bottom: 10px;
   display: flex;
-  gap: 12px;
   z-index: 20;
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-quick-menu > * + * {
+  margin-left: 12px;
+}
+
+[dir="rtl"] .vno-quick-menu > * + * {
+  margin-left: 0;
+  margin-right: 12px;
 }
 
 [dir="rtl"] .vno-quick-menu {
@@ -646,9 +655,12 @@ body.vno-body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 24px;
   max-width: 1200px;
   width: 90%;
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-choice-container > * + * {
+  margin-top: 24px;
 }
 
 .vno-choice-btn {
@@ -704,7 +716,15 @@ body.vno-body {
 
 .vno-ending-buttons {
   display: flex;
-  gap: 24px;
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-ending-buttons > * + * {
+  margin-left: 24px;
+}
+
+[dir="rtl"] .vno-ending-buttons > * + * {
+  margin-left: 0;
+  margin-right: 24px;
 }
 
 /* Screens */
@@ -722,7 +742,9 @@ body.vno-body {
 }
 
 .vno-screen-panel {
+  width: 1400px;
   width: min(1400px, 92%);
+  height: 900px;
   height: min(900px, 92%);
   background: var(--vno-ui-surface, #181824);
   color: var(--vno-ui-text, #fff);
@@ -740,10 +762,19 @@ body.vno-body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-screen-header > * + * {
+  margin-left: 16px;
+}
+
+[dir="rtl"] .vno-screen-header > * + * {
+  margin-left: 0;
+  margin-right: 16px;
 }
 
 .vno-screen-header h2 {
+  font-size: 48px;
   font-size: min(48px, var(--vno-size-title, 48px));
   color: var(--vno-ui-text, #e8e8f2);
 }
@@ -805,8 +836,11 @@ body.vno-body {
   top: 180px;
   display: flex;
   flex-direction: column;
-  gap: 30px;
   z-index: 10;
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-main-menu-content > * + * {
+  margin-top: 30px;
 }
 
 [dir="rtl"] .vno-main-menu-content {
@@ -823,8 +857,11 @@ body.vno-body {
 .vno-main-menu-buttons {
   display: flex;
   flex-direction: column;
-  gap: 16px;
   width: 380px;
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-main-menu-buttons > * + * {
+  margin-top: 16px;
 }
 
 .vno-menu-btn, .vno-button {
@@ -855,9 +892,17 @@ body.vno-body {
 /* Save Slots */
 .vno-save-pages {
   display: flex;
-  gap: 12px;
   padding: 12px 30px;
   background: rgba(0,0,0,0.3);
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-save-pages > * + * {
+  margin-left: 12px;
+}
+
+[dir="rtl"] .vno-save-pages > * + * {
+  margin-left: 0;
+  margin-right: 12px;
 }
 
 .vno-page-btn {
@@ -879,7 +924,7 @@ body.vno-body {
 .vno-save-slots-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
+  grid-gap: 20px;
   padding: 24px;
   overflow-y: auto;
 }
@@ -907,9 +952,12 @@ body.vno-body {
 .vno-prefs-body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
   overflow-y: auto;
   padding: 16px 24px 22px;
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-prefs-body > * + * {
+  margin-top: 14px;
 }
 
 .vno-pref-section {
@@ -922,6 +970,7 @@ body.vno-body {
 .vno-pref-section h3 {
   font-family: var(--vno-font-interface, var(--vno-font-text));
   /* a theme's label size is meant for headings on the stage: cap it so all settings stay visible in one panel */
+  font-size: 26px;
   font-size: min(26px, var(--vno-size-label, 28px));
   letter-spacing: .08em;
   text-transform: uppercase;
@@ -933,11 +982,20 @@ body.vno-body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 18px;
+  font-size: 26px;
   font-size: min(30px, var(--vno-size-interface, 26px));
   color: var(--vno-ui-text, #e8e8f2);
   padding: 8px 0;
   border-bottom: 1px solid var(--vno-ui-border, rgba(255,255,255,0.12));
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-pref-group > * + * {
+  margin-left: 18px;
+}
+
+[dir="rtl"] .vno-pref-group > * + * {
+  margin-left: 0;
+  margin-right: 18px;
 }
 
 .vno-pref-section .vno-pref-group:last-child {
@@ -949,10 +1007,19 @@ body.vno-body {
 }
 
 .vno-pref-control {
+  width: 520px;
   width: min(520px, 48%);
   display: flex;
   align-items: center;
-  gap: 14px;
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-pref-control > * + * {
+  margin-left: 14px;
+}
+
+[dir="rtl"] .vno-pref-control > * + * {
+  margin-left: 0;
+  margin-right: 14px;
 }
 
 .vno-pref-control input[type="range"] {
@@ -1035,18 +1102,29 @@ body.vno-body {
 .vno-puzzle-body {
   flex: 1;
   display: flex;
-  gap: 30px;
   margin-top: 16px;
   overflow: hidden;
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-puzzle-body > * + * {
+  margin-left: 30px;
+}
+
+[dir="rtl"] .vno-puzzle-body > * + * {
+  margin-left: 0;
+  margin-right: 30px;
 }
 
 .vno-puzzle-left-col {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 16px;
   overflow-y: auto;
   padding-right: 12px;
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-puzzle-left-col > * + * {
+  margin-top: 16px;
 }
 
 .vno-puzzle-right-col {
@@ -1497,11 +1575,19 @@ body.vno-picturebook .vno-page-layer {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 28px;
   padding: 10px 0 18px;
   font-family: var(--vno-font-interface, var(--vno-font-text));
   font-size: 26px;
   color: var(--vno-color-idle, #aaa);
+}
+/* no flex gap before Chrome 84 (an older TV browser): a margin between the children instead */
+.vno-page-footer > * + * {
+  margin-left: 28px;
+}
+
+[dir="rtl"] .vno-page-footer > * + * {
+  margin-left: 0;
+  margin-right: 28px;
 }
 
 .vno-page-nav {
@@ -1685,7 +1771,7 @@ export function generatePlayerJs(): string {
   const TAP_BLOCK = 'button, input, a, .vno-slot-card, .vno-screen, .vno-overlay, .vno-fullscreen-card, .vno-picker, .vno-pause-menu, .vno-hud-top, .vno-rotate-hint';
   let pickerKind = '';
   let pickerTrigger = null;
-  let pushedStates = 0; // history entries the player pushed itself (one per open picker, screen or pause menu)
+  let pushedStates = 0; // history entries the player pushed itself (one baseline while the story plays, one per open picker, screen or pause menu)
   let ignorePops = 0; // popstates the player caused with history.go and must not treat as a Back press
   let autoFocusEl = null;
   let autoFocusAt = 0;
@@ -1909,6 +1995,13 @@ export function generatePlayerJs(): string {
       else document.body.classList.remove('vno-picturebook');
     }
     if (pictureBook && dom.pageLayer) dom.pageLayer.classList.add('vno-hidden');
+    // a picture book has no save slots or history screen: its pause menu offers Resume, Preferences and Main Menu
+    ['vno-pause-save', 'vno-pause-load', 'vno-pause-history'].forEach(id => {
+      const btn = document.getElementById(id);
+      if (!btn || !btn.classList) return;
+      if (pictureBook) btn.classList.add('vno-hidden');
+      else btn.classList.remove('vno-hidden');
+    });
 
     normalizeUiLang();
     updateLangBarVisibility();
@@ -2699,11 +2792,17 @@ export function generatePlayerJs(): string {
 
   // ---- history: the Android Back button navigates the history instead of sending a key ----
 
-  function layerDepth() {
-    return (isShown(dom.picker) ? 1 : 0) + (firstOpenScreen() ? 1 : 0) + (isShown(dom.pauseMenu) ? 1 : 0);
+  /** True while a story plays: a game is loaded and the main menu is hidden. */
+  function inPlay() {
+    return Boolean(gameData && dom.mainMenu && !isShown(dom.mainMenu));
   }
 
-  /** One history entry per open layer (picker, screen, pause menu), so Back closes the layer instead of leaving the game. */
+  function layerDepth() {
+    return (inPlay() ? 1 : 0) + (isShown(dom.picker) ? 1 : 0) + (firstOpenScreen() ? 1 : 0) + (isShown(dom.pauseMenu) ? 1 : 0);
+  }
+
+  /** One history entry for the story playing (the baseline) plus one per open layer (picker, screen, pause menu).
+   *  Back closes the layer; with none open it opens the pause menu; only on the main menu (no baseline) it leaves the game. */
   function syncHistory() {
     const h = window.history;
     if (!h || typeof h.pushState !== 'function') return;
@@ -2730,7 +2829,12 @@ export function generatePlayerJs(): string {
       return;
     }
     if (pushedStates > 0) pushedStates--;
-    closeTopLayer();
+    if (closeTopLayer()) return;
+    // the baseline was popped while the story plays: the pause menu opens and the baseline is pushed again
+    if (inPlay()) {
+      openPauseMenu();
+      syncHistory();
+    }
   }
 
   /** Close the topmost picker, screen or pause menu; false when none is open. */
@@ -2803,7 +2907,7 @@ export function generatePlayerJs(): string {
   // ---- pause menu ----
 
   function openPauseMenu() {
-    if (!gameData || pictureBook || !dom.pauseMenu) return;
+    if (!gameData || !dom.pauseMenu) return;
     if (isShown(dom.mainMenu) || isShown(dom.pauseMenu) || isShown(dom.picker) || firstOpenScreen()) return;
     returnFocus.pause = activeControl();
     dom.pauseMenu.classList.remove('vno-hidden');
@@ -2937,7 +3041,7 @@ export function generatePlayerJs(): string {
         return true;
       }
       if (act === 'back') {
-        returnToMainMenu();
+        openPauseMenu();
         return true;
       }
     } else {
@@ -2996,8 +3100,8 @@ export function generatePlayerJs(): string {
       startPictureBook();
       return;
     }
-    closeAllScreens();
     dom.mainMenu.classList.add('vno-hidden');
+    closeAllScreens(); // also pushes the baseline history entry now that the story plays
     dom.endingCard.classList.add('vno-hidden');
     dom.choiceOverlay.classList.add('vno-hidden');
     dom.puzzleOverlay.classList.add('vno-hidden');
@@ -3015,7 +3119,7 @@ export function generatePlayerJs(): string {
   }
 
   function returnToMainMenu() {
-    closeAllScreens();
+    hideScreens();
     dom.endingCard.classList.add('vno-hidden');
     dom.choiceOverlay.classList.add('vno-hidden');
     dom.puzzleOverlay.classList.add('vno-hidden');
@@ -3024,6 +3128,7 @@ export function generatePlayerJs(): string {
     activeEndingMsg = null;
     activePuzzle = null;
     dom.mainMenu.classList.remove('vno-hidden');
+    syncHistory(); // drops the baseline and any layer entries in one step: Back on the main menu leaves the game
     if (dom.pageLayer) dom.pageLayer.classList.add('vno-hidden');
     stopVoice();
     hideSceneTitle();
@@ -3784,9 +3889,9 @@ export function generatePlayerJs(): string {
     const raw = localStorage.getItem(key);
     if (!raw) return false;
     const data = JSON.parse(raw);
-    closeAllScreens();
+    dom.mainMenu.classList.add('vno-hidden');
+    closeAllScreens(); // also pushes the baseline history entry now that the story plays
     if (pictureBook) {
-      dom.mainMenu.classList.add('vno-hidden');
       dom.endingCard.classList.add('vno-hidden');
       dom.choiceOverlay.classList.add('vno-hidden');
       if (data.lang) switchLanguage(data.lang);
@@ -3910,8 +4015,8 @@ export function generatePlayerJs(): string {
   }
 
   function startPictureBook() {
-    closeAllScreens();
     dom.mainMenu.classList.add('vno-hidden');
+    closeAllScreens(); // also pushes the baseline history entry now that the story plays
     dom.endingCard.classList.add('vno-hidden');
     dom.choiceOverlay.classList.add('vno-hidden');
     dom.puzzleOverlay.classList.add('vno-hidden');
