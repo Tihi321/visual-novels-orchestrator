@@ -2867,6 +2867,7 @@ export function generatePlayerJs(): string {
       return true;
     }
     if (isArrow(act)) {
+      autoFocusEl = null; // an arrow is a deliberate move: the next OK is not a held one
       // a range slider keeps Left and Right for itself
       if (active && active.tagName === 'INPUT' && (act === 'left' || act === 'right')) return false;
       if (!list.length) return true;
