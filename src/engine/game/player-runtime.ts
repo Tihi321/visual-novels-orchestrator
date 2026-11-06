@@ -93,7 +93,6 @@ ${extraCss}
         </div>
         <div id="vno-textbox" class="vno-textbox">
           <div id="vno-dialogue-text" class="vno-dialogue-text"></div>
-          <div id="vno-typewriter-indicator" class="vno-indicator vno-hidden">&#9660;</div>
         </div>
         <!-- Quick Menu -->
         <div id="vno-quick-menu" class="vno-quick-menu">
@@ -594,18 +593,26 @@ body.vno-body {
   direction: rtl;
 }
 
-.vno-indicator {
-  position: absolute;
-  right: 30px;
-  bottom: 15px;
-  font-size: 24px;
-  color: var(--vno-color-accent, #fff);
-  animation: vno-bounce 1s infinite;
+/* Continue marker (VNO-64): a quiet pulsing triangle that follows the last word of a finished line. It is a pseudo-element, so it adds no DOM and never reaches the auto-fit. */
+.vno-dialogue-text.vno-line-done::after {
+  content: '\\00a0\\25BC';
+  display: inline-block;
+  font-size: 0.7em;
+  line-height: 1;
+  opacity: 0.7;
+  color: inherit;
+  animation: vno-bounce 1.2s ease-in-out infinite;
 }
 
 @keyframes vno-bounce {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-6px); }
+  0%, 100% { transform: translateY(0); opacity: 0.45; }
+  50% { transform: translateY(-3px); opacity: 0.8; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vno-dialogue-text.vno-line-done::after {
+    animation: none;
+  }
 }
 
 /* Quick Menu */
@@ -1846,7 +1853,6 @@ export function generatePlayerJs(): string {
     dom.namebox = document.getElementById('vno-namebox');
     dom.speakerName = document.getElementById('vno-speaker-name');
     dom.dialogueText = document.getElementById('vno-dialogue-text');
-    dom.indicator = document.getElementById('vno-typewriter-indicator');
     dom.choiceOverlay = document.getElementById('vno-choice-overlay');
     dom.choiceContainer = document.getElementById('vno-choice-container');
     dom.puzzleOverlay = document.getElementById('vno-puzzle-overlay');
@@ -2323,7 +2329,11 @@ export function generatePlayerJs(): string {
 
   function fitDialogue() {
     if (!dom.dialogueText || !dom.textbox) return;
+    // The continue marker (VNO-64) is a ::after on this class; take it off while measuring so it never changes the fit.
+    const done = dom.dialogueText.classList.contains('vno-line-done');
+    dom.dialogueText.classList.remove('vno-line-done');
     fitTextBlock(dom.dialogueText, dom.textbox, baseFontPx(dom.dialogueText, 33 * storyTextScale()), 14);
+    if (done) dom.dialogueText.classList.add('vno-line-done');
   }
 
   function refreshActiveScreens() {
@@ -3401,7 +3411,7 @@ export function generatePlayerJs(): string {
 
   function startTypewriter(htmlText) {
     clearInterval(typewriterTimer);
-    dom.indicator.classList.add('vno-hidden');
+    dom.dialogueText.classList.remove('vno-line-done');
     currentFullText = htmlText;
 
     // Lay the whole line out first, so the auto-fit measures the final text, then let it type from the first character.
@@ -3410,7 +3420,7 @@ export function generatePlayerJs(): string {
 
     if (settings.textSpeed >= 100) {
       isTyping = false;
-      dom.indicator.classList.remove('vno-hidden');
+      dom.dialogueText.classList.add('vno-line-done');
       return;
     }
 
@@ -3436,7 +3446,7 @@ export function generatePlayerJs(): string {
     isTyping = false;
     dom.dialogueText.innerHTML = currentFullText;
     fitDialogue();
-    dom.indicator.classList.remove('vno-hidden');
+    dom.dialogueText.classList.add('vno-line-done');
   }
 
   function finishChapter(ch) {
@@ -3456,6 +3466,7 @@ export function generatePlayerJs(): string {
 
   function showChoices(choices) {
     activeChoices = choices;
+    dom.dialogueText.classList.remove('vno-line-done');
     // a re-render (the language changed) keeps the focused choice
     const before = controlsIn(dom.choiceContainer);
     const keep = before.indexOf(document.activeElement);
@@ -3812,7 +3823,7 @@ export function generatePlayerJs(): string {
     if (isTyping) {
       clearInterval(typewriterTimer);
       isTyping = false;
-      if (dom.indicator) dom.indicator.classList.remove('vno-hidden');
+      dom.dialogueText.classList.add('vno-line-done');
     }
     currentFullText = htmlText;
     dom.dialogueText.innerHTML = htmlText;
