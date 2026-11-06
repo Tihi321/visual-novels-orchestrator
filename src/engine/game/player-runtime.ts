@@ -3417,6 +3417,8 @@ export function generatePlayerJs(): string {
     isTyping = true;
     let charIdx = 0;
     const plain = htmlText.replace(/<[^>]+>/g, '');
+    // The fit above is done, so empty the box in the same task: the first interval tick comes up to 90 ms later and the full line would paint until then.
+    dom.dialogueText.textContent = '';
     const interval = Math.max(10, 100 - settings.textSpeed);
 
     typewriterTimer = setInterval(() => {
