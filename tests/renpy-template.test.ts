@@ -1270,6 +1270,23 @@ describe('VNO-48: interface language, readable preferences and audio balance', (
     expect(unknown.getById('vno-mm-start').textContent).toBe('Start')
   })
 
+  it('never paints the whole line before the typewriter starts (VNO-63)', () => {
+    const book = croatianBook()
+    const gd = buildGameData({ book, theme: TEST_THEME, primaryEdition: hrEdition(book) })
+    const h = createPlayerHarness(gd)
+    const speed = h.getById('vno-pref-text-speed')
+    speed.value = '50'
+    speed.dispatchEvent('input')
+    const text = h.getById('vno-dialogue-text')
+    h.getById('vno-mm-start').click()
+    h.getById('vno-chapter-card').click()
+    // the first beat is on screen and typing has not produced a character yet: the box is empty, not the full line
+    expect(text.textContent).toBe('')
+    // a click completes the line at once
+    h.getById('vno-stage').click()
+    expect(text.textContent.length).toBeGreaterThan(3)
+  })
+
   it('balances the mix: quiet default music, a perceptual curve and a duck under the voice', () => {
     const book = croatianBook()
     const lineId = book.chapters[0]!.scenes[0]!.beats[0]!.id
