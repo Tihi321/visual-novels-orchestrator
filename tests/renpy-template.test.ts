@@ -1282,9 +1282,12 @@ describe('VNO-48: interface language, readable preferences and audio balance', (
     h.getById('vno-chapter-card').click()
     // the first beat is on screen and typing has not produced a character yet: the box is empty, not the full line
     expect(text.textContent).toBe('')
+    // the continue marker (VNO-64, a ::after on this class) is not up while the line types
+    expect(text.classList.contains('vno-line-done')).toBe(false)
     // a click completes the line at once
     h.getById('vno-stage').click()
     expect(text.textContent.length).toBeGreaterThan(3)
+    expect(text.classList.contains('vno-line-done')).toBe(true)
   })
 
   it('balances the mix: quiet default music, a perceptual curve and a duck under the voice', () => {
