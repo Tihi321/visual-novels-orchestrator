@@ -74,6 +74,7 @@ New work gets the next free number (VNO-49), a plan in `.claude/tickets/VNO-NN-<
 
 ## Later (not planned yet)
 
+- ElevenLabs voices through flow-music-mcp `flow_narrate` engine `elevenlabs` (HUB-31): free tier only, the user sets the key; Cartoon Studio already uses it (word times from the alignment, voice ids per character in the bible).
 - Start buttons on the Generators page, and an MCP tool to start a service.
 - "Open in Pixel Studio / Chiptune Studio" while a headless studio holds the studio's `engine.lock`: the window cannot take the data folder, but the launch already reported success (true with `hub.ps1 start` too).
 - A hard kill of VN Studio leaves the services it started running, even with `stopOnExit: true`.
