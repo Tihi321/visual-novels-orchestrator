@@ -8,7 +8,7 @@ import { fallbackNegative, fallbackPrompt } from '../assets/derive'
 import { runsOnFlow } from '../assets/flow-image'
 import type { FlowOptions } from '../assets/flow-image'
 import { countFlowSongs } from '../studios/flow-music'
-import { generateAsset } from '../assets/generate'
+import { generateAsset, musicFingerprints } from '../assets/generate'
 import type { GenerateOptions } from '../assets/generate'
 import { pickVersion, resolveFile } from '../assets/manifest'
 import { lanesOf } from '../comfy/client'
@@ -442,6 +442,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
             pixel: studios.pixel,
             chiptune: studios.chiptune,
             chipPlan: music?.tracks?.[id],
+            avoid: entry.kind === 'music' ? musicFingerprints(manifest, id) : undefined,
             ...(mode.draw ? drawing(ctx, studios.config) : {}),
             resolveRef: (rid) => {
               const e = manifest.assets.find((a) => a.id === rid)

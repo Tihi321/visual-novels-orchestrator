@@ -1,8 +1,8 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import sharp from 'sharp'
-import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, isPictureBook, SFX_IMPORT_ONLY, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider, resolveSfxEngine } from '../../shared/vn'
-import type { AssetEntry, AssetManifest, AssetVersion, ProjectSettings, VnBook } from '../../shared/vn'
+import { CHIPTUNE_ENGINE, FLOW_ENGINE, FLOW_MUSIC_ENGINE, IMAGE_KINDS, isPictureBook, presentationOf, SFX_IMPORT_ONLY, resolveArtProvider, resolveMusicProvider, resolvePixel, resolvePixelProvider, resolveSfxEngine } from '../../shared/vn'
+import type { AssetEntry, AssetManifest, AssetVersion, Fingerprint, ProjectSettings, VnBook } from '../../shared/vn'
 import type { ComfyClient, ComfyProgress, ComfyResult } from '../comfy/client'
 import { randomSeed } from '../comfy/graphs'
 import { renameRetry } from '../store/atomic'
@@ -18,6 +18,7 @@ import type { ChiptuneClient } from '../studios/chiptune'
 import { pickChipSound } from '../studios/chip-sound'
 import { makeChiptuneSound, makeChiptuneTrack } from '../studios/music'
 import { makeFlowTrack } from '../studios/flow-music'
+import { makeSeamlessLoop } from '../studios/loop'
 import { pixelateWithStudio } from '../studios/pixelate'
 import type { FlowClient } from '../studios/flow'
 import { DEFAULT_FLOW_OPTIONS, flowReferences, makeFlowImage } from './flow-image'
@@ -95,6 +96,8 @@ export interface GenerateContext {
   chiptune?: ChiptuneClient
   /** The composer's plan of this track; default: the deterministic plan. */
   chipPlan?: ChipTrackPlan
+  /** The fingerprints of the book's other music tracks (their selected or latest version): Chiptune Studio composes this one differently (`compose_track` `avoid`). */
+  avoid?: Fingerprint[]
   /** The agent's model, for the drawing mode (`pixel-studio-draw`). Without it (or when it fails) the import path runs. */
   ask?: ModelReply
   /** How a sprite is drawn: the limits of the loop (`ms` may be Infinity), and the mode (default loop). */
@@ -395,6 +398,8 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
     let chiptune: Awaited<ReturnType<typeof makeChiptuneTrack>> | undefined
     /** Made by Google Flow: the media id, kept on the version so a later image can use it as a reference. */
     let remote: AssetVersion['remote']
+    /** ComfyUI music made loopable (the end crossfaded into the start): where the loop starts and ends. */
+    let comfyLoop: { loopStartSec: number; loopEndSec: number } | undefined
     /** A sound effect or an ambience made by Chiptune Studio's `compose_sfx`: the sound is picked from the key and the description. */
     const chipSound = async (kind: 'sfx' | 'ambience', seconds: number | undefined) => {
       if (!ctx.chiptune) throw new Error('Chiptune Studio is not configured')
@@ -542,8 +547,8 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
         if (edited.engine === CHIPTUNE_ENGINE) {
           if (!ctx.chiptune) throw new Error('Chiptune Studio is not configured')
           progress('comfy', 'compose with Chiptune Studio')
-          const plan = ctx.chipPlan ?? fallbackChipPlan(edited.id, { genreText: `${ctx.book.genre ?? ''} ${ctx.book.format} ${ctx.book.style}`, chip: ctx.settings.music.chip, palette: ctx.settings.art.palette, seconds: sizes.musicSeconds })
-          chiptune = await makeChiptuneTrack(ctx.chiptune, { dir: assetDir(ctx.projectDir, edited.id), n: nextVersionN(edited), plan, seed: edited.seed ?? undefined, name: `${ctx.book.title} ${edited.id}`, signal: ctx.signal })
+          const plan = ctx.chipPlan ?? fallbackChipPlan(edited.id, { genreText: `${ctx.book.genre ?? ''} ${ctx.book.format} ${ctx.book.style}`, chip: ctx.settings.music.chip, palette: ctx.settings.art.palette, seconds: sizes.musicSeconds, presentation: presentationOf(ctx.book), artStyle: ctx.settings.art.style })
+          chiptune = await makeChiptuneTrack(ctx.chiptune, { dir: assetDir(ctx.projectDir, edited.id), n: nextVersionN(edited), plan, seed: edited.seed ?? undefined, name: `${ctx.book.title} ${edited.id}`, avoid: ctx.avoid, signal: ctx.signal })
           for (const w of chiptune.warnings) warn(w)
           out = { bytes: Buffer.alloc(0), ext: path.extname(chiptune.file).slice(1) }
           break
@@ -558,6 +563,16 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
           signal: ctx.signal
         })
         out = { bytes: r.bytes, ext: r.ext }
+        // ACE-Step ends with a fade-out and starts from silence: crossfade the end into the start so the game's loop has no seam
+        try {
+          const loop = await makeSeamlessLoop(out)
+          if (loop) {
+            out = { bytes: loop.bytes, ext: loop.ext }
+            comfyLoop = { loopStartSec: loop.loopStartSec, loopEndSec: loop.loopEndSec }
+          } else warn('the song is too short for a seamless loop: it repeats from its start')
+        } catch (e) {
+          warn(`no seamless loop was made (${(e as Error).message}): the song repeats from its start with its fade-out`)
+        }
         break
       }
       default:
@@ -584,7 +599,8 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
       ...(remote ? { remote } : {}),
       engine: edited.engine,
       prompt,
-      ...(chiptune ? { loopStartSec: chiptune.loopStartSec, loopEndSec: chiptune.loopEndSec, ...(chiptune.songFile ? { songFile: chiptune.songFile } : {}) } : {}),
+      ...(chiptune ? { loopStartSec: chiptune.loopStartSec, loopEndSec: chiptune.loopEndSec, ...(chiptune.songFile ? { songFile: chiptune.songFile } : {}), ...(chiptune.fingerprint ? { fingerprint: chiptune.fingerprint } : {}) } : {}),
+      ...(comfyLoop ? comfyLoop : {}),
       ...(nativeFile ? { nativeFile } : {}),
       ...(warnings.length ? { warnings } : {})
     }
@@ -594,6 +610,20 @@ export async function generateAsset(ctx: GenerateContext, entry: AssetEntry, opt
   } catch (e) {
     return { ok: false, entry, error: (e as Error).message }
   }
+}
+
+/**
+ * The fingerprints of the book's other music tracks: for each, the selected version's, else its newest one that has one. Chiptune Studio gets them as
+ * `compose_track` `avoid` so the tracks of one book differ in texture, lead and tempo.
+ */
+export function musicFingerprints(manifest: Pick<AssetManifest, 'assets'>, exceptId: string): Fingerprint[] {
+  const out: Fingerprint[] = []
+  for (const a of manifest.assets) {
+    if (a.kind !== 'music' || a.id === exceptId) continue
+    const v = a.versions.find((x) => x.n === a.selected && x.fingerprint) ?? [...a.versions].reverse().find((x) => x.fingerprint)
+    if (v?.fingerprint) out.push(v.fingerprint)
+  }
+  return out
 }
 
 /** Generation order: sheets before the sprites that reference them. */
@@ -638,7 +668,7 @@ export async function generateAll(ctx: Omit<GenerateContext, 'resolveRef'>, mani
       result.skipped.push(live.id)
       continue
     }
-    const r = await generateAsset({ ...ctx, resolveRef }, live, { force: opts.force && !live.locked ? true : false })
+    const r = await generateAsset({ ...ctx, resolveRef, avoid: ctx.avoid ?? (live.kind === 'music' ? musicFingerprints(current, live.id) : undefined) }, live, { force: opts.force && !live.locked ? true : false })
     if (!r.ok) {
       result.failed.push({ id: live.id, error: r.error })
     } else if (r.skipped) {

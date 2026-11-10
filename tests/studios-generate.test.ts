@@ -129,7 +129,7 @@ describe('chiptune plan', () => {
   it('is deterministic, calm and slow, and the composer draft is clamped', () => {
     const a = fallbackChipPlan('music_01', { genreText: 'bedtime kids', seconds: 100 })
     expect(a).toEqual(fallbackChipPlan('music_01', { genreText: 'bedtime kids', seconds: 100 }))
-    expect(a.mood).toBe('lullaby')
+    expect(a).toMatchObject({ chip: 'gm', mood: 'storybook' }) // a kids' book defaults to the gm chip (VNO-66)
     expect(a.bpm).toBeLessThanOrEqual(90)
     expect(a.bars % 4).toBe(0)
     expect(fallbackChipPlan('music_01', { palette: 'gameboy' }).chip).toBe('gb')

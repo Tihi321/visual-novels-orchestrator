@@ -238,8 +238,8 @@ export type Edition = z.infer<typeof editionSchema>
 export const ART_PROVIDERS = ['comfy', 'pixel-studio-draw', 'hand', 'flow'] as const
 export const PIXEL_PROVIDERS = ['vno', 'pixel-studio'] as const
 export const MUSIC_PROVIDERS = ['comfy', 'chiptune', 'flow'] as const
-/** The chips of Chiptune Studio. */
-export const CHIPS = ['nes', 'gb', 'genesis', 'snes', 'pce', 'ps1', 'dreamcast'] as const
+/** The chips of Chiptune Studio (`gm` is the General MIDI SoundFont chip: real instruments; it needs the SoundFont file in Chiptune Studio's data folder). */
+export const CHIPS = ['nes', 'gb', 'genesis', 'snes', 'pce', 'ps1', 'dreamcast', 'gm'] as const
 export const DITHERS = ['none', 'ordered', 'floyd'] as const
 export type Chip = (typeof CHIPS)[number]
 export type Dither = (typeof DITHERS)[number]
@@ -451,6 +451,12 @@ export const ASSET_KINDS = ['background', 'sheet', 'sprite', 'cover', 'cg', 'mus
 export const assetKindSchema = z.enum(ASSET_KINDS)
 export type AssetKind = z.infer<typeof assetKindSchema>
 
+/** What Chiptune Studio's `compose_track` says a track is made of (texture, instruments, tempo, key, form). The later tracks of a book pass the earlier ones as `avoid` so no two sound alike. */
+export const fingerprintSchema = z
+  .object({ texture: z.string().optional(), lead: z.string().optional(), pad: z.string().optional(), bass: z.string().optional(), bpm: z.number().optional(), key: z.string().optional(), scale: z.string().optional(), form: z.string().optional() })
+  .passthrough()
+export type Fingerprint = z.infer<typeof fingerprintSchema>
+
 export const assetVersionSchema = z.object({
   n: z.number().int().positive(),
   /** File name inside `assets/<id>/`. */
@@ -466,6 +472,8 @@ export const assetVersionSchema = z.object({
   remote: z.object({ provider: z.enum(['flow', 'flow-music']), id: z.string(), project: z.string().optional() }).optional(),
   /** Chiptune Studio's native song file of this version (next to the audio), for "Open in Chiptune Studio". */
   songFile: z.string().optional(),
+  /** Chiptune Studio music: the track's fingerprint, kept so later tracks of the book can avoid it. */
+  fingerprint: fingerprintSchema.optional(),
   /** Pixel Studio art: the PNG at the native pixel size (before the nearest-neighbour scale up), for "Open in Pixel Studio". */
   nativeFile: z.string().optional(),
   /** Non-fatal problems of making this version (Pixel Studio was down, so the built-in pixelate ran ...). */
