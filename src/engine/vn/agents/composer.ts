@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { CHIPS, resolveMusicProvider } from '../../../shared/vn'
+import { CHIPS, presentationOf, resolveMusicProvider } from '../../../shared/vn'
 import type { Chip, ProjectSettings, VnBook } from '../../../shared/vn'
 import { MUSIC_MOODS, chipTrackPlanSchema, fallbackChipPlan, mergeChipPlan, planSummary } from '../../studios/chip-plan'
 import type { ChipTrackPlan, ChipTrackPlanDraft } from '../../studios/chip-plan'
@@ -42,6 +42,9 @@ export interface ChipOptions {
   chip?: Chip
   genreText?: string
   palette?: string
+  /** `picture-book` or `visual-novel`, and the art style (`pixel` keeps the retro chip): they pick the default chip. */
+  presentation?: string
+  artStyle?: string
 }
 
 /** Keeps what the book can use: known track ids, lengths in range. With `chip` options, also a `compose_track` plan per track (the composer's draft over the deterministic one). */
@@ -52,7 +55,7 @@ export function validateMusicPlan(plan: Omit<PlanMusic, 'scenes'> & { scenes?: P
   const drafts = new Map<string, ChipTrackPlanDraft>()
   for (const t of plan.tracks) {
     if (!ids.has(t.id)) continue
-    drafts.set(t.id, { mood: t.mood, chip: t.chip, bpm: t.bpm, key: t.key, bars: t.bars })
+    drafts.set(t.id, { mood: t.mood, chip: t.chip, bpm: t.bpm, key: t.key, bars: t.bars, texture: t.texture, form: t.form, instruments: t.instruments })
     seconds[t.id] = Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, Math.round(t.seconds) || DEFAULT_SECONDS))
     if (!t.prompt.trim()) continue
     prompts.set(t.id, t.prompt.trim())
@@ -65,7 +68,7 @@ export function validateMusicPlan(plan: Omit<PlanMusic, 'scenes'> & { scenes?: P
   if (chipOpts?.chiptune) {
     out.tracks = {}
     for (const id of trackIds) {
-      const base = fallbackChipPlan(id, { genreText: chipOpts.genreText, chip: chipOpts.chip, palette: chipOpts.palette, seconds: seconds[id] })
+      const base = fallbackChipPlan(id, { genreText: chipOpts.genreText, chip: chipOpts.chip, palette: chipOpts.palette, presentation: chipOpts.presentation, artStyle: chipOpts.artStyle, seconds: seconds[id] })
       out.tracks[id] = mergeChipPlan(drafts.get(id), base, chipOpts.chip)
       prompts.set(id, planSummary(out.tracks[id]!))
     }
@@ -75,12 +78,12 @@ export function validateMusicPlan(plan: Omit<PlanMusic, 'scenes'> & { scenes?: P
 
 /** The deterministic chiptune plan of every track (no model answered). */
 export function fallbackChipPlans(trackIds: string[], opts: ChipOptions, seconds: Record<string, number> = {}): Record<string, ChipTrackPlan> {
-  return Object.fromEntries(trackIds.map((id) => [id, fallbackChipPlan(id, { genreText: opts.genreText, chip: opts.chip, palette: opts.palette, seconds: seconds[id] })]))
+  return Object.fromEntries(trackIds.map((id) => [id, fallbackChipPlan(id, { genreText: opts.genreText, chip: opts.chip, palette: opts.palette, presentation: opts.presentation, artStyle: opts.artStyle, seconds: seconds[id] })]))
 }
 
 /** What a chiptune plan means for the settings: the chip options of a project. */
 export function chipOptionsFor(book: VnBook, settings: ProjectSettings): ChipOptions {
-  return { chiptune: resolveMusicProvider(settings) === 'chiptune', chip: settings.music.chip, genreText: `${book.genre ?? ''} ${book.format} ${book.style}`, palette: settings.art.palette }
+  return { chiptune: resolveMusicProvider(settings) === 'chiptune', chip: settings.music.chip, genreText: `${book.genre ?? ''} ${book.format} ${book.style}`, palette: settings.art.palette, presentation: presentationOf(book), artStyle: settings.art.style }
 }
 
 export async function planMusic(call: AgentCall, book: VnBook, settings: ProjectSettings, trackIds: string[]): Promise<{ prompts: Map<string, string>; plan: MusicPlan }> {

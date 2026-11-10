@@ -1,6 +1,6 @@
 import { existsSync, promises as fs } from 'node:fs'
 import path from 'node:path'
-import type { Chip } from '../../shared/vn'
+import type { Chip, Fingerprint } from '../../shared/vn'
 import type { ChipTrackPlan } from './chip-plan'
 import type { ChiptuneClient } from './chiptune'
 
@@ -14,6 +14,8 @@ export interface ChiptuneTrack {
   durationSec: number
   seed: number
   warnings: string[]
+  /** Chiptune Studio's fingerprint of the track (texture, lead, pad, bass, bpm, key, scale, form): kept with the asset version so later tracks can avoid it. */
+  fingerprint?: Fingerprint
 }
 
 /**
@@ -23,15 +25,34 @@ export interface ChiptuneTrack {
  */
 export async function makeChiptuneTrack(
   client: ChiptuneClient,
-  o: { dir: string; n: number; plan: ChipTrackPlan; seed?: number; name?: string; signal?: AbortSignal }
+  o: { dir: string; n: number; plan: ChipTrackPlan; seed?: number; name?: string; /** The fingerprints of the book's earlier music tracks. */ avoid?: Fingerprint[]; signal?: AbortSignal }
 ): Promise<ChiptuneTrack> {
   const dir = path.resolve(o.dir)
   await fs.mkdir(dir, { recursive: true })
   const warnings: string[] = []
-  const composed = await client.composeTrack({ mood: o.plan.mood, chip: o.plan.chip, bpm: o.plan.bpm, key: o.plan.key, bars: o.plan.bars, loop: true, seed: o.seed, name: o.name }, o.signal)
+  const { plan } = o
+  const composed = await client.composeTrack(
+    {
+      mood: plan.mood,
+      chip: plan.chip,
+      bpm: plan.bpm,
+      key: plan.key,
+      bars: plan.bars,
+      loop: true,
+      seed: o.seed,
+      name: o.name,
+      ...(plan.texture ? { texture: plan.texture } : {}),
+      ...(plan.form ? { form: plan.form } : {}),
+      ...(plan.instruments && Object.keys(plan.instruments).length ? { instruments: plan.instruments } : {}),
+      ...(o.avoid?.length ? { avoid: o.avoid } : {})
+    },
+    o.signal
+  )
+  if (composed.warning) warnings.push(`Chiptune Studio: ${composed.warning}`)
   const wanted = path.join(dir, `v${o.n}.ogg`)
   const rendered = await client.renderAudio({ song: composed.songId, path: wanted, format: 'ogg', loops: 1 }, o.signal)
-  return keepRendered(client, { dir, n: o.n, wanted, songId: composed.songId, seed: composed.seed, signal: o.signal }, rendered, warnings)
+  const kept = await keepRendered(client, { dir, n: o.n, wanted, songId: composed.songId, seed: composed.seed, signal: o.signal }, rendered, warnings)
+  return composed.fingerprint ? { ...kept, fingerprint: composed.fingerprint } : kept
 }
 
 /**

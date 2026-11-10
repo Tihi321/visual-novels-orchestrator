@@ -1,4 +1,4 @@
-import type { Chip } from '../../shared/vn'
+import type { Chip, Fingerprint } from '../../shared/vn'
 import { McpHttpError, createMcpClient } from './mcp-http'
 import type { McpHttpClient, McpToolInfo } from './mcp-http'
 
@@ -34,6 +34,13 @@ export interface ComposeArgs {
   loop?: boolean
   seed?: number
   instruments?: Record<string, string>
+  /** Chiptune Studio's textures (`pad-lead`, `broken-chord`, `ostinato`, `chorale`, `march`, `bossa`, `lullaby-rock`, `pizzicato-walk`). */
+  texture?: string
+  /** `A`, `AB`, `ABA` or `AABA`. */
+  form?: string
+  palette?: string
+  /** The fingerprints of the earlier tracks of the book: the studio picks a texture, lead and tempo that none of them has. */
+  avoid?: Fingerprint[]
   name?: string
 }
 
@@ -50,6 +57,10 @@ export interface ComposeResult {
   durationSec: number
   loop: { startBar: number; endBar: number } | null
   channels: string[]
+  /** What the track is made of; always returned by a studio with the variety contract (HUB-33), missing from an older one. */
+  fingerprint?: Fingerprint
+  /** Set when `avoid` could not be met completely (names the rule). */
+  warning?: string
 }
 
 export interface ComposeSfxArgs {
