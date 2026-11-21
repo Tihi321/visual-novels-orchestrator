@@ -64,6 +64,10 @@ function renameStrataRefs(doc: Document): boolean {
   return changed
 }
 
+/** The address the `acp` provider had before the proxy moved to 8787, and the one it has now. */
+const ACP_OLD_URL = 'http://127.0.0.1:7461/v1'
+const ACP_NEW_URL = 'http://127.0.0.1:8787/v1'
+
 export const SEED_MIGRATIONS: SeedMigration[] = [
   {
     id: 'providers-client-v1',
@@ -105,6 +109,17 @@ export const SEED_MIGRATIONS: SeedMigration[] = [
       const seq = doc.get('providers', true)
       if (!entry || !isSeq(seq)) return false
       seq.add(entry.clone())
+      return true
+    }
+  },
+  {
+    id: 'acp-port-8787-v1',
+    file: 'config/providers.md',
+    // Only the exact old address of the `acp` row changes; any other value is the user's. Adds no row and enables nothing.
+    apply(doc) {
+      const acp = providersOf(doc).find((p) => p.get('id') === 'acp')
+      if (!acp || acp.get('base_url') !== ACP_OLD_URL) return false
+      acp.set('base_url', ACP_NEW_URL)
       return true
     }
   },

@@ -25,6 +25,7 @@ import { initDataFolder } from '../src/engine/store/dataFolder'
 import { parseMd } from '../src/shared/md'
 import type { EngineEvent } from '../src/shared/protocol'
 import { seedDir, writeTestConfig } from './helpers'
+import { LOCAL_MODEL as LOCAL } from '../src/shared/schemas'
 
 let dir: string
 beforeEach(async () => {
@@ -42,6 +43,17 @@ async function registryWith(o: Parameters<typeof writeTestConfig>[1], mock = new
   return { registry, mock }
 }
 
+/** The seed has `strata` off and the roles on `acp`: a test of the direct Strata provider switches it on and points script-analyst at it. */
+async function useDirectStrata(): Promise<void> {
+  const prov = path.join(dir, 'config', 'providers.md')
+  const text = await readFile(prov, 'utf8')
+  const on = text.replace(/(- id: strata\r?\n {4}kind: openai-compat\r?\n) {4}enabled: false\r?\n/, '$1')
+  expect(on).not.toBe(text)
+  await writeFile(prov, on)
+  const roles = path.join(dir, 'config', 'roles.md')
+  await writeFile(roles, (await readFile(roles, 'utf8')).replace(/(script-analyst:\r?\n {4}models: )\[[^\]]*\]/, '$1[strata/default, lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic, paid]'))
+}
+
 describe('seed configs', () => {
   it('providers.md and roles.md load, and every role model exists', async () => {
     const registry = new ModelRegistry(dir, { keys: () => undefined })
@@ -50,18 +62,25 @@ describe('seed configs', () => {
     expect(registry.providers.get('deepseek')?.unavailableReason).toMatch(/no key/)
     expect(registry.providers.get('lmstudio')?.available).toBe(true)
     expect(registry.providers.get('ollama')?.available).toBe(false)
-    expect(registry.providers.get('strata')).toMatchObject({ available: true, local: true, jsonSchema: false })
-    expect(isPaidModel(registry.getModel('strata/default')!)).toBe(false)
-    expect(new ModelRouter(registry, undefined).candidates('script-analyst')[0]?.ref).toBe('strata/default')
+    expect(registry.providers.get('strata')).toMatchObject({ enabled: false, available: false })
+    expect(registry.providers.get('acp')).toMatchObject({ available: true, local: true, jsonSchema: false })
+    expect(isPaidModel(registry.getModel(LOCAL)!)).toBe(false)
+    expect(new ModelRouter(registry, undefined).candidates('script-analyst')[0]?.ref).toBe(LOCAL)
     const flash = registry.getModel('deepseek/deepseek-flash')!
     expect(flash).toMatchObject({ priceIn: 0.3, priceOut: 1.2, priceCachedIn: 0.006, family: 'deepseek' })
     expect(isPaidModel(flash)).toBe(true)
     expect(isPaidModel(registry.getModel('lmstudio/nail-qwen3.6-35b-a3b-mtp')!)).toBe(false)
     for (const role of Object.keys(registry.roles.roles)) for (const ref of registry.roleModelRefs(role)) expect(registry.getModel(ref), ref).toBeTruthy()
     // the seed roles use the aliases, resolved to the settings defaults
-    expect(registry.roles.roles.director?.models).toEqual(['paid', 'strata', 'lmstudio'])
-    expect(registry.roleModelRefs('director')).toEqual(['deepseek/deepseek-flash', 'strata/default', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
-    expect(registry.roleModelRefs('edition-aligner')).toEqual(['strata/default-low', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic', 'deepseek/deepseek-flash'])
+    expect(registry.roles.roles.director?.models).toEqual(['paid', 'acp'])
+    expect(registry.roleModelRefs('director')).toEqual(['deepseek/deepseek-flash', LOCAL])
+    expect(registry.roleModelRefs('edition-aligner')).toEqual([LOCAL, 'deepseek/deepseek-flash'])
+    // every role but the art-critic resolves to LOCAL or DeepSeek; the art-critic keeps LM Studio
+    for (const role of Object.keys(registry.roles.roles)) {
+      const refs = registry.roleModelRefs(role)
+      if (role === 'art-critic') expect(refs).toEqual(['deepseek/deepseek-flash', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
+      else expect(refs.filter((r) => r !== LOCAL && r !== 'deepseek/deepseek-flash'), role).toEqual([])
+    }
     // the client provider is on in the seed, with a context, and no role uses it
     expect(registry.providers.get('client')).toMatchObject({ kind: 'client', local: true, available: true, concurrency: 8 })
     expect(registry.getModel('client/claude-code')).toMatchObject({ vision: true, context: 200000 })
@@ -72,9 +91,9 @@ describe('seed configs', () => {
     expect(registry.loadConfigFor('lmstudio', 'nail-qwen3.6-35b-a3b-mtp')).toEqual({ parallel: 2, context: 65536, ttlMinutes: 60 })
     expect(registry.loadConfigFor('lmstudio', 'gemma-4-e4b-it-ultra-uncensored-heretic')).toEqual({ parallel: 4, context: 131072, ttlMinutes: 60 })
     // another default in the settings: the roles follow, and an agent override may be an alias too
-    registry.setDefaults({ fallbacks: ['deepseek/deepseek-v4-pro', 'strata/default', 'lmstudio/nail-qwen3.6-35b-a3b-mtp'], shared: false, lmLoad: { parallel: 2, context: 16384, ttlMinutes: 30 } })
+    registry.setDefaults({ fallbacks: ['deepseek/deepseek-v4-pro', LOCAL, 'lmstudio/nail-qwen3.6-35b-a3b-mtp'], shared: false, lmLoad: { parallel: 2, context: 16384, ttlMinutes: 30 } })
     await registry.load()
-    expect(registry.roleModelRefs('director')).toEqual(['deepseek/deepseek-v4-pro', 'strata/default', 'lmstudio/nail-qwen3.6-35b-a3b-mtp'])
+    expect(registry.roleModelRefs('director')).toEqual(['deepseek/deepseek-v4-pro', LOCAL])
     expect(registry.getModel('lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic')?.context).toBe(16384)
     expect(registry.getModel('lmstudio/nail-qwen3.6-35b-a3b-mtp')?.context).toBe(65536) // its own load_context wins
     expect(new ModelRouter(registry, undefined).candidates('script-analyst', { agentModel: 'lmstudio' })[0]?.ref).toBe('lmstudio/nail-qwen3.6-35b-a3b-mtp')
@@ -83,6 +102,7 @@ describe('seed configs', () => {
   })
 
   it('concurrency: auto follows the slots the Strata server reports, and a raise frees waiting requests', async () => {
+    await useDirectStrata()
     let answer: (() => Response) | null = () => new Response(JSON.stringify({ loaded: true, concurrency: { serving: 4, requested: 4 } }))
     const asked: string[] = []
     const fetchImpl = (async (url: string) => {
@@ -117,6 +137,7 @@ describe('seed configs', () => {
   })
 
   it('a server that does not answer is down: jobs skip it while another model is left, and use it again once it answers; its loaded rows follow the model it runs', async () => {
+    await useDirectStrata()
     let strata: Record<string, unknown> | null = null // null: Strata is not started
     const fetchImpl = (async (url: string) => {
       const u = String(url)
@@ -1162,13 +1183,13 @@ describe('fallbacks as an open list', () => {
     expect(registry.roleEntries('checker')).toEqual(['deepseek/flash', 'strata/q-low', 'lmstudio/gemma'])
   })
 
-  it('with the old three rows the seed roles keep the chains the group sort gave them', async () => {
+  it('with three rows the seed roles get every row in row order, and a concrete model takes its kind place', async () => {
     const registry = new ModelRegistry(dir, { keys: () => undefined })
     await registry.load()
-    const three = ['deepseek/deepseek-flash', 'strata/default', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic']
+    const three = ['deepseek/deepseek-flash', LOCAL, 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic']
     registry.setDefaults({ fallbacks: three, shared: true, lmLoad: lm })
     expect(registry.roleModelRefs('director')).toEqual(three)
-    expect(registry.roleModelRefs('script-analyst')).toEqual(three) // [strata, lmstudio, paid] sorted by the rows
-    expect(registry.roleModelRefs('edition-aligner')).toEqual(['deepseek/deepseek-flash', 'strata/default-low', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
+    expect(registry.roleModelRefs('script-analyst')).toEqual(three) // [acp, paid] sorted by the rows
+    expect(registry.roleModelRefs('edition-aligner')).toEqual(three)
   })
 })

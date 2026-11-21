@@ -81,7 +81,7 @@ interface ProviderForm {
   error?: string
 }
 
-const emptyForm = (): ProviderForm => ({ name: '', baseUrl: 'http://127.0.0.1:7461/v1', apiKey: '', free: true, jsonSchema: false, concurrency: '2', enabled: true })
+const emptyForm = (): ProviderForm => ({ name: '', baseUrl: 'http://127.0.0.1:8787/v1', apiKey: '', free: true, jsonSchema: false, concurrency: '2', enabled: true })
 
 function formOf(p: ProviderSummary): ProviderForm {
   return { id: p.id, name: p.name, baseUrl: p.baseUrl ?? '', apiKey: '', free: p.local, jsonSchema: p.jsonSchema, concurrency: p.concurrencyAuto ? 'auto' : String(p.concurrency), enabled: p.enabled }
@@ -305,7 +305,7 @@ export function ModelsPage() {
         <label>Name</label>
         <input value={form.name} placeholder="ACP proxy (home)" onChange={(e) => set({ name: e.target.value })} data-testid="pf-name" />
         <label>Base URL</label>
-        <input value={form.baseUrl} placeholder="http://127.0.0.1:7461/v1" onChange={(e) => set({ baseUrl: e.target.value })} data-testid="pf-url" />
+        <input value={form.baseUrl} placeholder="http://127.0.0.1:8787/v1" onChange={(e) => set({ baseUrl: e.target.value })} data-testid="pf-url" />
         <label>API key (optional)</label>
         <input
           type="password"

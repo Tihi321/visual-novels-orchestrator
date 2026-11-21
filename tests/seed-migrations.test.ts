@@ -9,7 +9,7 @@ import { splitFrontmatter } from '../src/shared/md'
 import { parse as parseYaml } from 'yaml'
 import { seedDir } from './helpers'
 
-type Provider = { id: string; kind: string; models?: { id: string; context?: number }[] }
+type Provider = { id: string; kind: string; base_url?: string; enabled?: boolean; models?: { id: string; context?: number }[] }
 
 let data: string
 const file = () => path.join(data, 'config', 'providers.md')
@@ -61,8 +61,19 @@ describe('seed migrations', () => {
     expect(providers[0]).toMatchObject({ concurrency: 2, base_url: 'http://localhost:1234/v1' })
     // the client entry comes from the seed, so it already has antigravity
     expect(providers[1]).toMatchObject({ kind: 'client', models: [{ id: 'claude-code', context: 200000 }, { id: 'antigravity', vision: true, context: 1000000 }] })
-    expect(providers[2]).toMatchObject({ id: 'acp', kind: 'openai-compat', enabled: false, local: true, base_url: 'http://127.0.0.1:7461/v1', concurrency: 2, json_schema: false, discover: true, models: [] })
-    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1', 'settings-fallbacks-v1', 'strata-loaded-v1', 'strata-loaded-roles-v1', 'strata-loaded-settings-v1', 'voice-local-v1'])
+    expect(providers[2]).toMatchObject({ id: 'acp', kind: 'openai-compat', enabled: true, local: true, base_url: 'http://127.0.0.1:8787/v1', concurrency: 4, json_schema: false, discover: true })
+    expect(providers[2]!.models!.map((m) => m.id)).toEqual(['strata/qwen3.8-flash-next-unsloth-ud-iq4_xs', 'gufo/Qwen3.8-27B', 'gufo/deepseek4', 'gufo/flash-next-q4', 'llama/inkling-2-mini', 'llama/inkling-2-mini-dspark'])
+    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'acp-port-8787-v1', 'providers-client-antigravity-v1', 'settings-fallbacks-v1', 'strata-loaded-v1', 'strata-loaded-roles-v1', 'strata-loaded-settings-v1', 'voice-local-v1'])
+  })
+
+  it('moves the acp address from 7461 to 8787 once, leaves any other address alone, and enables nothing', async () => {
+    for (const [from, to] of [['http://127.0.0.1:7461/v1', 'http://127.0.0.1:8787/v1'], ['http://127.0.0.1:9999/v1', 'http://127.0.0.1:9999/v1']] as const) {
+      await oldFolder(OLD.replace('    models: []\n', `    models: []\n  - id: acp\n    kind: openai-compat\n    enabled: false\n    base_url: ${from}\n`))
+      await initDataFolder(data, seedDir)
+      const acp = (await providersOf()).find((p) => p.id === 'acp')!
+      expect(acp).toMatchObject({ base_url: to, enabled: false })
+      expect((await loadSeedState(data)).migrations).toContain('acp-port-8787-v1')
+    }
   })
 
   it('gives a client model without context 200000 and never changes one that has a value', async () => {
@@ -107,7 +118,7 @@ describe('seed migrations', () => {
     expect(res.updated).toContain('config/providers.md')
     expect(res.migrated).toEqual([])
     expect(await readFile(file(), 'utf8')).toBe(seedText)
-    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'providers-client-antigravity-v1', 'settings-fallbacks-v1', 'strata-loaded-v1', 'strata-loaded-roles-v1', 'strata-loaded-settings-v1', 'voice-local-v1'])
+    expect((await loadSeedState(data)).migrations).toEqual(['providers-client-v1', 'providers-client-context-v1', 'providers-acp-v1', 'acp-port-8787-v1', 'providers-client-antigravity-v1', 'settings-fallbacks-v1', 'strata-loaded-v1', 'strata-loaded-roles-v1', 'strata-loaded-settings-v1', 'voice-local-v1'])
   })
 
   it('adds acp and the antigravity client model once, and does not bring them back when you delete them', async () => {

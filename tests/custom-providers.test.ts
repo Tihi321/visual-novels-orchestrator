@@ -132,7 +132,7 @@ describe('custom providers in the engine', () => {
     await engine.setRoleModel('script-analyst', id) // roles.md names the provider id like an alias
     expect(engine.registry.roleModelRefs('script-analyst')[0]).toBe(`${id}/qwen3.8-flash`)
     await engine.handleCommand({ type: 'saveSettings', fallbacks: ['strata/qwen3.8-flash-next', `${id}/qwen3.8-flash`, 'deepseek/deepseek-flash'], fallbackShared: false })
-    expect(engine.registry.roleEntries('director')).toEqual(['paid', 'strata', 'lmstudio']) // roles.md entries kept with shared false
+    expect(engine.registry.roleEntries('director')).toEqual(['paid', 'acp']) // roles.md entries kept with shared false
     expect(engine.registry.roleEntries('script-analyst')[0]).toBe(id)
     expect((await engine.snapshot()).settings.fallbacks).toEqual(['strata/qwen3.8-flash-next', `${id}/qwen3.8-flash`, 'deepseek/deepseek-flash'])
 
@@ -272,21 +272,23 @@ describe('fallbacks and the settings migration', () => {
   it('a settings.md with neither shape gets the built-in defaults; fallbacks wins over the old fields', async () => {
     await writeFile(file('settings.md'), '---\nkind: settings\n---\n')
     const a = await started()
-    expect((await a.engine.snapshot()).settings.fallbacks).toEqual(['deepseek/deepseek-flash', 'strata/default', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
+    expect((await a.engine.snapshot()).settings.fallbacks).toEqual(['deepseek/deepseek-flash', 'acp/strata/qwen3.8-flash-next-unsloth-ud-iq4_xs', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
     await writeFile(file('settings.md'), '---\nkind: settings\ndefault_paid_model: deepseek/old\nfallbacks:\n  - deepseek/new\n---\n')
     const b = await started()
     expect(b.engine.registry.resolve('paid')).toBe('deepseek/new')
   })
 
-  it('the seed settings.md uses fallbacks, and a fresh data folder has the acp provider (off) and both client models', async () => {
+  it('the seed settings.md uses fallbacks, and a fresh data folder has the acp provider (on, 8787, six local rows) with strata off, and both client models', async () => {
     const settings = (await readConfig('settings.md')).data
-    expect(settings.fallbacks).toEqual(['deepseek/deepseek-flash', 'strata/default', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
+    expect(settings.fallbacks).toEqual(['deepseek/deepseek-flash', 'acp/strata/qwen3.8-flash-next-unsloth-ud-iq4_xs', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
     expect(settings.fallback_shared).toBe(false)
     expect(settings).not.toHaveProperty('group_defaults')
     expect(settings).not.toHaveProperty('default_paid_model')
     const registry = new ModelRegistry(dir, { keys: () => undefined })
     await registry.load()
-    expect(registry.providers.get('acp')).toMatchObject({ kind: 'openai-compat', enabled: false, local: true, custom: false, baseUrl: 'http://127.0.0.1:7461/v1', concurrency: 2, jsonSchema: false, discover: true, available: false })
+    expect(registry.providers.get('acp')).toMatchObject({ kind: 'openai-compat', enabled: true, local: true, custom: false, baseUrl: 'http://127.0.0.1:8787/v1', concurrency: 4, jsonSchema: false, discover: true, available: true })
+    expect([...registry.models.keys()].filter((r) => r.startsWith('acp/'))).toEqual(['acp/strata/qwen3.8-flash-next-unsloth-ud-iq4_xs', 'acp/gufo/Qwen3.8-27B', 'acp/gufo/deepseek4', 'acp/gufo/flash-next-q4', 'acp/llama/inkling-2-mini', 'acp/llama/inkling-2-mini-dspark'])
+    expect(registry.providers.get('strata')).toMatchObject({ enabled: false, available: false })
     expect(registry.kindOf('acp/anything')).toBe('acp')
     expect(registry.getModel('client/claude-code')).toMatchObject({ vision: true, context: 200000 })
     expect(registry.getModel('client/antigravity')).toMatchObject({ vision: true, context: 1000000, priceIn: 0 })

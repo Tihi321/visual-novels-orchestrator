@@ -101,8 +101,10 @@ providers:
       - id: gemma-4-e4b-it-ultra-uncensored-heretic
         family: gemma
         extra_body: { reasoning_effort: none }
+  # Switched off (HUB-38): Strata is reached through the ACP proxy (acp/strata/...). Set enabled: true to talk to Strata directly again.
   - id: strata
     kind: openai-compat
+    enabled: false
     local: true
     base_url: http://127.0.0.1:8080/v1
     api_key_env: STRATA_API_KEY   # optional: only sent if set
@@ -135,17 +137,46 @@ providers:
     concurrency: 1
     discover: true
     models: []
-  # The ACP proxy (api-acp-proxy: Antigravity, Codex and Claude through ACP) as an OpenAI-style server. Off until you start the proxy and switch it on.
-  # Text only. See "ACP proxy" below for the proxy settings it needs.
+  # The ACP proxy (api-acp-proxy: Antigravity, Codex and Claude through ACP, and the local models gufo, strata and llama) as an OpenAI-style server.
+  # On at port 8787 (HUB-38): it is the route to every model but the art-critic's vision model. Text only for the cloud models. See "ACP proxy" below.
   - id: acp
+    name: ACP proxy
     kind: openai-compat
-    enabled: false
+    enabled: true
     local: true
-    base_url: http://127.0.0.1:7461/v1
-    concurrency: 2
+    base_url: http://127.0.0.1:8787/v1
+    concurrency: 4
     json_schema: false
     discover: true
-    models: []
+    discover_skip: [ qwen-image, nomic-embed ]
+    models:
+      # Local models through the proxy (HUB-38). One local model is loaded at a time across gufo, strata and llama;
+      # a request for another one waits until the proxy has switched (minutes). LOCAL is the strata row.
+      - id: strata/qwen3.8-flash-next-unsloth-ud-iq4_xs
+        family: qwen
+        context: 131072
+        extra_body: { reasoning_effort: none }
+      - id: gufo/Qwen3.8-27B
+        family: qwen
+        context: 32768
+        extra_body: { reasoning_effort: none }
+      - id: gufo/deepseek4
+        family: deepseek
+        context: 16384
+        extra_body: { reasoning_effort: none }
+      - id: gufo/flash-next-q4
+        family: qwen
+        context: 32768
+        vision: true
+        extra_body: { reasoning_effort: none }
+      - id: llama/inkling-2-mini
+        family: inkling
+        context: 32768
+        vision: true
+      - id: llama/inkling-2-mini-dspark
+        family: inkling
+        context: 32768
+        vision: true
   # Model work done by an MCP client (Claude Code). It is on, and harmless until a role, an agent or a project names it
   # (client/claude-code in config/roles.md, `model:` in agents/<agent>.md, or the project's models). See the "Client" section below.
   - id: client
@@ -195,22 +226,24 @@ Each model is a named client: a task made for `client/antigravity` is only hande
 
 ## ACP proxy
 
-The `acp` entry (off by default) is for `api-acp-proxy`, a server on `http://127.0.0.1:7461/v1` that answers OpenAI-style requests through Antigravity, Codex or Claude over ACP. Start it yourself, then set `enabled: true` (or use the Models page), press **Detect models** and tick the models you want.
+The `acp` entry is on (HUB-38). It is `api-acp-proxy`, a server on `http://127.0.0.1:8787/v1` that answers OpenAI-style requests through Antigravity, Codex or Claude over ACP, and serves the local models too: `gufo/*`, `strata/*` and `llama/*`. It is started from the creative-hub folder (`scripts\hub.ps1 start`; check `http://127.0.0.1:8787/healthz`). Press **Detect models** and tick the cloud models you want.
 
+- The local models in the seed are `strata/qwen3.8-flash-next-unsloth-ud-iq4_xs` (the default one, written `acp/strata/qwen3.8-flash-next-unsloth-ud-iq4_xs`), `gufo/Qwen3.8-27B`, `gufo/deepseek4`, `gufo/flash-next-q4` and the two `llama/inkling-2-mini*` ones. Only one local model is loaded on the GPU at a time, across gufo, strata and llama: a request for another one waits until the proxy has switched (minutes), so roles and the fallback list name only the strata one.
 - Start it with `PROXY_IGNORE_SAMPLING=1`: VN Studio sends `temperature`, `max_tokens` and `stream_options`, which the proxy otherwise passes on or rejects.
-- It is text only: no vision, so it can't serve the art-critic (use `client/antigravity`, `client/claude-code` or a vision model there).
+- The cloud models are text only. The art-critic needs vision: it keeps `lmstudio` (its vision model); the proxy's vision rows (`gufo/flash-next-q4`, `llama/inkling-2-mini*`) are listed, not used by a role.
 - `PROXY_TIMEOUT_MS` (5 minutes by default) must cover your longest request, or long jobs fail.
 - `local: true` makes it free here (no key, never counted against the caps), but the subscription behind it has its own limits and terms. Using Antigravity's models through a proxy may break Google's terms: see the creative-hub `ROADMAP.md`, "Antigravity models and the ACP proxy", before relying on it.
+- A folder made before 8787 had the proxy at port 7461: the migration `acp-port-8787-v1` rewrites exactly that address to 8787 and leaves any other value alone.
 - Any other OpenAI-style server can be added in the Models page with **Add provider**.
 
 ## Strata
 
-Strata (`D:\Strata`) is a fast local server with an OpenAI-style API. VN Studio only connects to it, you start it:
+The `strata` provider is switched off (`enabled: false`): VN Studio reaches Strata through the ACP proxy, which starts `D:\Strata\terminal\run-unsloth-ud-iq4_xs-parallel.bat` on request. The entry and its profiles stay as a way back: set `enabled: true` to connect to Strata directly again. Strata (`D:\Strata`) is a fast local server with an OpenAI-style API. Used directly, you start it yourself:
 
 - It serves one model per process, on port 8080, chosen by the `run-*.bat` you start in `D:\Strata`: `run-unsloth-ud-iq4_xs-parallel.bat` (Qwen3.8-Flash-Next IQ4_XS, four requests at once), `run-unsloth-ud-iq4_xs.bat` (Qwen IQ4_XS, one at a time), `run-deepseek-v4.1-flash-ist-das-2.00bpw.bat` and `run-deepseek-v4.1-flash-ista-das-coder.bat` (DeepSeek V4.1 Flash). From the creative-hub folder, `scripts\hub.ps1 start strata <variant>` starts one.
 - Loading the model takes 1 to 3 minutes (the DeepSeek config allows up to an hour). Check `curl http://127.0.0.1:8080/health` and wait for `loaded: true`. Until it answers, jobs skip it and use the next model in the role; a few seconds after it answers (the check runs every 10 seconds) they go back to Strata.
 - VN Studio asks Strata which model it runs (`/v1/status`) and uses the matching entry of `profiles` for that model's settings (family, context, extra body). `strata/default` (no thinking) and `strata/default-low` (thinking on `low`, for the checks) follow it: after you restart Strata with another model, the Models page shows the new name within about 10 seconds and `config/roles.md` stays the same. The older ids `qwen3.8-flash-next` and `qwen3.8-flash-next-low` still work as aliases. When you install a new model, add a profile for it (its `id` is matched as a prefix of the id Strata reports).
-- Strata takes most of the GPU memory with any of these models: keep only the nomic embedding model loaded in LM Studio, and no ComfyUI, while it runs.
+- Strata takes most of the GPU memory with any of these models: keep only the nomic embedding model loaded in LM Studio, and no ComfyUI, while it runs. Only one local model is on the GPU at a time (gufo, strata and llama through the proxy included).
 - `context` in a profile must match `--max-context` in the run config (131072 for all four now).
 - `json_schema: false` because Strata checks a structured answer after the fact and fails the request (502 `structured_output_failed`) when it is bad. That would be retried and then sent to a paid model, while the engine's own parse-and-repair step already copes with a loose JSON answer.
 - No key is needed. `STRATA_API_KEY` is only sent if you set it.
