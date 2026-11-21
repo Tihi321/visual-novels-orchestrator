@@ -138,7 +138,7 @@ export const providersSchema = configBase('providers').extend({
 // ---- roles ----
 
 export const rolesSchema = configBase('roles').extend({
-  /** Per role: ordered model list, `provider/model` or an alias (`paid`, `strata`, `lmstudio`: the defaults in config/settings.md). The first one is the default, the rest are fallbacks. */
+  /** Per role: ordered model list, `provider/model` or an alias (`paid`, `acp`, `lmstudio`: the defaults in config/settings.md). The first one is the default, the rest are fallbacks. */
   roles: z.record(z.string(), z.looseObject({ models: z.array(z.string()).default([]) })).default({}),
   /** `provider/model` used for embeddings (not used by VN Studio, kept for the model layer). */
   embeddings: z.string().optional()
@@ -155,15 +155,22 @@ export const factorySchema = configBase('factory').extend({
 
 // ---- settings ----
 
+/** The default local model: Strata's Qwen3.8-Flash-Next through the ACP proxy (HUB-38). */
+export const LOCAL_MODEL = 'acp/strata/qwen3.8-flash-next-unsloth-ud-iq4_xs'
+
 export const BUILTIN_FALLBACKS = [
   'deepseek/deepseek-flash',
-  'strata/default',
+  LOCAL_MODEL,
   'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'
 ]
 
-/** The built-in defaults behind the `paid`, `strata` and `lmstudio` aliases. */
+/**
+ * The built-in defaults behind the `paid`, `acp` and `lmstudio` aliases. `strata` stays: the legacy settings keys (`default_strata_model`, a
+ * `group_defaults.strata`) are read by name in `settingsSchema` and `groupDefaultsOf`, and the provider is only switched off, not removed.
+ */
 export const BUILTIN_GROUP_DEFAULTS: Record<string, string> = {
   paid: 'deepseek/deepseek-flash',
+  acp: LOCAL_MODEL,
   strata: 'strata/default',
   lmstudio: 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'
 }

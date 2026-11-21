@@ -5,6 +5,7 @@ import { resolveKey, setStoredKey } from './models/keys'
 import { initDataFolder, argValue, resolveDataDir } from './store/dataFolder'
 import { emptyUsage } from './models/types'
 import type { Usage } from './models/types'
+import { LOCAL_MODEL } from '../shared/schemas'
 
 // The VN pipeline commands (`books`, `import`, `run`, `build` ...) live in vncli.ts; they are part of this CLI.
 export { CLI_COMMANDS, parseCliArgs, runCli, runCliWith, startHeadless, USAGE as CLI_USAGE } from './vncli'
@@ -24,7 +25,7 @@ export async function probe(argv: string[]): Promise<number> {
   const router = new ModelRouter(registry, budget, { retries: 0 })
 
   let code = 0
-  const refs = argValue(argv, 'model') ? [argValue(argv, 'model')!] : ['lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic', 'deepseek/deepseek-flash']
+  const refs = argValue(argv, 'model') ? [argValue(argv, 'model')!] : [LOCAL_MODEL]
   for (const ref of refs) {
     const model = registry.getModel(ref)
     if (!model) {
