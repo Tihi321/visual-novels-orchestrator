@@ -1,0 +1,5 @@
+{"ts":"2026-11-21T22:32:00Z","actor":"director-scribe","type":"plan.created","request":"REQ-0030","ticket":"VNO-68-vision-fallback-inkling","detail":"planner drafted the repo plan (draft)"}
+{"ts":"2026-11-21T22:33:00Z","actor":"director-scribe","type":"plan.approved","request":"REQ-0030","ticket":"VNO-68-vision-fallback-inkling","detail":"user approved the plan (Yes, as recommended)"}
+{"ts":"2026-11-21T22:50:00Z","actor":"director-scribe","type":"checker.verdict","request":"REQ-0030","ticket":"VNO-68-vision-fallback-inkling","detail":"integration check FAIL: wording only (README lines)","data":{"verdict":"FAIL"}}
+{"ts":"2026-11-21T22:50:00Z","actor":"director-scribe","type":"checker.verdict","request":"REQ-0030","ticket":"VNO-68-vision-fallback-inkling","detail":"re-check after polish: PASS","data":{"verdict":"PASS"}}
+{"ts":"2026-11-21T22:50:00Z","actor":"director-scribe","type":"ticket.done","request":"REQ-0030","ticket":"VNO-68-vision-fallback-inkling","detail":"done: PASS after polish; committed, not merged or pushed"}

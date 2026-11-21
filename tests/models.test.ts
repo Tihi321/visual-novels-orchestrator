@@ -75,12 +75,14 @@ describe('seed configs', () => {
     expect(registry.roles.roles.director?.models).toEqual(['paid', 'acp'])
     expect(registry.roleModelRefs('director')).toEqual(['deepseek/deepseek-flash', LOCAL])
     expect(registry.roleModelRefs('edition-aligner')).toEqual([LOCAL, 'deepseek/deepseek-flash'])
-    // every role but the art-critic resolves to LOCAL or DeepSeek; the art-critic keeps LM Studio
+    // every role but the art-critic resolves to LOCAL or DeepSeek; the art-critic names Inkling (HUB-39)
     for (const role of Object.keys(registry.roles.roles)) {
       const refs = registry.roleModelRefs(role)
-      if (role === 'art-critic') expect(refs).toEqual(['deepseek/deepseek-flash', 'lmstudio/gemma-4-e4b-it-ultra-uncensored-heretic'])
+      if (role === 'art-critic') expect(refs).toEqual(['deepseek/deepseek-flash', 'acp/llama/inkling-2-mini'])
       else expect(refs.filter((r) => r !== LOCAL && r !== 'deepseek/deepseek-flash'), role).toEqual([])
     }
+    expect(registry.getModel('acp/llama/inkling-2-mini')).toMatchObject({ vision: true, extraBody: { chat_template_kwargs: { reasoning_effort: 'none' } } })
+    expect(new ModelRouter(registry, undefined).candidates('art-critic', { visionOnly: true }).map((m) => m.ref)).toEqual(['acp/llama/inkling-2-mini'])
     // the client provider is on in the seed, with a context, and no role uses it
     expect(registry.providers.get('client')).toMatchObject({ kind: 'client', local: true, available: true, concurrency: 8 })
     expect(registry.getModel('client/claude-code')).toMatchObject({ vision: true, context: 200000 })
@@ -545,10 +547,10 @@ describe('HTTP clients against fake servers', () => {
         'data: [DONE]\n\n'
       ])
     const c = new OpenAiCompatClient({ id: 'x', baseUrl: base + '/v1', apiKey: 'sk-test' })
-    const r = await collect(c.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }], extraBody: { thinking: false }, maxTokens: 50 }))
+    const r = await collect(c.chat({ model: 'm', messages: [{ role: 'user', content: 'hi' }], extraBody: { chat_template_kwargs: { reasoning_effort: 'none' } }, maxTokens: 50 }))
     expect(r.text).toBe('Hello')
     expect(r.usage).toEqual({ inputTokens: 100, cachedInputTokens: 60, outputTokens: 7 })
-    expect(lastBody).toMatchObject({ model: 'm', stream: true, stream_options: { include_usage: true }, thinking: false, max_tokens: 50 })
+    expect(lastBody).toMatchObject({ model: 'm', stream: true, stream_options: { include_usage: true }, chat_template_kwargs: { reasoning_effort: 'none' }, max_tokens: 50 })
     expect(lastHeaders.authorization).toBe('Bearer sk-test')
   })
 
