@@ -42,7 +42,7 @@ export async function reviewImage(call: AgentCall, input: ReviewInput): Promise<
     { id: input.entry.id, kind: input.entry.kind, prompt: input.prompt, hasSheet: sheet ? 'yes: the first image is the character sheet, the second is the image to review' : 'no: there is one image to review' },
     reviewImageSchema,
     {
-      maxTokens: 1200,
+      maxTokens: 2000,
       tweak: (messages: ChatMessage[]) => {
         const last = messages[messages.length - 1]
         if (!last || typeof last.content !== 'string') return

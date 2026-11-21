@@ -8,7 +8,7 @@ roles:
   art-director:
     models: [paid, acp]
   art-critic:
-    models: [paid, lmstudio]
+    models: [paid, acp/llama/inkling-2-mini]
   composer:
     models: [acp, paid]
   stage-director:
@@ -22,13 +22,13 @@ roles:
 
 The default models for each role, as an ordered list of `provider/model` or an alias. The first model is the default. If it fails, is rate-limited or is over budget, the next one is tried. An agent's own `model` field (in `agents/<agent>.md`) goes in front of this list.
 
-The aliases `paid`, `acp` and `lmstudio` stand for the first row of that kind in `config/settings.md` (also on the app's Models page). A kind can repeat: `paid-2` stands for the second API row, `acp-2` for the second ACP row. The id of any other provider works as an alias too (`client`, `strata`, or a provider you added with Add provider, such as `acp-home`). Local models run through the ACP proxy (HUB-38): `acp` is the default local model, `acp/strata/qwen3.8-flash-next-unsloth-ud-iq4_xs`. The `strata` provider is switched off, so its alias stays unresolved. `lmstudio` is only for the art-critic's vision model. Change a row there and every role that uses the alias follows.
+The aliases `paid`, `acp` and `lmstudio` stand for the first row of that kind in `config/settings.md` (also on the app's Models page). A kind can repeat: `paid-2` stands for the second API row, `acp-2` for the second ACP row. The id of any other provider works as an alias too (`client`, `strata`, or a provider you added with Add provider, such as `acp-home`). Local models run through the ACP proxy (HUB-38): `acp` is the default local model, `acp/strata/qwen3.8-flash-next-unsloth-ud-iq4_xs`. The `strata` provider is switched off, so its alias stays unresolved. No role names `lmstudio` any more; the art-critic names `acp/llama/inkling-2-mini` directly (the alias `acp` is the text model). Change a row there and every role that uses the alias follows.
 
 The VN Studio roles:
 - `director`: plans each book's job graph and decides what to redo after failures or edits.
 - `script-analyst`: normalises the script lines the parser can't settle (place and time, props and cast, expressions, names).
 - `art-director`: writes the English ComfyUI prompts for backgrounds, character sheets, expressions and the cover.
-- `art-critic`: looks at generated images and approves them or asks for a retry. **It needs a vision model**: put a model with `vision: true` first in its list (a Qwen-VL in LM Studio, Claude or Gemini). It keeps `[paid, lmstudio]`: the ACP proxy's local models are not used for it.
+- `art-critic`: looks at generated images and approves them or asks for a retry. **It needs a vision model** (`vision: true`): `paid` (DeepSeek) has none, so it uses `acp/llama/inkling-2-mini` through the ACP proxy (HUB-39), about 2 minutes per image, thinking kept short; it shares GPU memory with ComfyUI. Put Claude, Gemini or `client/claude-code` first (here, or the project's `models`) for a faster review.
 - `composer`: writes the music prompts and assigns tracks to chapters.
 - `stage-director`: decides sprite slots, entrances and exits, transitions and music cues.
 - `edition-aligner`: aligns a translated edition to the primary structure, beat by beat.

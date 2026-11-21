@@ -173,10 +173,12 @@ providers:
         family: inkling
         context: 32768
         vision: true
+        extra_body: { chat_template_kwargs: { reasoning_effort: none } }
       - id: llama/inkling-2-mini-dspark
         family: inkling
         context: 32768
         vision: true
+        extra_body: { chat_template_kwargs: { reasoning_effort: none } }
   # Model work done by an MCP client (Claude Code). It is on, and harmless until a role, an agent or a project names it
   # (client/claude-code in config/roles.md, `model:` in agents/<agent>.md, or the project's models). See the "Client" section below.
   - id: client
@@ -228,9 +230,9 @@ Each model is a named client: a task made for `client/antigravity` is only hande
 
 The `acp` entry is on (HUB-38). It is `api-acp-proxy`, a server on `http://127.0.0.1:8787/v1` that answers OpenAI-style requests through Antigravity, Codex or Claude over ACP, and serves the local models too: `gufo/*`, `strata/*` and `llama/*`. It is started from the creative-hub folder (`scripts\hub.ps1 start`; check `http://127.0.0.1:8787/healthz`). Press **Detect models** and tick the cloud models you want.
 
-- The local models in the seed are `strata/qwen3.8-flash-next-unsloth-ud-iq4_xs` (the default one, written `acp/strata/qwen3.8-flash-next-unsloth-ud-iq4_xs`), `gufo/Qwen3.8-27B`, `gufo/deepseek4`, `gufo/flash-next-q4` and the two `llama/inkling-2-mini*` ones. Only one local model is loaded on the GPU at a time, across gufo, strata and llama: a request for another one waits until the proxy has switched (minutes), so roles and the fallback list name only the strata one.
+- The local models in the seed are `strata/qwen3.8-flash-next-unsloth-ud-iq4_xs` (the default one, written `acp/strata/qwen3.8-flash-next-unsloth-ud-iq4_xs`), `gufo/Qwen3.8-27B`, `gufo/deepseek4`, `gufo/flash-next-q4` and the two `llama/inkling-2-mini*` ones. Only one local model is loaded on the GPU at a time, across gufo, strata and llama: a request for another one waits until the proxy has switched (minutes), so the text roles and the fallback list name only the strata one; the art-critic names `llama/inkling-2-mini` (HUB-39).
 - Start it with `PROXY_IGNORE_SAMPLING=1`: VN Studio sends `temperature`, `max_tokens` and `stream_options`, which the proxy otherwise passes on or rejects.
-- The cloud models are text only. The art-critic needs vision: it keeps `lmstudio` (its vision model); the proxy's vision rows (`gufo/flash-next-q4`, `llama/inkling-2-mini*`) are listed, not used by a role.
+- The cloud models are text only. The art-critic's local model is `acp/llama/inkling-2-mini` through the ACP proxy (HUB-39): about 2 minutes per review, thinking kept short with `chat_template_kwargs`, and the proxy switches the GPU from Strata to Inkling (about 20 s) and back (about 55 s). It shares GPU memory with ComfyUI's image model while a run makes pictures. `lmstudio` is no longer named by any role.
 - `PROXY_TIMEOUT_MS` (5 minutes by default) must cover your longest request, or long jobs fail.
 - `local: true` makes it free here (no key, never counted against the caps), but the subscription behind it has its own limits and terms. Using Antigravity's models through a proxy may break Google's terms: see the creative-hub `ROADMAP.md`, "Antigravity models and the ACP proxy", before relying on it.
 - A folder made before 8787 had the proxy at port 7461: the migration `acp-port-8787-v1` rewrites exactly that address to 8787 and leaves any other value alone.
