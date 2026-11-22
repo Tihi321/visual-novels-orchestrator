@@ -27,7 +27,7 @@ export interface Tool {
 }
 
 export interface McpOptions {
-  /** How long a `wait` call waits at most (ms). Default 10 minutes. */
+  /** How long a `wait` call waits at most (ms). Default WAIT_LIMIT_MS. */
   waitTimeoutMs?: number
   /** The queue switches of the engine (`vno_pause_all`, `vno_resume_all`, `vno_stop_now`). Without it those tools say they are unavailable. */
   control?: { setPaused(paused: boolean): Promise<void>; stopNow(opts?: { drop?: boolean; slug?: string }): Promise<void>; clearQueue(slug?: string): Promise<{ dropped: number; projects: string[] }> }
@@ -62,8 +62,11 @@ export interface ToolResult {
 
 const slug = z.string().describe('The project slug (see vno_list_projects)')
 const lang = langSchema.describe('A language code such as en, hr, de or ja (vno_languages lists them)')
-const wait = z.boolean().optional().describe('Wait until the jobs finish before answering')
+const wait = z.boolean().optional().describe('Wait until the jobs finish before answering (at most 240 s; then call vno_wait to keep waiting)')
 const assetKind = z.enum(['background', 'sheet', 'sprite', 'cover', 'cg', 'music', 'sfx', 'ambience', 'voiceRef'])
+
+/** The longest any wait lasts by default (ms): MCP clients drop a call that is silent for about 300 s. */
+export const WAIT_LIMIT_MS = 240_000
 
 /** What `wait` says when jobs wait for the client: how many tasks, and what to do. */
 export function clientHint(n: number): { clientTasks?: number; hint?: string } {
@@ -72,7 +75,7 @@ export function clientHint(n: number): { clientTasks?: number; hint?: string } {
 
 /** The tool list, bound to a service. */
 export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
-  const timeoutMs = opts.waitTimeoutMs ?? 10 * 60_000
+  const timeoutMs = opts.waitTimeoutMs ?? WAIT_LIMIT_MS
   const queue = () => opts.clientQueue ?? svc.deps.registry.clientQueue
   const settle = async (s: string, doWait: boolean | undefined) => {
     if (!doWait) return { waited: false }
@@ -343,7 +346,7 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
       'Wait until a project has nothing left to run (or the timeout passes), then say how it ended. Other calls keep working while this one waits.',
       z.object({ slug, timeoutSeconds: z.number().positive().max(240).optional().describe('Default and maximum: 240 (MCP clients drop a call that is silent for about 300 s); call again to keep waiting') }),
       async (a) => {
-        const r = await svc.waitIdle(a.slug, { timeoutMs: (a.timeoutSeconds ?? 240) * 1000 })
+        const r = await svc.waitIdle(a.slug, { timeoutMs: a.timeoutSeconds ? a.timeoutSeconds * 1000 : WAIT_LIMIT_MS })
         return { timedOut: r.timedOut, failedJobs: r.failed, ...clientHint(r.clientTasks), status: await svc.status(a.slug) }
       }
     ),

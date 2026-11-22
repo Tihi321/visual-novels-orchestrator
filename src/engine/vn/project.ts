@@ -31,7 +31,7 @@ import type { Uncertain } from './script'
  *   game/               the Ren'Py project
  */
 
-const SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/
+const SLUG_RE = /^[a-z0-9](?!.*--)[a-z0-9._-]*$/
 
 /** A folder-safe project slug from any text: `Война и мир` -> `voina-i-mir`, `红楼梦` -> `book-1a2b3c` (see `asciiSlug`). */
 export function projectSlug(text: string): string {

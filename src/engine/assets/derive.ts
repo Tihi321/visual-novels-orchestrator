@@ -34,15 +34,31 @@ export const INSERT_FRAMING = 'object or document close-up, centered, plain back
 export const DEFAULT_NEGATIVE = 'text, letters, words, watermark, signature, logo, blurry, low quality, deformed, extra limbs, extra fingers, border, frame, open book'
 
 const TEXT_WORD = '(?:text|letters?|words?|writing|signs?|signage|captions?|labels?|watermarks?|logos?)'
-const TEXT_NEGATION = new RegExp(String.raw`^(?:no|without)\s+${TEXT_WORD}(?:\s*(?:,|and|or|/)\s*${TEXT_WORD})*$`, 'i')
+const TEXT_NEGATION = new RegExp(
+  String.raw`^(?:no|without)\s+(?:any\s+)?${TEXT_WORD}(?:\s*(?:,|and|or|/)\s*(?:(?:no|without)\s+)?(?:any\s+)?${TEXT_WORD})*$`,
+  'i'
+)
+/** One clause of a prompt, its separator (a comma, a semicolon, a newline, or a full stop before whitespace or the end) and the blanks after it. */
+const CLAUSE = /([^,;\n]*?)(\.(?=\s|$)|[,;\n]|$)([ \t]*)/gy
 
-/** Removes comma-separated clauses that negate text or signs ("no text", "no letters", "without signs", "no captions", "no writing", "no words", "no watermark", "no logo"): image models draw what a prompt names. The rest of the prompt is kept in order. */
+/**
+ * Removes clauses that negate text or signs ("no text", "no letters", "without signs", "without any text", "no text and no signs", "No text."): image models draw what a prompt names.
+ * Clauses end at a comma, a semicolon, a newline or a full stop followed by whitespace or the end. A removed clause takes its following separator with it
+ * (the preceding one when it was the last); the rest is rejoined as it was, each clause trimmed. A negation with a trailing phrase ("no text on the walls") is kept.
+ */
 export function stripTextNegations(prompt: string): string {
-  return prompt
-    .split(',')
-    .filter((clause) => !TEXT_NEGATION.test(clause.trim()))
-    .map((clause) => clause.trim())
-    .join(', ')
+  const kept: Array<{ text: string; sep: string }> = []
+  let lastRemoved = false
+  CLAUSE.lastIndex = 0
+  while (CLAUSE.lastIndex < prompt.length) {
+    const m = CLAUSE.exec(prompt)
+    if (!m) break
+    const text = m[1]!.trim()
+    lastRemoved = TEXT_NEGATION.test(text)
+    if (!lastRemoved) kept.push({ text, sep: m[2]! + m[3]! })
+  }
+  if (lastRemoved && kept.length) kept[kept.length - 1]!.sep = ''
+  return kept.map((c) => c.text + c.sep).join('')
 }
 
 function stub(partial: Pick<AssetEntry, 'id' | 'kind' | 'engine' | 'size'> & { refs?: string[] }): AssetEntry {

@@ -128,6 +128,11 @@ describe('protocol commands', () => {
     expect(last('command.error')).toMatchObject({ command: 'getProject', slug: 'nope' })
     await e.handleCommand({ type: 'getProject', slug: '../etc' })
     expect(last('command.error')?.message).toMatch(/invalid project slug/)
+    // a slug with "--" could reach another project's job files (<slug>--<task>--...): refused before any file is touched
+    await e.handleCommand({ type: 'deleteProject', slug: `${done.slug}--vn.analyse` })
+    expect(last('command.error')?.message).toMatch(/invalid project slug/)
+    await e.handleCommand({ type: 'getProject', slug: done.slug })
+    expect(last('command.error')).not.toMatchObject({ command: 'getProject', slug: done.slug })
 
     // the pipeline reports its steps
     await e.handleCommand({ type: 'unlockAsset', slug: done.slug, id: assets[0]!.id })
