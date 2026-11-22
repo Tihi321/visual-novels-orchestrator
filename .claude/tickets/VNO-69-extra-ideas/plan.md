@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 request: creative-hub/REQ-0030
 repos: [visual-novels-orchestrator]
 branch: VNO-69_extra-ideas
