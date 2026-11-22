@@ -33,6 +33,18 @@ export const INSERT_FRAMING = 'object or document close-up, centered, plain back
 
 export const DEFAULT_NEGATIVE = 'text, letters, words, watermark, signature, logo, blurry, low quality, deformed, extra limbs, extra fingers, border, frame, open book'
 
+const TEXT_WORD = '(?:text|letters?|words?|writing|signs?|signage|captions?|labels?|watermarks?|logos?)'
+const TEXT_NEGATION = new RegExp(String.raw`^(?:no|without)\s+${TEXT_WORD}(?:\s*(?:,|and|or|/)\s*${TEXT_WORD})*$`, 'i')
+
+/** Removes comma-separated clauses that negate text or signs ("no text", "no letters", "without signs", "no captions", "no writing", "no words", "no watermark", "no logo"): image models draw what a prompt names. The rest of the prompt is kept in order. */
+export function stripTextNegations(prompt: string): string {
+  return prompt
+    .split(',')
+    .filter((clause) => !TEXT_NEGATION.test(clause.trim()))
+    .map((clause) => clause.trim())
+    .join(', ')
+}
+
 function stub(partial: Pick<AssetEntry, 'id' | 'kind' | 'engine' | 'size'> & { refs?: string[] }): AssetEntry {
   return {
     id: partial.id,

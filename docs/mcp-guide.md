@@ -12,7 +12,7 @@ VN Studio turns books from the Scriptorium library, or a story you write straigh
 6. `vno_build {slug}` writes the HTML5 web game and `vno_lint` checks it. The build result lists the assets that are still placeholders; lint also checks that the primary edition agrees with `vn.json` and that pack editions are current.
 7. `vno_add_edition {slug, source, lang?}` adds a translated edition (a pack catalogue/bundle, or for a legacy project a translated book folder; without `lang` its language is detected). Assets are reused; only the text is added. `vno_get_edition`, `vno_update_beat` and `vno_align_report` edit and check the text.
 
-Long calls return job ids at once. A client that times out on a long call should poll `vno_wait` with a short `timeoutSeconds` instead.
+Long calls return job ids at once. A client that times out on a long call should poll `vno_wait` instead: it waits at most 240 s per call (MCP clients drop a call that is silent for about 300 s), so call it again to keep waiting.
 
 ## Workflow: write the story yourself (no book folder)
 

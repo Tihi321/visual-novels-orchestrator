@@ -1,0 +1,6 @@
+{"ts":"2026-11-22T16:10:00Z","actor":"planner","type":"plan.created","request":"REQ-0030","ticket":"VNO-71-signs-wait-delete","detail":"planner wrote the plan (draft)"}
+{"ts":"2026-11-22T16:10:00Z","actor":"director-scribe","type":"plan.approved","request":"REQ-0030","ticket":"VNO-71-signs-wait-delete","detail":"user: 'Approve as recommended'"}
+{"ts":"2026-11-22T15:32:32Z","actor":"implement","type":"changelog.written","request":"creative-hub/REQ-0030","ticket":"VNO-71-signs-wait-delete","detail":"commit on VNO-71_signs-wait-delete, tests pass"}
+{"ts":"2026-11-22T16:48:00Z","actor":"director-scribe","type":"checker.verdict","request":"creative-hub/REQ-0030","ticket":"VNO-71-signs-wait-delete","detail":"deep check PASS; should-fix: fallback to the original revised prompt","data":{"check":"deep","verdict":"PASS"}}
+{"ts":"2026-11-22T16:48:00Z","actor":"director-scribe","type":"checker.verdict","request":"creative-hub/REQ-0030","ticket":"VNO-71-signs-wait-delete","detail":"PASS after polish 1","data":{"check":"delta","verdict":"PASS"}}
+{"ts":"2026-11-22T16:48:00Z","actor":"director-scribe","type":"ticket.done","request":"creative-hub/REQ-0030","ticket":"VNO-71-signs-wait-delete","detail":"PASS after polish 1; branch not merged or pushed"}

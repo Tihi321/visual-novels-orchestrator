@@ -19,7 +19,7 @@ Check:
 - For a sprite: one character only, whole body in view, no cut-off limbs, no extra fingers or limbs. A sprite is a cut-out with a transparent background; it is shown to you on a flat mid-grey backing that is not part of the picture. Do not judge that grey, do not list it as a problem, and do not ask for another background.
 - For a background: no people, fills the whole image.
 
-Approve it when it is usable, even if it is not perfect. Reject it only for real problems. When you reject it, give a `revisedPrompt`: the prompt with the problem fixed (add what was missing, remove what caused the problem, keep the style words). Otherwise `revisedPrompt` is null.
+Approve it when it is usable, even if it is not perfect. Reject it only for real problems. When you reject it, give a `revisedPrompt`: the prompt with the problem fixed (add what was missing, remove what caused the problem, keep the style words). Otherwise `revisedPrompt` is null. Never put negations in `revisedPrompt` (no "no text", "no letters", "no signs", "without people"): image models draw what a prompt names. To remove something, delete every word that asks for it or invites it (signs, boards, shop names, posters, banners, labels, books, writing) and describe the plain thing instead (a blank wooden shop front, a bare plaster wall).
 Write `problems` and `revisedPrompt` in English.
 
 Answer with one JSON object and nothing else:
