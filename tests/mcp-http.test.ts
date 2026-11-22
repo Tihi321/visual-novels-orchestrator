@@ -129,6 +129,9 @@ describe('MCP over HTTP', () => {
     expect(waitDone).toBe(false) // the status came back first
     const done = await waiting
     expect((done.structuredContent as { timedOut: boolean }).timedOut).toBe(true)
+    // more than 240 s is refused (MCP clients drop a call that is silent for about 300 s)
+    const tooLong = await waiter.callTool({ name: 'vno_wait', arguments: { slug: 'lighthouse-letters', timeoutSeconds: 1000 } })
+    expect(tooLong.isError).toBe(true)
   }, 30_000)
 
   it('refuses a wrong Host or Origin, and a missing or wrong token', async () => {

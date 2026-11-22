@@ -341,9 +341,9 @@ export function buildTools(svc: VnService, opts: McpOptions = {}): Tool[] {
     def(
       'vno_wait',
       'Wait until a project has nothing left to run (or the timeout passes), then say how it ended. Other calls keep working while this one waits.',
-      z.object({ slug, timeoutSeconds: z.number().positive().optional().describe('Default: 600') }),
+      z.object({ slug, timeoutSeconds: z.number().positive().max(240).optional().describe('Default and maximum: 240 (MCP clients drop a call that is silent for about 300 s); call again to keep waiting') }),
       async (a) => {
-        const r = await svc.waitIdle(a.slug, { timeoutMs: (a.timeoutSeconds ?? 600) * 1000 })
+        const r = await svc.waitIdle(a.slug, { timeoutMs: (a.timeoutSeconds ?? 240) * 1000 })
         return { timedOut: r.timedOut, failedJobs: r.failed, ...clientHint(r.clientTasks), status: await svc.status(a.slug) }
       }
     ),

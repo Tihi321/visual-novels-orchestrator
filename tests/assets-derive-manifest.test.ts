@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { assetIds, deriveAssets, fallbackNegative, fallbackPrompt } from '../src/engine/assets/derive'
+import { assetIds, deriveAssets, fallbackNegative, fallbackPrompt, stripTextNegations } from '../src/engine/assets/derive'
 import {
   addVersion,
   assetDir,
@@ -70,6 +70,17 @@ describe('deriveAssets', () => {
     expect(assetIds.sprite('a', 'sad')).toBe('sprite_a_sad')
     expect(assetIds.music(2)).toBe('music_02')
     expect(assetIds.voiceRef('narrator')).toBe('voice_narrator')
+  })
+})
+
+describe('stripTextNegations', () => {
+  it('drops only the clauses that negate text or signs', () => {
+    const k2 = 'A small cobbled village square with a stone fountain at noon, no people, anime visual novel background, fills the whole image, no text, no letters, no signs, no captions, no borders'
+    expect(stripTextNegations(k2)).toBe('A small cobbled village square with a stone fountain at noon, no people, anime visual novel background, fills the whole image, no borders')
+    expect(stripTextNegations('a quiet street, no text or signs, soft light')).toBe('a quiet street, soft light')
+    expect(stripTextNegations('a quiet street, a shop sign, soft light')).toBe('a quiet street, a shop sign, soft light')
+    expect(stripTextNegations('a quiet street, soft light')).toBe('a quiet street, soft light')
+    expect(stripTextNegations('no text, no letters')).toBe('') // the caller keeps the original when nothing is left
   })
 })
 

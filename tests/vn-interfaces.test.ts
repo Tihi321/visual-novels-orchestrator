@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
@@ -137,8 +137,17 @@ describe('protocol commands', () => {
     expect(new Set(steps.map((s) => s.step))).toEqual(new Set(['art', 'music', 'generate', 'stage', 'build', 'lint']))
     expect(steps.filter((s) => s.step === 'generate').some((s) => s.status.status === 'running' && s.status.total)).toBe(true)
 
-    // only an explicit delete removes a project
+    // only an explicit delete removes a project, with its done and failed job files (not other projects')
+    const jobFile = (state: 'done' | 'failed', id: string) => env!.engine.jobs.file(state, id)
+    for (const [state, id] of [['done', `${done.slug}--old-1`], ['failed', `${done.slug}--old-2`], ['done', 'other-book--old-1']] as const) {
+      expect(jobFile(state, id).startsWith(env.dir)).toBe(true) // the test's own temp data folder
+      await mkdir(path.dirname(jobFile(state, id)), { recursive: true })
+      await writeFile(jobFile(state, id), '---\nkind: test\n---\n')
+    }
     await e.handleCommand({ type: 'deleteProject', slug: done.slug })
+    expect(await env.engine.jobs.ids('done')).not.toContain(`${done.slug}--old-1`)
+    expect(await env.engine.jobs.ids('failed')).not.toContain(`${done.slug}--old-2`)
+    expect(await env.engine.jobs.ids('done')).toContain('other-book--old-1')
     expect(last('project.deleted')?.slug).toBe(done.slug)
     await e.handleCommand({ type: 'listProjects' })
     expect(last('projects.listed')?.projects).toEqual([])

@@ -4,7 +4,7 @@ import sharp from 'sharp'
 import type { BuildResult, PipelineStep } from '../../shared/protocol'
 import { IMAGE_KINDS, isHandArt } from '../../shared/vn'
 import type { AssetEntry, Lang, ProjectSettings } from '../../shared/vn'
-import { fallbackNegative, fallbackPrompt } from '../assets/derive'
+import { fallbackNegative, fallbackPrompt, stripTextNegations } from '../assets/derive'
 import { runsOnFlow } from '../assets/flow-image'
 import type { FlowOptions } from '../assets/flow-image'
 import { countFlowSongs } from '../studios/flow-music'
@@ -593,7 +593,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
           return `${id}: approved${attempt ? ` after ${attempt} retry(ies)` : ''}`
         }
         ctx.log(`art-critic rejected ${id} (attempt ${attempt + 1}): ${review.problems.join('; ') || 'no reason given'}`)
-        const revised = review.revisedPrompt?.trim()
+        const revised = review.revisedPrompt ? stripTextNegations(review.revisedPrompt).trim() || review.revisedPrompt.trim() : undefined
         if (attempt === REVIEW_RETRIES || !revised) break
         entry = (await generateOne(ctx, slug, id, { force: true, prompt: revised })).entry
       }

@@ -797,10 +797,14 @@ export class VnService {
     })
   }
 
+  /** Removes the project and its job files (not a running job's file). */
   async deleteProject(slug: string): Promise<void> {
     assertSlug(slug)
-    for (const id of await this.deps.jobs.ids('queued')) {
-      if (id.startsWith(`${slug}--`)) await fs.rm(this.deps.jobs.file('queued', id), { force: true })
+    for (const state of JOB_STATES) {
+      if (state === 'running') continue
+      for (const id of await this.deps.jobs.ids(state)) {
+        if (id.startsWith(`${slug}--`)) await fs.rm(this.deps.jobs.file(state, id), { force: true })
+      }
     }
     await this.store.remove(slug)
     this.emit({ type: 'project.deleted', slug })
