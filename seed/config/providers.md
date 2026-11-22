@@ -77,10 +77,7 @@ providers:
     discover: true
     discover_skip: [dflash]       # LM Studio lists these, but they are not models it can load here
     load_models: true             # load a model that isn't loaded yet with lmstudio_parallel, lmstudio_context and lmstudio_ttl_minutes from settings.md
-    # For the art-critic, add a vision model you have in LM Studio (for example a Qwen-VL) with `vision: true`:
-    #   - id: qwen2.5-vl-7b-instruct
-    #     family: qwen
-    #     vision: true
+    # Not for the art-critic: its local vision model is acp/llama/inkling-2-mini through the ACP proxy (HUB-39).
     models:
       - id: ista-daslab-qwen3.8-27b-gsq-rco-unsloth-mtp
         family: qwen
@@ -242,7 +239,7 @@ The `acp` entry is on (HUB-38). It is `api-acp-proxy`, a server on `http://127.0
 
 The `strata` provider is switched off (`enabled: false`): VN Studio reaches Strata through the ACP proxy, which starts `D:\Strata\terminal\run-unsloth-ud-iq4_xs-parallel.bat` on request. The entry and its profiles stay as a way back: set `enabled: true` to connect to Strata directly again. Strata (`D:\Strata`) is a fast local server with an OpenAI-style API. Used directly, you start it yourself:
 
-- It serves one model per process, on port 8080, chosen by the `run-*.bat` you start in `D:\Strata`: `run-unsloth-ud-iq4_xs-parallel.bat` (Qwen3.8-Flash-Next IQ4_XS, four requests at once), `run-unsloth-ud-iq4_xs.bat` (Qwen IQ4_XS, one at a time), `run-deepseek-v4.1-flash-ist-das-2.00bpw.bat` and `run-deepseek-v4.1-flash-ista-das-coder.bat` (DeepSeek V4.1 Flash). From the creative-hub folder, `scripts\hub.ps1 start strata <variant>` starts one.
+- It serves one model per process, on port 8080, chosen by the `run-*.bat` you start in `D:\Strata\terminal`: `run-unsloth-ud-iq4_xs-parallel.bat` (Qwen3.8-Flash-Next IQ4_XS, four requests at once), `run-unsloth-ud-iq4_xs.bat` (Qwen IQ4_XS, one at a time), `run-deepseek-v4.1-flash-ist-das-2.00bpw.bat` and `run-deepseek-v4.1-flash-ista-das-coder.bat` (DeepSeek V4.1 Flash). From the creative-hub folder, `scripts\hub.ps1 start strata <variant>` starts one.
 - Loading the model takes 1 to 3 minutes (the DeepSeek config allows up to an hour). Check `curl http://127.0.0.1:8080/health` and wait for `loaded: true`. Until it answers, jobs skip it and use the next model in the role; a few seconds after it answers (the check runs every 10 seconds) they go back to Strata.
 - VN Studio asks Strata which model it runs (`/v1/status`) and uses the matching entry of `profiles` for that model's settings (family, context, extra body). `strata/default` (no thinking) and `strata/default-low` (thinking on `low`, for the checks) follow it: after you restart Strata with another model, the Models page shows the new name within about 10 seconds and `config/roles.md` stays the same. The older ids `qwen3.8-flash-next` and `qwen3.8-flash-next-low` still work as aliases. When you install a new model, add a profile for it (its `id` is matched as a prefix of the id Strata reports).
 - Strata takes most of the GPU memory with any of these models: keep only the nomic embedding model loaded in LM Studio, and no ComfyUI, while it runs. Only one local model is on the GPU at a time (gufo, strata and llama through the proxy included).

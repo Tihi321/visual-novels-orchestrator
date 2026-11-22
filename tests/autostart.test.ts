@@ -292,10 +292,13 @@ describe('ensure', () => {
     expect(s.spawned).toHaveLength(2)
   })
 
-  it('does not start ComfyUI while Strata answers, and starts it when Strata is down', async () => {
+  it('does not start ComfyUI while Strata or Gufo answers, and starts it when both are down', async () => {
     const s = setup({ up: new Set(['strata']) })
     expect(await s.starter.ensure('comfyui', URLS.comfyui!)).toMatch(/Strata is running/)
     expect(s.spawned).toHaveLength(0)
+    const gufo = setup({ up: new Set(['gufo']) })
+    expect(await gufo.starter.ensure('comfyui', URLS.comfyui!)).toMatch(/Gufo is running/)
+    expect(gufo.spawned).toHaveLength(0)
     const free = setup({ answerAfter: 1 })
     expect(await free.starter.ensure('comfyui', URLS.comfyui!)).toBe(true)
     expect(free.spawned).toHaveLength(1)
