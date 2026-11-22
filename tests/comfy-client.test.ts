@@ -9,7 +9,7 @@ import {
   removalModelsOf,
   waitForOutputs
 } from '../src/engine/comfy/client'
-import { buildInventory, engineReports } from '../src/engine/comfy/inventory'
+import { buildInventory, engineReports, freeAllLanes } from '../src/engine/comfy/inventory'
 import { buildRemoveBackground, DEFAULT_FILES, ENGINES, enginesOfKind, mergeFiles, sizeOf, snap16, type BuildOpts, type Graph } from '../src/engine/comfy/graphs'
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -148,6 +148,14 @@ describe('lanes', () => {
     expect(none.busy[0]).toMatch(/unreachable/)
     expect(none.busy[1]).toMatch(/busy \(1 running/)
     expect(await firstReachableLane({ lanes: ['http://down:1', 'http://busy:1'] })).toBe('http://busy:1')
+  })
+
+  it('frees every lane on an empty 200 reply and reports a failing lane', async () => {
+    stubFetch((url) => (url.pathname === '/free' ? new Response('', { status: url.host === 'b:8188' ? 500 : 200 }) : undefined))
+    expect(await freeAllLanes(parseComfyConfig({ lanes: ['http://a:8188', 'http://b:8188'] }))).toEqual([
+      { lane: 'http://a:8188', ok: true },
+      { lane: 'http://b:8188', ok: false, error: expect.stringContaining('HTTP 500') }
+    ])
   })
 })
 
