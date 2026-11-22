@@ -45,20 +45,22 @@ const CLAUSE = /([^,;\n]*?)(\.(?=\s|$)|[,;\n]|$)([ \t]*)/gy
  * Removes clauses that negate text or signs ("no text", "no letters", "without signs", "without any text", "no text and no signs", "No text."): image models draw what a prompt names.
  * A clause joined to a list by "and" or "or" ("..., no text, and no signs") is a negation too; "and no people" or "or a shop sign with no text" is kept.
  * Clauses end at a comma, a semicolon, a newline or a full stop followed by whitespace or the end. A removed clause takes its following separator with it
- * (the preceding one when it was the last); the rest is rejoined as it was, each clause trimmed. A negation with a trailing phrase ("no text on the walls") is kept.
+ * (the preceding one when it was the last, which then ends with a full stop if the removed one did); the rest is rejoined as it was, each clause trimmed. A negation with a trailing phrase ("no text on the walls") is kept.
  */
 export function stripTextNegations(prompt: string): string {
   const kept: Array<{ text: string; sep: string }> = []
   let lastRemoved = false
+  let removedSep = ''
   CLAUSE.lastIndex = 0
   while (CLAUSE.lastIndex < prompt.length) {
     const m = CLAUSE.exec(prompt)
     if (!m) break
     const text = m[1]!.trim()
     lastRemoved = TEXT_NEGATION.test(text)
+    removedSep = m[2]!
     if (!lastRemoved) kept.push({ text, sep: m[2]! + m[3]! })
   }
-  if (lastRemoved && kept.length) kept[kept.length - 1]!.sep = ''
+  if (lastRemoved && kept.length) kept[kept.length - 1]!.sep = removedSep === '.' ? '.' : ''
   return kept.map((c) => c.text + c.sep).join('')
 }
 

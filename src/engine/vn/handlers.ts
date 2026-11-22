@@ -594,6 +594,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
         }
         ctx.log(`art-critic rejected ${id} (attempt ${attempt + 1}): ${review.problems.join('; ') || 'no reason given'}`)
         const revised = review.revisedPrompt ? stripTextNegations(review.revisedPrompt).trim() : undefined
+        if (review.revisedPrompt && revised && revised !== review.revisedPrompt.trim()) ctx.log(`art-critic's revised prompt for ${id}: text negations removed before the redraw`)
         if (attempt === REVIEW_RETRIES || !revised) break
         entry = (await generateOne(ctx, slug, id, { force: true, prompt: revised })).entry
       }
