@@ -15,3 +15,9 @@ Deviations: none.
 Verification: `yarn test` 89 files / 1157 tests passed; `yarn typecheck` and `yarn lint` exit 0. UNTESTED: running app (hub R2 build/restart, K2 real critic rejection, slug refusal over MCP). No build was run.
 
 Commit: committed on the branch (not merged, not pushed).
+
+## Polish 1
+
+- `src/engine/assets/derive.ts`: `TEXT_NEGATION` accepts an optional leading "and " or "or " before `no`/`without`, so a list ending ", and no signs" or ", or without any text" loses that clause too. "and no people", "and a red door" and "or a shop sign with no text" are kept. Doc comment mentions the joined form.
+- `tests/assets-derive-manifest.test.ts`: 3 expectations added to the existing `it` (no new `it`).
+- Verification: `yarn test` 89 files / 1157 tests passed; typecheck and lint exit 0. Timing on 100,000-character inputs: `and no text, ` x8000 2.06 ms, `and ` x25000 0.28 ms, `a, ` x33000 9.02 ms (limit 50 ms). UNTESTED: running app.

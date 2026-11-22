@@ -35,7 +35,7 @@ export const DEFAULT_NEGATIVE = 'text, letters, words, watermark, signature, log
 
 const TEXT_WORD = '(?:text|letters?|words?|writing|signs?|signage|captions?|labels?|watermarks?|logos?)'
 const TEXT_NEGATION = new RegExp(
-  String.raw`^(?:no|without)\s+(?:any\s+)?${TEXT_WORD}(?:\s*(?:,|and|or|/)\s*(?:(?:no|without)\s+)?(?:any\s+)?${TEXT_WORD})*$`,
+  String.raw`^(?:(?:and|or)\s+)?(?:no|without)\s+(?:any\s+)?${TEXT_WORD}(?:\s*(?:,|and|or|/)\s*(?:(?:no|without)\s+)?(?:any\s+)?${TEXT_WORD})*$`,
   'i'
 )
 /** One clause of a prompt, its separator (a comma, a semicolon, a newline, or a full stop before whitespace or the end) and the blanks after it. */
@@ -43,6 +43,7 @@ const CLAUSE = /([^,;\n]*?)(\.(?=\s|$)|[,;\n]|$)([ \t]*)/gy
 
 /**
  * Removes clauses that negate text or signs ("no text", "no letters", "without signs", "without any text", "no text and no signs", "No text."): image models draw what a prompt names.
+ * A clause joined to a list by "and" or "or" ("..., no text, and no signs") is a negation too; "and no people" or "or a shop sign with no text" is kept.
  * Clauses end at a comma, a semicolon, a newline or a full stop followed by whitespace or the end. A removed clause takes its following separator with it
  * (the preceding one when it was the last); the rest is rejoined as it was, each clause trimmed. A negation with a trailing phrase ("no text on the walls") is kept.
  */
