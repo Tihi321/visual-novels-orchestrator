@@ -3,3 +3,6 @@
 {"ts":"2026-11-22T17:48:46Z","actor":"implement","type":"implement.started","request":"creative-hub/REQ-0030","ticket":"VNO-72-negations-waits-slugs","detail":"branch VNO-72_negations-waits-slugs from master fe42e25"}
 {"ts":"2026-11-22T17:48:46Z","actor":"implement","type":"verify.passed","request":"creative-hub/REQ-0030","ticket":"VNO-72-negations-waits-slugs","detail":"yarn test 1157 passed, typecheck, lint clean"}
 {"ts":"2026-11-22T17:48:46Z","actor":"implement","type":"changelog.written","request":"creative-hub/REQ-0030","ticket":"VNO-72-negations-waits-slugs","detail":"changelog.md written"}
+{"ts":"2026-11-22T18:37:00Z","actor":"director-scribe","type":"checker.verdict","request":"creative-hub/REQ-0030","ticket":"VNO-72-negations-waits-slugs","detail":"PASS; should-fix: list ending in 'and no signs'","data":{"verdict":"PASS"}}
+{"ts":"2026-11-22T18:37:00Z","actor":"director-scribe","type":"checker.verdict","request":"creative-hub/REQ-0030","ticket":"VNO-72-negations-waits-slugs","detail":"PASS after polish 1","data":{"verdict":"PASS"}}
+{"ts":"2026-11-22T18:37:00Z","actor":"director-scribe","type":"ticket.done","request":"creative-hub/REQ-0030","ticket":"VNO-72-negations-waits-slugs","detail":"plan status done after PASS (polish 1)"}
