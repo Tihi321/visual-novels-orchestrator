@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { assetIds, deriveAssets, fallbackNegative, fallbackPrompt, stripTextNegations } from '../src/engine/assets/derive'
+import { assetIds, deriveAssets, fallbackNegative, fallbackPrompt, hasTextNegation, stripTextNegations } from '../src/engine/assets/derive'
 import {
   addVersion,
   assetDir,
@@ -89,6 +89,10 @@ describe('stripTextNegations', () => {
     expect(stripTextNegations('a street, no text, no letters, and no signs')).toBe('a street')
     expect(stripTextNegations('A street. No text.')).toBe('A street.')
     expect(stripTextNegations('a street, no text.')).toBe('a street.')
+    expect(stripTextNegations('A street.\nNo text.')).toBe('A street.')
+    expect(stripTextNegations('a street,\nno text.')).toBe('a street.')
+    expect(hasTextNegation('a street , soft light')).toBe(false)
+    expect(hasTextNegation('a street, no text')).toBe(true)
     expect(stripTextNegations('a street, no text, or without any signs, soft light')).toBe('a street, soft light')
     expect(stripTextNegations('a market, and no people, and a red door')).toBe('a market, and no people, and a red door')
     const kept = 'a market, no people, a shop sign with no text, no borders'

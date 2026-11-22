@@ -1,3 +1,5 @@
 {"ts":"2026-11-22T21:10:00Z","actor":"planner","type":"plan.created","request":"REQ-0031","ticket":"VNO-73-negation-full-stop","detail":"planner wrote the plan (draft)"}
 {"ts":"2026-11-22T21:20:00Z","actor":"director","type":"plan.approved","request":"REQ-0031","ticket":"VNO-73-negation-full-stop","detail":"user: 'Yes, approve all' to 'Do you approve the seven plans with these defaults'; written by the director because the scribe could not see the user's message"}
 {"ts":"2026-11-22T21:22:43Z","actor":"implement","type":"implement.started","request":"creative-hub/REQ-0031","ticket":"VNO-73-negation-full-stop","detail":"branch VNO-73_negation-full-stop cut from master"}
+{"ts":"2026-11-22T21:25:48Z","actor":"implement","type":"verify.passed","request":"creative-hub/REQ-0031","ticket":"VNO-73-negation-full-stop","detail":"1157 tests, typecheck, lint pass"}
+{"ts":"2026-11-22T21:25:48Z","actor":"implement","type":"changelog.written","request":"creative-hub/REQ-0031","ticket":"VNO-73-negation-full-stop","detail":"changelog.md written"}

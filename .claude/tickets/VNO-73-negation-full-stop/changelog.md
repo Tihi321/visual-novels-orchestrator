@@ -18,3 +18,11 @@ Failing first (old code, `npx vitest run tests/assets-derive-manifest.test.ts`):
 Verification: `yarn test` 89 files, 1157 tests pass; `yarn typecheck` exit 0; `yarn lint` exit 0. No build (VN Studio running from out/).
 UNTESTED: stripper on a real critic answer (hub K4); the log line in a running VN Studio (after rebuild).
 Deviations: none. Commit: see git log on the branch.
+
+## Polish 1
+
+- `src/engine/assets/derive.ts`: clause split shared in `splitClauses`; new `hasTextNegation(prompt)` (true when the stripper would drop a clause). When the removed last clause ended with ".", the full stop goes on the last kept clause with text, empty clauses after it are dropped ("A street.\nNo text." -> "A street."; "a street,\nno text." -> "a street."). Other inputs unchanged.
+- `src/engine/vn/handlers.ts`: the "text negations removed" log line uses `hasTextNegation(review.revisedPrompt)`, so spacing normalisation alone no longer logs it.
+- `tests/assets-derive-manifest.test.ts`: four lines in the existing stripTextNegations test.
+Failing first (994eae6): expected 'A street..' to be 'A street.' (tests/assets-derive-manifest.test.ts:92).
+Verification: `yarn test` 1157 pass (one unrelated 15 s timeout in vn-pack-editions on a loaded first run, passed on rerun); typecheck and lint exit 0. No build.
