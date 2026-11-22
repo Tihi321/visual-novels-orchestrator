@@ -1,17 +1,17 @@
 import { z } from 'zod'
 import { langSchema } from '../../shared/vn'
-import { clientHint } from './tools'
+import { clientHint, WAIT_LIMIT_MS } from './tools'
 import type { McpOptions, Tool, ToolDef } from './tools'
 import type { VnService } from '../vn/service'
 
 const slug = z.string().describe('The project slug (see vno_list_projects)')
-const wait = z.boolean().optional().describe('Wait until the jobs finish before answering')
+const wait = z.boolean().optional().describe('Wait until the jobs finish before answering (at most 240 s; then call vno_wait to keep waiting)')
 
 /** Importing files you made: an image or a track for an asset, and voice clips. */
 export function importTools(svc: VnService, def: ToolDef, opts: McpOptions): Tool[] {
   const settle = async (s: string, doWait: boolean | undefined) => {
     if (!doWait) return { waited: false }
-    const r = await svc.waitIdle(s, { timeoutMs: opts.waitTimeoutMs ?? 10 * 60_000 })
+    const r = await svc.waitIdle(s, { timeoutMs: opts.waitTimeoutMs ?? WAIT_LIMIT_MS })
     return { waited: true, timedOut: r.timedOut, failedJobs: r.failed, ...clientHint(r.clientTasks) }
   }
   return [

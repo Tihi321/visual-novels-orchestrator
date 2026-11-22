@@ -3,11 +3,11 @@ import type { MusicPlan } from '../vn/agents/composer'
 import { TASKS } from '../vn/pipeline'
 import type { StageCues } from '../game/stage'
 import type { VnService } from '../vn/service'
-import { clientHint } from './tools'
+import { clientHint, WAIT_LIMIT_MS } from './tools'
 import type { McpOptions, Tool, ToolDef } from './tools'
 
 const slug = z.string().describe('The project slug (see vno_list_projects)')
-const wait = z.boolean().optional().describe('Wait until the jobs finish before answering')
+const wait = z.boolean().optional().describe('Wait until the jobs finish before answering (at most 240 s; then call vno_wait to keep waiting)')
 
 /** Asset prompts without generating, music.json, cues.json and the library path. */
 export function planTools(svc: VnService, def: ToolDef, opts: McpOptions): Tool[] {
@@ -16,7 +16,7 @@ export function planTools(svc: VnService, def: ToolDef, opts: McpOptions): Tool[
   }
   const settle = async (s: string, doWait: boolean | undefined) => {
     if (!doWait) return { waited: false }
-    const r = await svc.waitIdle(s, { timeoutMs: opts.waitTimeoutMs ?? 10 * 60_000 })
+    const r = await svc.waitIdle(s, { timeoutMs: opts.waitTimeoutMs ?? WAIT_LIMIT_MS })
     return { waited: true, timedOut: r.timedOut, failedJobs: r.failed, ...clientHint(r.clientTasks) }
   }
   const musicTracks = async (s: string): Promise<string[]> => (await svc.listAssets(s)).filter((a) => a.kind === 'music' && !a.orphaned).map((a) => a.id).sort()

@@ -81,6 +81,16 @@ describe('stripTextNegations', () => {
     expect(stripTextNegations('a quiet street, a shop sign, soft light')).toBe('a quiet street, a shop sign, soft light')
     expect(stripTextNegations('a quiet street, soft light')).toBe('a quiet street, soft light')
     expect(stripTextNegations('no text, no letters')).toBe('') // the caller keeps the original when nothing is left
+    expect(stripTextNegations('a quiet street, without any text, soft light')).toBe('a quiet street, soft light')
+    expect(stripTextNegations('A quiet street at noon. No text. Warm light.')).toBe('A quiet street at noon. Warm light.')
+    expect(stripTextNegations('a quiet street, no text and no signs, soft light')).toBe('a quiet street, soft light')
+    expect(stripTextNegations('a quiet street\nno text\nsoft light')).toBe('a quiet street\nsoft light')
+    expect(stripTextNegations('a quiet street; no signs; soft light')).toBe('a quiet street; soft light')
+    expect(stripTextNegations('a street, no text, no letters, and no signs')).toBe('a street')
+    expect(stripTextNegations('a street, no text, or without any signs, soft light')).toBe('a street, soft light')
+    expect(stripTextNegations('a market, and no people, and a red door')).toBe('a market, and no people, and a red door')
+    const kept = 'a market, no people, a shop sign with no text, no borders'
+    expect(stripTextNegations(kept)).toBe(kept)
   })
 })
 
