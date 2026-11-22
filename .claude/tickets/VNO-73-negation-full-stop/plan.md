@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 request: creative-hub/REQ-0031
 repos: [visual-novels-orchestrator]
 branch: VNO-73_negation-full-stop
