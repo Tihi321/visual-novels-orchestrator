@@ -18,7 +18,7 @@ export const reviewImageSchema = z.object({
 })
 export type ImageReview = z.infer<typeof reviewImageSchema>
 
-/** A small JPEG of an image for the model: transparent sprites sit on mid grey, the long side is at most 1024. */
+/** A small JPEG of an image for the model: transparent sprites sit on mid grey (the prompt tells the critic the grey is not part of the picture), the long side is at most 1024. */
 export async function reviewThumbnail(bytes: Buffer): Promise<{ mime: string; data: string }> {
   const jpeg = await sharp(bytes).flatten({ background: '#808080' }).resize(1024, 1024, { fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 85 }).toBuffer()
   return { mime: 'image/jpeg', data: jpeg.toString('base64') }

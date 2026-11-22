@@ -51,20 +51,20 @@ describe('custom provider entries in providers.md', () => {
     expect(slugOf('  Café #2 ')).toBe('cafe-2')
     expect(slugOf('???')).toBe('')
     expect(keyNameOf('acp-proxy-home')).toBe('CUSTOM_ACP_PROXY_HOME_API_KEY')
-    expect(checkBaseUrl(' http://127.0.0.1:7461/v1/ ')).toEqual({ url: 'http://127.0.0.1:7461/v1' })
+    expect(checkBaseUrl(' http://127.0.0.1:8787/v1/ ')).toEqual({ url: 'http://127.0.0.1:8787/v1' })
     expect(checkBaseUrl('ftp://host/v1')).toHaveProperty('error')
     expect(checkBaseUrl('not a url')).toHaveProperty('error')
   })
 
   it('adds, edits and removes only custom entries, keeping comments, the other providers and the text below', async () => {
     const seed = await readFile(file('providers.md'), 'utf8')
-    const input = { name: 'ACP proxy (home)', baseUrl: 'http://127.0.0.1:7461/v1', hasKey: false, free: true, jsonSchema: false, concurrency: 2, enabled: true }
+    const input = { name: 'ACP proxy (home)', baseUrl: 'http://127.0.0.1:8787/v1', hasKey: false, free: true, jsonSchema: false, concurrency: 2, enabled: true }
     const added = upsertCustomProvider(seed, input)
     expect(added.id).toBe('acp-proxy-home')
     expect(added.text).toContain('# to verify') // comments of the seed stay
     expect(added.text.endsWith(seed.slice(seed.lastIndexOf('---\n') + 4))).toBe(true) // the body stays
     const entry = (parseMd(added.text).data.providers as Record<string, unknown>[]).find((p) => p.id === 'acp-proxy-home')
-    expect(entry).toEqual({ id: 'acp-proxy-home', name: 'ACP proxy (home)', custom: true, kind: 'openai-compat', enabled: true, base_url: 'http://127.0.0.1:7461/v1', local: true, json_schema: false, concurrency: 2, discover: true, models: [] })
+    expect(entry).toEqual({ id: 'acp-proxy-home', name: 'ACP proxy (home)', custom: true, kind: 'openai-compat', enabled: true, base_url: 'http://127.0.0.1:8787/v1', local: true, json_schema: false, concurrency: 2, discover: true, models: [] })
     // a paid one always names its key variable, a free one with a key too
     const paid = upsertCustomProvider(added.text, { ...input, name: 'Paid One', free: false, concurrency: 'auto' })
     expect((parseMd(paid.text).data.providers as Record<string, unknown>[]).find((p) => p.id === 'paid-one')).toMatchObject({ local: false, api_key_env: 'CUSTOM_PAID_ONE_API_KEY', concurrency: 'auto' })
@@ -104,13 +104,13 @@ describe('custom providers in the engine', () => {
     const { engine, last } = await started()
     const name = uniqueName()
     const id = name.toLowerCase().replace(/ /g, '-')
-    await engine.handleCommand({ type: 'saveCustomProvider', name, baseUrl: 'http://127.0.0.1:7461/v1', free: true, jsonSchema: false, concurrency: 2, enabled: true })
+    await engine.handleCommand({ type: 'saveCustomProvider', name, baseUrl: 'http://127.0.0.1:8787/v1', free: true, jsonSchema: false, concurrency: 2, enabled: true })
     expect(last('provider.saved')).toMatchObject({ ok: true, id })
     const p = engine.registry.providers.get(id)!
     expect(p).toMatchObject({ custom: true, local: true, name, kind: 'openai-compat', available: true, concurrency: 2, jsonSchema: false, enabled: true })
     expect(p.apiKeyEnv).toBeUndefined()
     const summary = (await engine.snapshot()).providers.find((x) => x.id === id)!
-    expect(summary).toMatchObject({ name, custom: true, enabled: true, baseUrl: 'http://127.0.0.1:7461/v1', jsonSchema: false, local: true, canList: true })
+    expect(summary).toMatchObject({ name, custom: true, enabled: true, baseUrl: 'http://127.0.0.1:8787/v1', jsonSchema: false, local: true, canList: true })
 
     // models: a free provider needs no price; a vision model is kept
     await engine.handleCommand({ type: 'addModel', provider: id, id: 'claude-opus-5-5', context: 200000, vision: true })
