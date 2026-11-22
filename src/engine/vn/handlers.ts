@@ -593,7 +593,7 @@ export function registerVnHandlers(sched: Scheduler, deps: VnDeps): VnService {
           return `${id}: approved${attempt ? ` after ${attempt} retry(ies)` : ''}`
         }
         ctx.log(`art-critic rejected ${id} (attempt ${attempt + 1}): ${review.problems.join('; ') || 'no reason given'}`)
-        const revised = review.revisedPrompt ? stripTextNegations(review.revisedPrompt).trim() || review.revisedPrompt.trim() : undefined
+        const revised = review.revisedPrompt ? stripTextNegations(review.revisedPrompt).trim() : undefined
         if (attempt === REVIEW_RETRIES || !revised) break
         entry = (await generateOne(ctx, slug, id, { force: true, prompt: revised })).entry
       }
