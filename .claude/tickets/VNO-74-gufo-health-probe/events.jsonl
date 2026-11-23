@@ -3,3 +3,5 @@
 {"ts":"2026-11-23T08:24:04Z","actor":"implement","type":"implement.started","request":"REQ-0031","ticket":"VNO-74-gufo-health-probe","detail":"branch VNO-74_gufo-health-probe from master 35ed8da"}
 {"ts":"2026-11-23T08:26:48Z","actor":"implement","type":"verify.passed","request":"REQ-0031","ticket":"VNO-74-gufo-health-probe","detail":"test 1158 pass, typecheck, lint green; failing-first shown"}
 {"ts":"2026-11-23T08:26:48Z","actor":"implement","type":"changelog.written","request":"REQ-0031","ticket":"VNO-74-gufo-health-probe","detail":"changelog.md written; plan stays in-progress"}
+{"ts":"2026-11-23T09:10:00Z","actor":"director-scribe","type":"checker.verdict","request":"creative-hub/REQ-0031","ticket":"VNO-74-gufo-health-probe","detail":"director-checker PASS (merged 95ce939)","data":{"verdict":"PASS"}}
+{"ts":"2026-11-23T09:10:00Z","actor":"director-scribe","type":"ticket.done","request":"creative-hub/REQ-0031","ticket":"VNO-74-gufo-health-probe","detail":"merged and pushed to master (95ce939)"}
